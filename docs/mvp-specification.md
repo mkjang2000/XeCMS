@@ -1,6 +1,6 @@
 # XeCMS MVP 사양서
 
-> 상태: Draft v0.1  
+> 상태: 완료 v0.4.0 (2026-07-15)
 > 기준일: 2026-07-14  
 > 상위 문서: [XeCMS 시스템 사양서](./system-specification.md)  
 > 목적: XeCMS MVP의 범위, 구현 순서, 산출물 및 완료 조건을 정의한다.
@@ -374,10 +374,9 @@ integration 19개와 Chromium M2+M3 시나리오 2개가 통과했으며 세부 
 
 ## 9. M4 — Extensible CMS
 
-> 상태: M4-A·M4-B·M4-C1·M4-C2·M4-C3·M4-C4 완료, 다음 M4-C5 (2026-07-15)
+> 상태: 완료 — M4-A·M4-B·M4-C1~M4-C5 (2026-07-15)
 > 구현 계획: [M4 구현 계획](./m4-implementation-plan.md)  
-> 완료 묶음: [M4-C4 Trusted Plugin Platform](./m4c4-plugin-platform.md)
-> 다음 묶음: [M4-C Administration 계획의 C5](./m4c-administration-productization-plan.md#7-m4-c5--operations--distribution)
+> 최종 묶음: [M4-C5 Operations & Distribution](./m4c5-operations-distribution.md)
 
 ### 9.1 목표
 

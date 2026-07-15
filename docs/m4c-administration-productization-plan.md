@@ -1,6 +1,6 @@
 # M4-C Administration, Plugin & Productization 구현 계획
 
-> 상태: M4-C1·M4-C2·M4-C3·M4-C4 완료, 다음 M4-C5 (2026-07-15)
+> 상태: M4-C1~M4-C5 완료 (2026-07-15)
 > 상위 계획: [M4 구현 계획](./m4-implementation-plan.md)  
 > 선행 조건: [M4-B Hook, Event & Worker](./m4b-event-worker-specification.md) 완료
 
@@ -193,6 +193,10 @@ Adapter로 연결한다. 로컬 개발에서는 명시적인 개발 전달 방�
 
 ## 7. M4-C5 — Operations & Distribution
 
+> 완료: TypeScript·PostgreSQL·배포 artifact·Chromium 누적 Gate 통과
+>
+> 상세 계약: [M4-C5 Operations & Distribution 상세 사양](./m4c5-operations-distribution.md)
+
 ### 7.1 포함 범위
 
 - `create-xecms` 또는 동등한 project scaffold
@@ -239,6 +243,5 @@ Adapter로 연결한다. 로컬 개발에서는 명시적인 개발 전달 방�
 
 ## 9. 다음 작업
 
-다음 구현 대상은 M4-C4 Plugin Platform이다. C3에서 닫은 Audit·Outbox·보존 경계를
-Plugin lifecycle과 migration에도 그대로 적용하면서 Manifest, extension entry,
-호환성 검증과 예제 Plugin의 상세 계약부터 확정한다.
+M4-C와 XeCMS 0.4 MVP 범위는 완료했다. 후속 작업은 이 문서의 완료 범위를 변경하지 않고,
+실제 다중 환경 배포 피드백을 바탕으로 0.4.x 안정화와 MVP 제외 범위를 별도 계획으로 다룬다.

@@ -27,6 +27,15 @@ import { PLUGIN_PLATFORM_MIGRATION_ID, applyPluginPlatformMigration } from "./pl
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
 export const SYSTEM_REALM_ID = "rlm_system";
+export const CORE_MIGRATION_IDS = Object.freeze([
+  "0001_m1_core","0002_schema_draft_version","0003_document_lifecycle_events",
+  "0004_m3_authorization","0005_m3_authorization_contract",
+  "0006_m3_authorization_storage_finalization","0007_m3_authorization_audit_retention",
+  "0008_m2_schema_registry","0009_m2_relations","0010_m2_media",
+  CONTENT_HIERARCHY_MIGRATION_ID,"0012_m3_authorization_resource_quarantine",
+  IDENTITY_REALM_MIGRATION_ID,EVENT_WORKER_MIGRATION_ID,USER_IDENTITY_MIGRATION_ID,
+  SITE_SETTINGS_MIGRATION_ID,AUDIT_RETENTION_MIGRATION_ID,PLUGIN_PLATFORM_MIGRATION_ID,
+] as const);
 
 export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> {
   const schema = validateDatabaseSchema(rawSchema);

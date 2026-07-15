@@ -11,6 +11,7 @@
     { "path": "./packages/ui" },
     { "path": "./packages/admin" },
     { "path": "./packages/plugin-sdk" },
+    { "path": "./packages/cli" },
     { "path": "./apps/server" },
     { "path": "./apps/admin" },
     { "path": "./examples/domain-prototype" },

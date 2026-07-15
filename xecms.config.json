@@ -1,0 +1,9 @@
+{
+  "projectName": "xecms",
+  "starter": "blog",
+  "databaseSchema": "xecms",
+  "schemaFile": "examples/blog/xecms.schema.json",
+  "typesFile": "examples/blog/xecms.generated.ts",
+  "mediaStorageRoot": ".xecms/media",
+  "adminDist": "apps/admin/dist"
+}

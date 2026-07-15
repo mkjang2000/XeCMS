@@ -98,10 +98,10 @@ test("setup부터 Schema, migration, Document REST 정합성까지 완주한다"
   });
 
   await test.step("Posts Collection과 세 필드를 만들고 migration을 적용한다", async () => {
-    await activate(action(page, "새 컬렉션"));
+    await activate(action(page, "새 콘텐츠 타입"));
     await expect(page).toHaveURL(/\/admin\/schema\/new(?:\/)?$/);
 
-    await page.getByLabel("컬렉션 이름").fill("posts");
+    await page.getByRole("textbox", { name: /^이름/ }).fill("posts");
     await page.getByLabel("표시 이름").fill("게시글");
 
     const fields = [
@@ -265,6 +265,9 @@ test("문서 게시, 버전 복원, 휴지통과 영구 삭제까지 완주한�
     await page.getByLabel("제목").fill(publishedTitle);
     await page.getByLabel("본문").fill("처음 공개할 본문입니다.");
     await activate(action(page, "문서 저장"));
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/content/${collectionId}(?:/)?$`),
+    );
 
     const documentsResponse = await page.request.get(
       `${serverUrl}/api/collections/${collectionId}/documents`,
@@ -325,6 +328,9 @@ test("문서 게시, 버전 복원, 휴지통과 영구 삭제까지 완주한�
   await test.step("새 초안을 저장해도 공개 리비전과 공개 수정일은 고정된다", async () => {
     await page.getByLabel("제목").fill(draftTitle);
     await activate(action(page, "문서 저장"));
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/content/${collectionId}(?:/)?$`),
+    );
     await page.goto(`/admin/content/${collectionId}/${documentId}`);
 
     await expect(

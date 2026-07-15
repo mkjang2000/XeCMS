@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { constants, existsSync } from "node:fs";
+import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
@@ -82,6 +83,7 @@ import type {
 import {
   DEFAULT_WORKSPACE_ID,
   DEFAULT_WORKSPACE_NAME,
+  CORE_MIGRATION_IDS,
   LocalMediaStorage,
   PostgresDatabase,
   PostgresAuthorizationStore,
@@ -951,11 +953,20 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     reply.header("x-frame-options", "DENY");
     reply.header("referrer-policy", "no-referrer");
     reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+    reply.header("x-xecms-version", "0.4.0");
+    reply.header("x-xecms-api-version", "1");
+  });
+
+  app.get("/api/live", async () => ({ status: "live", version: "0.4.0" }));
+
+  app.get("/api/ready", async (_request, reply) => {
+    const checks:{database:boolean;migrations:boolean;storage:boolean;plugins:boolean}={database:false,migrations:false,storage:false,plugins:false};
+    try{await database.ping();checks.database=true;const migrationTable=qualifiedName(database.schema,"_xecms_core_migrations");const result=await database.pool.query<{id:string}>(`SELECT id FROM ${migrationTable} ORDER BY id`);checks.migrations=CORE_MIGRATION_IDS.every(id=>result.rows.some(row=>row.id===id))&&!result.rows.some(row=>!CORE_MIGRATION_IDS.includes(row.id as never));await mkdir(config.mediaStorageRoot,{recursive:true});await access(config.mediaStorageRoot,constants.R_OK|constants.W_OK);checks.storage=true;const catalog=await plugins.listCatalog(DEFAULT_WORKSPACE_ID);checks.plugins=catalog.every(plugin=>plugin.installed?.desiredState!=="enabled"||plugin.runtimeLoaded&&!plugin.restartRequired)}catch{reply.code(503);return{status:"not-ready",checks,version:"0.4.0"}}if(Object.values(checks).some(value=>!value))reply.code(503);return{status:Object.values(checks).every(Boolean)?"ready":"not-ready",checks,version:"0.4.0"};
   });
 
   app.get("/api/health", async (): Promise<HealthResponse> => {
     await database.ping();
-    return { status: "ok", database: "connected", version: "0.4.0-m4c4" };
+    return { status: "ok", database: "connected", version: "0.4.0-m4c5" };
   });
 
   app.get("/api/system/diagnostics", async (request): Promise<SystemDiagnosticsDto> => {
@@ -964,7 +975,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     const postgres = await database.pool.query<{ version: string }>(
       "SELECT current_setting('server_version') AS version",
     );
-    return { environment: config.nodeEnv, xecmsVersion: "0.4.0-m4c4", nodeVersion: process.version,
+    return { environment: config.nodeEnv, xecmsVersion: "0.4.0-m4c5", nodeVersion: process.version,
       postgresVersion: postgres.rows[0]!.version, schemaMode: config.schemaMode,
       workerEnabled: config.workerEnabled, uploadLimitBytes: config.mediaMaxUploadBytes,
       allowedMimeTypes: config.mediaAllowedMimeTypes, adminOriginCount: config.adminOrigins.length,

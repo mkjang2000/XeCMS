@@ -1,0 +1,27 @@
+{
+  "name": "@xecms/cli",
+  "version": "0.4.0",
+  "type": "module",
+  "bin": {
+    "xecms": "./dist/bin.js",
+    "create-xecms": "./dist/bin-create.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/*.integration.test.*",
+    "!dist/.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@xecms/database": "workspace:*",
+    "@xecms/plugin-sdk": "workspace:*",
+    "@xecms/schema": "workspace:*",
+    "@xecms/server": "workspace:*"
+  }
+}

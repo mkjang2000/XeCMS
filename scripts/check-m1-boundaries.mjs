@@ -16,6 +16,10 @@ const rules = [
     allowedXeCms: new Set(),
   },
   {
+    directory: "packages/cli",
+    allowedXeCms: new Set(["@xecms/database", "@xecms/plugin-sdk", "@xecms/schema", "@xecms/server"]),
+  },
+  {
     directory: "examples/example-plugin",
     allowedXeCms: new Set(["@xecms/plugin-sdk"]),
   },

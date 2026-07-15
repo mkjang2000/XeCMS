@@ -1,6 +1,6 @@
 # XeCMS M4 구현 계획
 
-> 상태: M4-A·M4-B·M4-C1·M4-C2·M4-C3·M4-C4 완료, 다음 M4-C5 (2026-07-15)
+> 상태: M4-A·M4-B·M4-C1~M4-C5 완료 (2026-07-15)
 > 상위 문서: [XeCMS MVP 사양서](./mvp-specification.md)  
 > 선행 조건: [M3 Authorization Platform](./m3-authorization-platform.md) 완료
 
@@ -61,7 +61,8 @@ M4-B는 M4-A의 Identity/Realm event와 M3 Role Binding event도 같은 outbox�
    — **완료**
    상세 계약: [M4-C4 Trusted Plugin Platform 상세 사양](./m4c4-plugin-platform.md)
 5. **M4-C5 Operations & Distribution** — CLI/doctor, starter, 설치, upgrade,
-   backup/restore와 전체 MVP E2E
+   backup/restore와 전체 MVP E2E — **완료**
+   상세 계약: [M4-C5 Operations & Distribution 상세 사양](./m4c5-operations-distribution.md)
 
 M4-C1부터 순서대로 각 묶음의 PostgreSQL·HTTP·Admin Chromium Gate를 닫은 뒤 다음
 묶음으로 이동한다.

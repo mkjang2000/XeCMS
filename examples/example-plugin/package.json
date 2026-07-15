@@ -1,7 +1,6 @@
 {
   "name": "@xecms/example-plugin",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "dependencies": { "@xecms/plugin-sdk": "workspace:*" },

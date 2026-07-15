@@ -180,6 +180,21 @@ importers:
 
   packages/authorization: {}
 
+  packages/cli:
+    dependencies:
+      '@xecms/database':
+        specifier: workspace:*
+        version: link:../database
+      '@xecms/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+      '@xecms/schema':
+        specifier: workspace:*
+        version: link:../schema
+      '@xecms/server':
+        specifier: workspace:*
+        version: link:../../apps/server
+
   packages/client:
     dependencies:
       '@xecms/contracts':

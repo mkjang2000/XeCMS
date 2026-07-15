@@ -2,7 +2,7 @@
 
 개발자가 UI, 선언형 Schema, SDK 및 Plugin 순서로 점진적으로 확장할 수 있는 범용 CMS 프로젝트다.
 
-**M0 — Domain Prototype**부터 **M4-B — Hook, Event & Worker**까지 완료했다.
+**M0 — Domain Prototype**부터 **M4-C5 — Operations & Distribution**까지 MVP를 완료했다.
 현재 XeCMS는 PostgreSQL, REST API, Schema/Migration, 계층형 Content, Media,
 Draft/Publish/Revision, 동일 레벨 Role과 Resource Scope 권한을 React Admin Studio까지
 하나의 경로로 실행할 수 있다. CMS 운영 계정과 Content Realm 계정은 Global Identity를
@@ -29,12 +29,28 @@ at-least-once로 처리한다.
 - [M4-C2 Sites & System Settings 상세 사양](./docs/m4c2-sites-system-settings.md)
 - [M4-C3 Unified Audit & Retention 상세 사양](./docs/m4c3-audit-retention.md)
 - [M4-C4 Trusted Plugin Platform 상세 사양](./docs/m4c4-plugin-platform.md)
+- [M4-C5 Operations & Distribution 상세 사양](./docs/m4c5-operations-distribution.md)
+- [XeCMS 0.4 운영 Runbook](./docs/operations-runbook.md)
 - [Admin Studio 사양](./docs/admin-ui-specification.md)
 - [Schema IR 사양](./docs/schema-ir-specification.md)
 - [Document와 Revision 사양](./docs/document-revision-specification.md)
 - [Authorization Evaluation 사양](./docs/authorization-evaluation-specification.md)
 
-## M1 로컬 실행
+## 새 프로젝트 생성
+
+```bash
+pnpm dlx --package=@xecms/cli create-xecms my-cms --starter blog
+cd my-cms
+pnpm install
+docker compose up -d --wait
+pnpm migrate
+pnpm dev
+```
+
+Starter는 `minimal`, `blog`, `community`를 제공한다. `xecms doctor`, `xecms backup`과
+전체 운영 절차는 [운영 Runbook](./docs/operations-runbook.md)을 따른다.
+
+## 저장소 로컬 실행
 
 ```bash
 pnpm install
@@ -47,11 +63,11 @@ Admin Studio는 `http://127.0.0.1:5173/admin/login`에서 열 수 있다. 로컬
 기본 계정은 `admin/admin`이며 `NODE_ENV=development`의 개발 seed에서만
 허용된다.
 
-M4-B까지의 누적 검증은 실제 임시 PostgreSQL과 Chromium을 포함한다.
+MVP 전체 누적 검증은 실제 임시 PostgreSQL, backup/restore와 Chromium을 포함한다.
 
 ```bash
 pnpm exec playwright install chromium
-pnpm verify:m4b
+pnpm verify:m4c5
 ```
 
 M4-A Community 검증 화면은 활성화한 Realm key에 따라
