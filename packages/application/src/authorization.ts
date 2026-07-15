@@ -13,6 +13,7 @@ import {
   authorizeRoleCreate,
   authorizeRoleDelete,
   authorizeRoleUpdate,
+  authorizeSubjectDisable,
   createPolicySnapshot,
   evaluateAccess,
   evaluateFieldAccess,
@@ -429,6 +430,12 @@ const PERMISSION_CATALOG_SOURCE = [
   ["identity.disable", "target-subject", true],
   ["identity.credentials.reset", "target-subject", true],
   ["identity.session.revoke", "target-subject", true],
+  ["identity.owner.transfer", "target-subject", false, true],
+  // A Content-only Identity has no System Subject yet, so there is no valid
+  // System hierarchy target to compare until this operation succeeds.
+  ["identity.system-membership.create", "none", true],
+  ["service-account.create", "none", true],
+  ["service-account.update", "target-subject", true],
   ["group.read", "none", true],
   ["group.create", "none", true],
   ["group.update", "none", true],
@@ -452,9 +459,21 @@ const PERMISSION_CATALOG_SOURCE = [
   ["job.read", "none", true],
   ["job.retry", "none", true],
   ["audit.read", "none", true],
+  ["audit.export", "none", true],
+  ["retention.read", "none", true],
+  ["retention.update", "none", true],
+  ["retention.preview", "none", true],
+  ["retention.apply", "none", true],
+  ["media.consistency.read", "none", true],
   ["api-key.create", "none", true],
   ["api-key.revoke", "none", true],
   ["system.settings.update", "none", true],
+  ["system.settings.read", "none", true],
+  ["site.read", "none", true],
+  ["site.create", "none", true],
+  ["site.update", "none", true],
+  ["site.archive", "none", true],
+  ["site.collection.bind", "none", true],
 ] as const satisfies readonly (readonly [string, HierarchyGuard, boolean, boolean?])[];
 
 export const DEFAULT_PERMISSION_CATALOG: readonly AuthorizationPermissionRecord[] = Object.freeze(
@@ -495,6 +514,9 @@ const IDENTITY_PERMISSIONS = Object.freeze([
   "identity.disable",
   "identity.credentials.reset",
   "identity.session.revoke",
+  "identity.system-membership.create",
+  "service-account.create",
+  "service-account.update",
   "group.read",
   "group.create",
   "group.update",
@@ -879,6 +901,25 @@ export class AuthorizationApplicationService {
     return decision;
   }
 
+  /**
+   * Evaluates a target-subject management permission with the same rank and
+   * protected-target rules used by authorization policy mutations.
+   */
+  public async requireSubjectManagement(
+    actor: AuthorizationActor,
+    input: { readonly action: string; readonly targetSubjectId: string },
+  ): Promise<AuthorizationDecisionRecord> {
+    const entry = await this.load(actor.realmId);
+    const decision = authorizeSubjectDisable(entry.snapshot, {
+      actorSubjectId: asSubjectId(actor.subjectId),
+      targetSubjectId: asSubjectId(input.targetSubjectId),
+      action: asPermissionKey(input.action),
+      now: this.runtime.now(),
+    });
+    if (!decision.allowed) authorizationDenied(decision);
+    return plainDecision(decision);
+  }
+
   /** Simulation deliberately calls the same production path and uses the same cache. */
   public async simulate(
     requestingActor: AuthorizationActor,
@@ -1134,6 +1175,7 @@ export class AuthorizationApplicationService {
       readonly collections: readonly {
         readonly id: string;
         readonly name: string;
+        readonly parentResourceId?: string;
       }[];
     },
   ): Promise<AuthorizationPolicyState> {
@@ -1176,15 +1218,22 @@ export class AuthorizationApplicationService {
         protected: true,
       },
     ];
-    const collectionResources = input.collections.map(({ id, name }) => {
+    const collectionResources = input.collections.map(({ id, name, parentResourceId }) => {
       validateIdentifier(id, "collection.id");
       validateDisplayName(name, "collection.name");
+      if (parentResourceId !== undefined &&
+        !entry.state.resources.some(({ id: resourceId }) => resourceId === parentResourceId)) {
+        throw new ApplicationError(
+          "AUTHORIZATION_RESOURCE_PARENT_NOT_FOUND", 409,
+          `Collection resource parent '${parentResourceId}' does not exist.`,
+        );
+      }
       return {
         id: realmCollectionResourceId(actor.realmId, id),
         realmId: actor.realmId,
         name,
         type: "collection",
-        parentId: coreResourceId(actor.realmId, "content"),
+        parentId: parentResourceId ?? coreResourceId(actor.realmId, "content"),
       } satisfies AuthorizationResourceRecord;
     });
     const duplicateIds = findDuplicate([...coreResources, ...collectionResources].map(({ id }) => id));

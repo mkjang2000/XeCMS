@@ -30,6 +30,98 @@ export interface HealthResponse {
   readonly version: string;
 }
 
+export interface SystemDiagnosticsDto {
+  readonly environment: "development" | "test" | "production";
+  readonly xecmsVersion: string;
+  readonly nodeVersion: string;
+  readonly postgresVersion: string;
+  readonly schemaMode: "editable" | "locked" | "manifest-only";
+  readonly workerEnabled: boolean;
+  readonly uploadLimitBytes: number;
+  readonly allowedMimeTypes: readonly string[];
+  readonly adminOriginCount: number;
+  readonly contentOriginCount: number;
+  readonly storageAdapter: "local";
+}
+
+export interface WorkspaceSettingsDto {
+  readonly workspaceId: string; readonly displayName: string; readonly defaultTimezone: string;
+  readonly adminLocale: string; readonly revision: number; readonly updatedAt: string;
+  readonly updatedBy: string;
+}
+
+export interface UpdateWorkspaceSettingsRequest {
+  readonly expectedRevision: number; readonly displayName: string; readonly defaultTimezone: string;
+  readonly adminLocale: string; readonly currentPassword: string;
+}
+
+export interface SiteDto {
+  readonly siteId:string; readonly workspaceId:string; readonly key:string; readonly name:string;
+  readonly canonicalUrl?:string; readonly status:"active"|"archived"; readonly isDefault:boolean;
+  readonly revision:number; readonly createdAt:string; readonly createdBy:string;
+  readonly updatedAt:string; readonly updatedBy:string; readonly archivedAt?:string;
+  readonly collectionIds:readonly string[];
+}
+export interface SiteListDto { readonly items:readonly SiteDto[]; }
+export interface CreateSiteRequest { readonly key:string; readonly name:string; readonly canonicalUrl?:string; }
+export interface UpdateSiteRequest { readonly expectedRevision:number; readonly name:string; readonly canonicalUrl?:string; }
+export interface SiteStatusRequest { readonly expectedRevision:number; readonly currentPassword:string; readonly replacementDefaultSiteId?:string; }
+export interface SetDefaultSiteRequest { readonly expectedRevision:number; readonly currentPassword:string; }
+export interface SiteCollectionBindingRequest { readonly expectedSiteRevision:number; readonly expectedPolicyRevision:number; readonly currentPassword:string; }
+
+export type UnifiedAuditSourceDto = "system" | "document" | "authorization" | "delivery";
+export type UnifiedAuditCategoryDto = "security" | "identity" | "content" | "schema"
+  | "authorization" | "settings" | "site" | "worker" | "media" | "retention";
+export type UnifiedAuditOutcomeDto = "succeeded" | "failed" | "denied" | "informational";
+export interface UnifiedAuditEntryDto {
+  readonly id:string; readonly source:UnifiedAuditSourceDto; readonly sourceId:string;
+  readonly category:UnifiedAuditCategoryDto; readonly action:string; readonly outcome:UnifiedAuditOutcomeDto;
+  readonly workspaceId:string; readonly realmId?:string; readonly siteId?:string;
+  readonly actorIdentityId?:string; readonly actorSubjectId?:string; readonly actorLabel?:string;
+  readonly targetType:string; readonly targetId?:string; readonly summary:string;
+  readonly before?:unknown; readonly after?:unknown; readonly metadata?:Readonly<Record<string,unknown>>;
+  readonly requestId?:string; readonly occurredAt:string;
+}
+export interface UnifiedAuditListDto { readonly items:readonly UnifiedAuditEntryDto[]; readonly nextCursor?:string; }
+export interface UnifiedAuditQueryDto {
+  readonly category?:UnifiedAuditCategoryDto; readonly source?:UnifiedAuditSourceDto;
+  readonly action?:string; readonly actorId?:string; readonly targetId?:string;
+  readonly realmId?:string; readonly siteId?:string; readonly outcome?:UnifiedAuditOutcomeDto;
+  readonly from?:string; readonly to?:string; readonly cursor?:string; readonly limit?:number;
+}
+export interface RetentionPolicyDto {
+  readonly workspaceId:string; readonly auditDays:number|null; readonly dispatchedOutboxDays:number|null;
+  readonly succeededDeliveryDays:number|null; readonly deadDeliveryDays:number|null;
+  readonly expiredSessionDays:number|null; readonly softDeletedDocumentDays:number|null;
+  readonly revision:number; readonly updatedAt:string; readonly updatedBy:string;
+}
+export interface UpdateRetentionPolicyRequest {
+  readonly expectedRevision:number; readonly auditDays:number|null; readonly dispatchedOutboxDays:number|null;
+  readonly succeededDeliveryDays:number|null; readonly deadDeliveryDays:number|null;
+  readonly expiredSessionDays:number|null; readonly softDeletedDocumentDays:number|null;
+  readonly currentPassword:string;
+}
+export interface RetentionCountsDto {
+  readonly systemAudit:number; readonly documentAudit:number; readonly authorizationAudit:number;
+  readonly dispatchedOutbox:number; readonly succeededDeliveries:number; readonly deadDeliveries:number;
+  readonly expiredSessions:number; readonly softDeletedDocuments:number;
+}
+export interface RetentionCutoffsDto {
+  readonly audit:string|null; readonly dispatchedOutbox:string|null;
+  readonly succeededDelivery:string|null; readonly deadDelivery:string|null;
+  readonly expiredSession:string|null; readonly softDeletedDocument:string|null;
+}
+export interface RetentionPlanDto {
+  readonly id:string; readonly workspaceId:string; readonly policyRevision:number;
+  readonly status:"previewed"|"applied"|"expired"; readonly referenceAt:string;
+  readonly cutoffs:RetentionCutoffsDto; readonly counts:RetentionCountsDto;
+  readonly estimatedBytes:Readonly<Record<string,number>>; readonly digest:string;
+  readonly createdAt:string; readonly createdBy:string; readonly expiresAt:string;
+  readonly appliedAt?:string; readonly appliedBy?:string; readonly results?:RetentionCountsDto;
+}
+export interface PreviewRetentionRequest { readonly expectedPolicyRevision:number; }
+export interface ApplyRetentionRequest { readonly expectedPolicyRevision:number; readonly currentPassword:string; }
+
 export interface UserDto {
   readonly id: string;
   readonly username: string;
@@ -57,6 +149,7 @@ export interface SchemaRevisionSummaryDto {
 
 export interface SessionDto {
   readonly user: UserDto | null;
+  readonly passwordChangeRequired?: boolean;
   readonly csrfToken?: string;
   readonly workspace?: WorkspaceDto;
   readonly capabilities?: readonly AdminCapability[];
@@ -70,6 +163,7 @@ export interface AuthenticatedSessionDto extends SessionDto {
   readonly workspace: WorkspaceDto;
   readonly capabilities: readonly AdminCapability[];
   readonly schema: SchemaRevisionSummaryDto;
+  readonly passwordChangeRequired: boolean;
 }
 
 export interface BootstrapStatusDto {
@@ -647,6 +741,145 @@ export interface GlobalIdentityListDto {
   readonly items: readonly GlobalIdentityDto[];
 }
 
+export type ManagedIdentityKindDto = "human" | "service";
+export type ManagedIdentityStatusDto = "active" | "disabled";
+
+export interface ManagedIdentityMembershipDto {
+  readonly membershipId: string;
+  readonly realmId: string;
+  readonly realmKey: string;
+  readonly realmName: string;
+  readonly realmKind: "system" | "content";
+  readonly subjectId: string;
+  readonly status: RealmMembershipStatusDto;
+  readonly profileDocumentId?: string;
+}
+
+export interface ManagedIdentityDto {
+  readonly identityId: string;
+  readonly workspaceId: string;
+  readonly kind: ManagedIdentityKindDto;
+  readonly primaryIdentifier: string;
+  readonly originRealmId: string;
+  readonly isOwner: boolean;
+  readonly status: ManagedIdentityStatusDto;
+  readonly credentialVersion: number;
+  readonly passwordChangeRequired: boolean;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly disabledAt?: string;
+  readonly memberships: readonly ManagedIdentityMembershipDto[];
+}
+
+export interface ManagedIdentityListDto {
+  readonly items: readonly ManagedIdentityDto[];
+  readonly nextCursor?: string;
+}
+
+export interface CreateManagedIdentityRequest {
+  readonly primaryIdentifier: string;
+  readonly temporaryPassword: string;
+}
+
+export interface UpdateManagedIdentityRequest {
+  readonly expectedRevision: number;
+  readonly primaryIdentifier: string;
+}
+
+export interface ManagedIdentityRevisionRequest {
+  readonly expectedRevision: number;
+}
+
+export interface ResetManagedIdentityCredentialsRequest extends ManagedIdentityRevisionRequest {
+  readonly temporaryPassword: string;
+  readonly currentPassword: string;
+  readonly revokeApiKeys?: boolean;
+}
+
+export type CredentialTokenPurposeDto = "invitation" | "password-reset";
+
+export interface CreateCredentialTokenRequest extends ManagedIdentityRevisionRequest {
+  readonly currentPassword: string;
+}
+
+export interface CreatedCredentialTokenDto {
+  readonly purpose: CredentialTokenPurposeDto;
+  readonly identityId: string;
+  readonly secret: string;
+  readonly expiresAt: string;
+}
+
+export interface CompleteCredentialTokenRequest {
+  readonly token: string;
+  readonly newPassword: string;
+}
+
+export interface ChangeOwnPasswordRequest {
+  readonly currentPassword: string;
+  readonly newPassword: string;
+}
+
+export interface ManagedSessionDto {
+  readonly sessionId: string;
+  readonly audience: "admin" | "content";
+  readonly identityId: string;
+  readonly realmId: string;
+  readonly realmName: string;
+  readonly membershipId: string;
+  readonly createdAt: string;
+  readonly authenticatedAt: string;
+  readonly expiresAt: string;
+  readonly revokedAt?: string;
+  readonly revokedByIdentityId?: string;
+  readonly revokeReason?: string;
+  readonly current: boolean;
+}
+
+export interface ManagedSessionListDto {
+  readonly items: readonly ManagedSessionDto[];
+}
+
+export interface SessionRevocationResultDto {
+  readonly revokedCount: number;
+}
+
+export interface TransferOwnerRequest {
+  readonly targetIdentityId: string;
+  readonly reason: string;
+  readonly currentPassword: string;
+}
+
+export interface CreateServiceIdentityRequest {
+  readonly primaryIdentifier: string;
+}
+
+export interface ApiKeyDto {
+  readonly apiKeyId: string;
+  readonly identityId: string;
+  readonly name: string;
+  readonly prefix: string;
+  readonly scopes: readonly string[];
+  readonly createdAt: string;
+  readonly expiresAt?: string;
+  readonly lastUsedAt?: string;
+  readonly revokedAt?: string;
+}
+
+export interface CreatedApiKeyDto extends ApiKeyDto {
+  readonly secret: string;
+}
+
+export interface ApiKeyListDto {
+  readonly items: readonly ApiKeyDto[];
+}
+
+export interface CreateApiKeyRequest {
+  readonly name: string;
+  readonly scopes: readonly string[];
+  readonly expiresAt?: string;
+}
+
 export interface IdentityRealmDto {
   readonly realmId: string;
   readonly realmKey: string;
@@ -828,7 +1061,8 @@ export interface DurableEventDto {
   readonly workspaceId: string;
   readonly realmId?: string;
   readonly aggregate: {
-    readonly type: "document" | "identity" | "realm" | "authorization" | "media";
+    readonly type: "document" | "identity" | "realm" | "authorization" | "media"
+      | "workspace" | "site" | "retention";
     readonly id: string;
     readonly version?: number;
   };

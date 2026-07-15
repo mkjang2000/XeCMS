@@ -57,6 +57,10 @@ export function AppShell() {
             <Icon name="identity" size={18} />
             <span>Identity Realms</span>
           </NavLink>
+          <NavLink to="/admin/users">
+            <Icon name="identity" size={18} />
+            <span>사용자</span>
+          </NavLink>
           <NavLink to="/admin/access">
             <Icon name="shield" size={18} />
             <span>권한</span>
@@ -64,6 +68,14 @@ export function AppShell() {
           <NavLink to="/admin/jobs">
             <Icon name="events" size={18} />
             <span>이벤트 작업</span>
+          </NavLink>
+          <NavLink to="/admin/operations">
+            <Icon name="shield" size={18} />
+            <span>운영 및 감사</span>
+          </NavLink>
+          <NavLink to="/admin/settings">
+            <Icon name="workspace" size={18} />
+            <span>설정 및 사이트</span>
           </NavLink>
         </nav>
         <div className={styles.sidebarFooter}>

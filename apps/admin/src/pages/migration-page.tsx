@@ -35,10 +35,15 @@ export function MigrationPage() {
     queryKey: queryKeys.collectionDraft(collectionId),
     queryFn: () => api.collections.get(collectionId),
   });
+  const diagnostics = useQuery({
+    queryKey: queryKeys.diagnostics,
+    queryFn: () => api.settings.diagnostics(),
+  });
+  const editable = diagnostics.data?.schemaMode === "editable";
   const preview = useQuery({
     queryKey: queryKeys.migration(collectionId, collection.data?.draftVersion ?? "none"),
     queryFn: () => api.collections.preview(collectionId, { expectedDraftVersion: collection.data!.draftVersion }),
-    enabled: collection.data !== undefined,
+    enabled: collection.data !== undefined && editable,
   });
   const apply = useMutation({
     mutationFn: () => api.collections.apply(collectionId, {
@@ -55,9 +60,16 @@ export function MigrationPage() {
   });
   const applyError = apply.isError ? toAdminApiError(apply.error) : null;
 
-  if (collection.isPending || preview.isPending) return <Page><PageLoading label="Migration 계획을 계산하는 중" /></Page>;
+  if (collection.isPending || diagnostics.isPending || (editable && preview.isPending)) return <Page><PageLoading label="Migration 계획을 계산하는 중" /></Page>;
   if (collection.isError) return <Page><LoadError error={collection.error} onRetry={() => void collection.refetch()} /></Page>;
+  if (diagnostics.isError) return <Page><LoadError error={diagnostics.error} onRetry={() => void diagnostics.refetch()} /></Page>;
+  if (!editable) return <Page>
+    <PageHeader eyebrow="Migration review" title="변경 사항 검토" description="Schema 적용 정책을 확인합니다." />
+    <Callout tone="warning">Schema mode가 <strong>{diagnostics.data.schemaMode}</strong>이므로 migration preview와 적용이 잠겨 있습니다.</Callout>
+    <div className={styles.formActions}><Button variant="secondary" onPress={() => navigate(`/admin/schema/${collectionId}`)}>스키마로 돌아가기</Button></div>
+  </Page>;
   if (preview.isError) return <Page><LoadError error={preview.error} onRetry={() => void preview.refetch()} /></Page>;
+  if (preview.data === undefined) return <Page><PageLoading label="Migration 계획을 계산하는 중" /></Page>;
 
   return (
     <Page>

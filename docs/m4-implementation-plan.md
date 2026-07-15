@@ -1,6 +1,6 @@
 # XeCMS M4 구현 계획
 
-> 상태: M4-A·M4-B 완료, M4-C 하위 계획 확정 (2026-07-15)  
+> 상태: M4-A·M4-B·M4-C1·M4-C2·M4-C3 완료, 다음 M4-C4 (2026-07-15)
 > 상위 문서: [XeCMS MVP 사양서](./mvp-specification.md)  
 > 선행 조건: [M3 Authorization Platform](./m3-authorization-platform.md) 완료
 
@@ -49,10 +49,14 @@ M4-B는 M4-A의 Identity/Realm event와 M3 Role Binding event도 같은 outbox�
 > 상세 순서: [M4-C Administration, Plugin & Productization 구현 계획](./m4c-administration-productization-plan.md)
 
 1. **M4-C1 Users & Credentials** — Identity/Membership 관리, credential, session,
-   서비스 계정과 API key
+   서비스 계정과 API key — **완료**
+   상세 계약: [M4-C1 Users & Credentials 상세 사양](./m4c1-user-identity-administration.md)
 2. **M4-C2 Sites & System Settings** — Instance/Workspace 진단, Site, Schema lock과
-   플랫폼 설정
+   플랫폼 설정 — **완료**
+   상세 계약: [M4-C2 Sites & System Settings 상세 사양](./m4c2-sites-system-settings.md)
 3. **M4-C3 Audit & Lifecycle** — 통합 Audit, retention, 정리 preview와 운영 Overview
+   — **완료**
+   상세 계약: [M4-C3 Unified Audit & Retention 상세 사양](./m4c3-audit-retention.md)
 4. **M4-C4 Plugin Platform** — Manifest, 확장 entry, migration, lifecycle과 예제 Plugin
 5. **M4-C5 Operations & Distribution** — CLI/doctor, starter, 설치, upgrade,
    backup/restore와 전체 MVP E2E

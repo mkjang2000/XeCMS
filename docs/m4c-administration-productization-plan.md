@@ -1,6 +1,6 @@
 # M4-C Administration, Plugin & Productization 구현 계획
 
-> 상태: 하위 묶음 확정, M4-C1 착수 대기 (2026-07-15)  
+> 상태: M4-C1·M4-C2·M4-C3 완료, 다음 M4-C4 (2026-07-15)
 > 상위 계획: [M4 구현 계획](./m4-implementation-plan.md)  
 > 선행 조건: [M4-B Hook, Event & Worker](./m4b-event-worker-specification.md) 완료
 
@@ -40,6 +40,8 @@ M4-C1 Users & Credentials
 - 각 묶음은 미완성 메뉴나 동작하지 않는 버튼을 다음 묶음의 완료 기능처럼 노출하지 않는다.
 
 ## 3. M4-C1 — Users & Credentials
+
+> 완료: TypeScript·PostgreSQL·HTTP·Admin Chromium Gate 통과
 
 ### 3.1 목표
 
@@ -83,6 +85,10 @@ Adapter로 연결한다. 로컬 개발에서는 명시적인 개발 전달 방�
 
 ## 4. M4-C2 — Sites & System Settings
 
+> 완료: TypeScript·PostgreSQL·HTTP·Admin Chromium Gate 통과
+>
+> 상세 계약: [M4-C2 Sites & System Settings 상세 사양](./m4c2-sites-system-settings.md)
+
 ### 4.1 목표
 
 콘텐츠 Singleton과 플랫폼 설정을 혼동하지 않고 Instance, Workspace와 Site 운영 경계를
@@ -116,6 +122,10 @@ Adapter로 연결한다. 로컬 개발에서는 명시적인 개발 전달 방�
 - 설정 CAS 충돌과 권한 상승 회귀를 PostgreSQL·HTTP·Chromium으로 검증한다.
 
 ## 5. M4-C3 — Audit & Lifecycle
+
+> 완료: TypeScript·PostgreSQL·HTTP·Admin Chromium Gate 통과
+>
+> 상세 계약: [M4-C3 Unified Audit & Retention 상세 사양](./m4c3-audit-retention.md)
 
 ### 5.1 목표
 
@@ -225,12 +235,6 @@ Adapter로 연결한다. 로컬 개발에서는 명시적인 개발 전달 방�
 
 ## 9. 다음 작업
 
-첫 구현 대상은 M4-C1이다. 구현 전에 다음 세부 결정을
-`m4c1-user-identity-administration.md`에 확정한다.
-
-1. 초대와 credential reset token의 수명·회수·일회성 규칙
-2. Identity disable과 Membership suspend의 session/API key 영향
-3. Owner 이전과 마지막 Owner 보호 절차
-4. 서비스 계정과 사람 Identity의 분리
-5. API key scope와 M3 Permission 교차 규칙
-6. Global Identity 상세 화면의 Realm 경계와 개인정보 redaction
+다음 구현 대상은 M4-C4 Plugin Platform이다. C3에서 닫은 Audit·Outbox·보존 경계를
+Plugin lifecycle과 migration에도 그대로 적용하면서 Manifest, extension entry,
+호환성 검증과 예제 Plugin의 상세 계약부터 확정한다.

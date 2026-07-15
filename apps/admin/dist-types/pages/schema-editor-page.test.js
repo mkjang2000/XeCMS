@@ -80,6 +80,9 @@ function renderEditor(input) {
         identityRealms: {
             list: vi.fn().mockResolvedValue({ items: input.realms ?? [contentRealm] }),
         },
+        settings: {
+            diagnostics: vi.fn().mockResolvedValue({ schemaMode: "editable" }),
+        },
     };
     const queryClient = new QueryClient({
         defaultOptions: {

@@ -249,6 +249,13 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
         "Identity Realm administration requires a System Realm session.",
       );
     }
+    if (actor.authentication === "api-key") {
+      throw new ApplicationError(
+        "API_KEY_ADMINISTRATION_FORBIDDEN",
+        403,
+        "API keys cannot administer Identity Realms or Full Access.",
+      );
+    }
     return externalActor(actor);
   };
 
@@ -1113,6 +1120,7 @@ function externalActor(actor: ActorContext): ActorContext {
     ...(actor.realmId === undefined ? {} : { realmId: actor.realmId }),
     capabilities: actor.capabilities,
     ...(actor.authorization === undefined ? {} : { authorization: actor.authorization }),
+    ...(actor.authentication === undefined ? {} : { authentication: actor.authentication }),
   };
 }
 

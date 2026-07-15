@@ -189,21 +189,52 @@ export class PostgresEventWorkerStore implements EventWorkerStore {
     return result.rows[0] === undefined ? null : deliveryFromRow(result.rows[0]);
   }
 
-  public async retry(deliveryId: string, now: string): Promise<EventDelivery> {
-    const result = await this.pool.query(
-      `UPDATE ${this.q("_xecms_event_deliveries")}
-          SET status = 'pending', attempts = 0, available_at = $2,
-              locked_by = NULL, locked_until = NULL, last_error_code = NULL,
-              last_error_message = NULL, completed_at = NULL, updated_at = $2
-        WHERE id = $1 AND status IN ('dead', 'pending')`,
-      [deliveryId, now],
-    );
-    if (result.rowCount !== 1) {
-      const existing = await this.get(deliveryId);
-      if (existing === null) throw new ApplicationError("JOB_NOT_FOUND", 404, "The event delivery does not exist.");
-      throw new ApplicationError("JOB_RETRY_CONFLICT", 409, "A processing or succeeded delivery cannot be retried.");
+  public async retry(deliveryId: string, now: string, actor: {
+    readonly actorSubjectId?: string; readonly actorIdentityId?: string;
+  } = {}): Promise<EventDelivery> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query<{
+        status: EventDeliveryStatus; attempts: number; event_id: string; workspace_id: string;
+      }>(
+        `SELECT delivery.status, delivery.attempts, delivery.event_id, event.workspace_id
+           FROM ${this.q("_xecms_event_deliveries")} delivery
+           JOIN ${this.q("_xecms_outbox_events")} event ON event.id = delivery.event_id
+          WHERE delivery.id = $1 FOR UPDATE OF delivery`,
+        [deliveryId],
+      );
+      const row = existing.rows[0];
+      if (row === undefined) throw new ApplicationError("JOB_NOT_FOUND", 404, "The event delivery does not exist.");
+      if (row.status !== "dead" && row.status !== "pending") {
+        throw new ApplicationError("JOB_RETRY_CONFLICT", 409, "A processing or succeeded delivery cannot be retried.");
+      }
+      await client.query(
+        `UPDATE ${this.q("_xecms_event_deliveries")}
+            SET status = 'pending', attempts = 0, available_at = $2,
+                locked_by = NULL, locked_until = NULL, last_error_code = NULL,
+                last_error_message = NULL, completed_at = NULL, updated_at = $2
+          WHERE id = $1`,
+        [deliveryId, now],
+      );
+      await client.query(
+        `INSERT INTO ${this.q("_xecms_audit_log")}(event_type, identity_id, occurred_at, metadata)
+         VALUES ('job.delivery.retried', $1, $2, $3::jsonb)`,
+        [actor.actorIdentityId ?? actor.actorSubjectId ?? null, now, JSON.stringify({
+          workspaceId: row.workspace_id, deliveryId, eventId: row.event_id,
+          before: { status: row.status, attempts: Number(row.attempts) },
+          after: { status: "pending", attempts: 0 },
+          ...(actor.actorSubjectId === undefined ? {} : { actorSubjectId: actor.actorSubjectId }),
+        })],
+      );
+      await client.query("COMMIT");
+      return (await this.get(deliveryId))!;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-    return (await this.get(deliveryId))!;
   }
 
   /** Example Handler effect and idempotency receipt are committed together. */

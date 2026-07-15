@@ -285,13 +285,13 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
       const identity = await client.query<IdentityRow>(
         `INSERT INTO ${this.q("_xecms_identities")}
            (id, workspace_id, realm_id, origin_realm_id, username, normalized_username,
-            password_hash, is_owner, credential_version, created_at)
-         SELECT $1, $2, $3, $3, $4, $5, $6, false, 1, $7
+            password_hash, is_owner, credential_version, created_at, updated_at, updated_by)
+         SELECT $1, $2, $3, $3, $4, $5, $6, false, 1, $7, $7, $8
          FROM ${this.q("_xecms_realms")} realm
          WHERE realm.id = $3 AND realm.workspace_id = $2
          RETURNING *`,
         [input.id, input.workspaceId, input.originRealmId, input.primaryIdentifier,
-          input.normalizedIdentifier, input.passwordHash, input.now],
+          input.normalizedIdentifier, input.passwordHash, input.now, input.actorId],
       );
       if (identity.rowCount !== 1) {
         throw new ApplicationError("IDENTITY_ORIGIN_REALM_INVALID", 409, "The origin Realm is invalid.");
@@ -697,9 +697,9 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
   }): Promise<void> {
     const result = await this.pool.query(
       `INSERT INTO ${this.q("_xecms_sessions")}
-         (token_hash, csrf_token_hash, identity_id, created_at, expires_at, audience,
+         (id, token_hash, csrf_token_hash, identity_id, created_at, expires_at, audience,
           realm_id, membership_id, subject_id, authenticated_at, credential_version)
-       SELECT $1, $2, identity.id, $7, $8, 'content', membership.realm_id,
+       SELECT 'session_' || md5($1), $1, $2, identity.id, $7, $8, 'content', membership.realm_id,
               membership.id, membership.subject_id, $7, identity.credential_version
        FROM ${this.q("_xecms_realm_memberships")} membership
        JOIN ${this.q("_xecms_realms")} realm ON realm.id = membership.realm_id
@@ -731,7 +731,8 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
     const result = await this.pool.query<ContentSessionRow>(
       `${CONTENT_SESSION_SELECT(this.q.bind(this))}
        WHERE session.token_hash = $1 AND session.realm_id = $2 AND session.audience = 'content'
-         AND session.expires_at > $3 AND realm.status = 'active' AND realm.kind = 'content'
+         AND session.expires_at > $3 AND session.revoked_at IS NULL
+         AND realm.status = 'active' AND realm.kind = 'content'
          AND membership.status = 'active' AND identity.disabled_at IS NULL
          AND subject.disabled_at IS NULL
          AND session.credential_version = identity.credential_version`,
@@ -758,6 +759,7 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
          ON subject.realm_id = session.realm_id AND subject.id = session.subject_id
        WHERE session.token_hash = $1 AND session.csrf_token_hash = $2
          AND session.realm_id = $3 AND session.audience = 'content' AND session.expires_at > $4
+         AND session.revoked_at IS NULL
          AND realm.kind = 'content' AND realm.status = 'active' AND membership.status = 'active'
          AND identity.disabled_at IS NULL AND subject.disabled_at IS NULL
          AND session.credential_version = identity.credential_version`,
@@ -768,15 +770,18 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
 
   public async deleteContentSession(tokenHash: string, realmId: string): Promise<void> {
     await this.pool.query(
-      `DELETE FROM ${this.q("_xecms_sessions")}
-       WHERE token_hash = $1 AND realm_id = $2 AND audience = 'content'`,
+      `UPDATE ${this.q("_xecms_sessions")}
+          SET revoked_at = now(), revoked_by_identity_id = identity_id, revoke_reason = 'logout'
+        WHERE token_hash = $1 AND realm_id = $2 AND audience = 'content' AND revoked_at IS NULL`,
       [tokenHash, realmId],
     );
   }
 
   public async revokeMembershipSessions(membershipId: string): Promise<void> {
     await this.pool.query(
-      `DELETE FROM ${this.q("_xecms_sessions")} WHERE membership_id = $1`,
+      `UPDATE ${this.q("_xecms_sessions")}
+          SET revoked_at = now(), revoke_reason = 'membership-suspended'
+        WHERE membership_id = $1 AND revoked_at IS NULL`,
       [membershipId],
     );
   }

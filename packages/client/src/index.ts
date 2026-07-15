@@ -7,6 +7,7 @@ import {
   type AuthenticatedSessionDto,
   type BootstrapRequest,
   type BootstrapStatusDto,
+  type ChangeOwnPasswordRequest,
   type CollectionListDto,
   type ContentAuthenticatedSessionDto,
   type ContentRealmLoginRequest,
@@ -41,6 +42,26 @@ import {
   type MediaConsistencyReportDto,
   type MediaListDto,
   type MediaRecordDto,
+  type ManagedIdentityDto,
+  type ManagedIdentityKindDto,
+  type ManagedIdentityListDto,
+  type ManagedIdentityStatusDto,
+  type CreateManagedIdentityRequest,
+  type UpdateManagedIdentityRequest,
+  type ManagedIdentityRevisionRequest,
+  type ManagedSessionDto,
+  type ManagedSessionListDto,
+  type ResetManagedIdentityCredentialsRequest,
+  type SessionRevocationResultDto,
+  type TransferOwnerRequest,
+  type ApiKeyDto,
+  type ApiKeyListDto,
+  type CreateApiKeyRequest,
+  type CreatedApiKeyDto,
+  type CreateServiceIdentityRequest,
+  type CreateCredentialTokenRequest,
+  type CreatedCredentialTokenDto,
+  type CompleteCredentialTokenRequest,
   type MoveDocumentRequest,
   type MoveDocumentPreviewRequest,
   type MoveDocumentPreviewDto,
@@ -78,6 +99,24 @@ import {
   type EventDeliveryListDto,
   type EventDeliveryStatusDto,
   type EventWorkerCycleDto,
+  type SystemDiagnosticsDto,
+  type WorkspaceSettingsDto,
+  type UpdateWorkspaceSettingsRequest,
+  type SiteDto,
+  type SiteListDto,
+  type CreateSiteRequest,
+  type UpdateSiteRequest,
+  type SiteStatusRequest,
+  type SetDefaultSiteRequest,
+  type SiteCollectionBindingRequest,
+  type UnifiedAuditEntryDto,
+  type UnifiedAuditListDto,
+  type UnifiedAuditQueryDto,
+  type RetentionPolicyDto,
+  type RetentionPlanDto,
+  type UpdateRetentionPolicyRequest,
+  type PreviewRetentionRequest,
+  type ApplyRetentionRequest,
 } from "@xecms/contracts";
 
 export * from "@xecms/contracts";
@@ -170,6 +209,31 @@ export interface XeCmsClient {
     getSession(): Promise<SessionDto>;
     login(input: LoginRequest): Promise<AuthenticatedSessionDto>;
     logout(): Promise<void>;
+    changePassword(input: ChangeOwnPasswordRequest): Promise<void>;
+  };
+  readonly settings: {
+    diagnostics(): Promise<SystemDiagnosticsDto>;
+    getWorkspace(): Promise<WorkspaceSettingsDto>;
+    updateWorkspace(input: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettingsDto>;
+  };
+  readonly sites: {
+    list(): Promise<SiteListDto>; get(siteId:string):Promise<SiteDto>;
+    create(input:CreateSiteRequest):Promise<SiteDto>; update(siteId:string,input:UpdateSiteRequest):Promise<SiteDto>;
+    archive(siteId:string,input:SiteStatusRequest):Promise<SiteDto>; reactivate(siteId:string,input:SiteStatusRequest):Promise<SiteDto>;
+    setDefault(siteId:string,input:SetDefaultSiteRequest):Promise<SiteDto>;
+    bindCollection(siteId:string,collectionId:string,input:SiteCollectionBindingRequest):Promise<SiteDto>;
+    unbindCollection(siteId:string,collectionId:string,input:SiteCollectionBindingRequest):Promise<SiteDto>;
+  };
+  readonly operations: {
+    listAudit(query?:UnifiedAuditQueryDto):Promise<UnifiedAuditListDto>;
+    getAudit(entryId:string):Promise<UnifiedAuditEntryDto>;
+    exportAudit(query:UnifiedAuditQueryDto & {readonly from:string;readonly to:string}):Promise<string>;
+    getRetentionPolicy():Promise<RetentionPolicyDto>;
+    updateRetentionPolicy(input:UpdateRetentionPolicyRequest):Promise<RetentionPolicyDto>;
+    previewRetention(input:PreviewRetentionRequest):Promise<RetentionPlanDto>;
+    getRetentionPlan(planId:string):Promise<RetentionPlanDto>;
+    applyRetention(planId:string,input:ApplyRetentionRequest):Promise<RetentionPlanDto>;
+    checkMediaConsistency():Promise<MediaConsistencyReportDto>;
   };
   readonly jobs: {
     list(options?: {
@@ -264,6 +328,36 @@ export interface XeCmsClient {
     contentUrl(mediaId: string): string;
   };
   readonly authorization: AuthorizationClient;
+  readonly identities: {
+    list(options?: {
+      readonly limit?: number;
+      readonly cursor?: string;
+      readonly query?: string;
+      readonly kind?: ManagedIdentityKindDto;
+      readonly status?: ManagedIdentityStatusDto;
+      readonly originRealmId?: string;
+      readonly realmId?: string;
+    }): Promise<ManagedIdentityListDto>;
+    get(identityId: string): Promise<ManagedIdentityDto>;
+    create(input: CreateManagedIdentityRequest): Promise<ManagedIdentityDto>;
+    update(identityId: string, input: UpdateManagedIdentityRequest): Promise<ManagedIdentityDto>;
+    disable(identityId: string, input: ManagedIdentityRevisionRequest): Promise<ManagedIdentityDto>;
+    reactivate(identityId: string, input: ManagedIdentityRevisionRequest): Promise<ManagedIdentityDto>;
+    resetCredentials(identityId: string, input: ResetManagedIdentityCredentialsRequest): Promise<ManagedIdentityDto>;
+    createInvitation(identityId: string, input: CreateCredentialTokenRequest): Promise<CreatedCredentialTokenDto>;
+    createResetToken(identityId: string, input: CreateCredentialTokenRequest): Promise<CreatedCredentialTokenDto>;
+    createSystemMembership(identityId: string, input: ManagedIdentityRevisionRequest): Promise<ManagedIdentityDto>;
+    completeInvitation(input: CompleteCredentialTokenRequest): Promise<void>;
+    completeReset(input: CompleteCredentialTokenRequest): Promise<void>;
+    listSessions(identityId: string): Promise<ManagedSessionListDto>;
+    revokeSession(sessionId: string): Promise<ManagedSessionDto>;
+    revokeAllSessions(identityId: string): Promise<SessionRevocationResultDto>;
+    transferOwner(input: TransferOwnerRequest): Promise<ManagedIdentityDto>;
+    createService(input: CreateServiceIdentityRequest): Promise<ManagedIdentityDto>;
+    listApiKeys(identityId: string): Promise<ApiKeyListDto>;
+    createApiKey(identityId: string, input: CreateApiKeyRequest): Promise<CreatedApiKeyDto>;
+    revokeApiKey(apiKeyId: string): Promise<ApiKeyDto>;
+  };
   readonly identityRealms: {
     listGlobalIdentities(): Promise<GlobalIdentityListDto>;
     list(): Promise<IdentityRealmListDto>;
@@ -368,6 +462,15 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
       }
     }
     return payload;
+  }
+
+  async function requestText(path: string): Promise<string> {
+    const response = await fetchImplementation(`${baseUrl}${path}`, { credentials: "same-origin" });
+    if (!response.ok) {
+      const payload = await parseJson(response);
+      throw new XeCmsApiError(isProblemDetails(payload) ? payload : fallbackProblem(response, payload));
+    }
+    return response.text();
   }
 
   const json = (value: unknown): string => JSON.stringify(value);
@@ -545,6 +648,38 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
         await request<void>("/auth/logout", { method: "POST", csrf: true });
         adminCsrfToken = undefined;
       },
+      changePassword: async (input) => {
+        await request<void>("/credentials/password", {
+          method: "POST", body: json(input), csrf: true,
+        });
+        adminCsrfToken = undefined;
+      },
+    },
+    settings: {
+      diagnostics: () => request<SystemDiagnosticsDto>("/system/diagnostics"),
+      getWorkspace: () => request<WorkspaceSettingsDto>("/workspace/settings"),
+      updateWorkspace: (input) => request<WorkspaceSettingsDto>("/workspace/settings", { method:"PATCH",body:json(input),csrf:true }),
+    },
+    sites: {
+      list:()=>request<SiteListDto>("/sites"),get:(id)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}`),
+      create:(input)=>request<SiteDto>("/sites",{method:"POST",body:json(input),csrf:true}),
+      update:(id,input)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}`,{method:"PATCH",body:json(input),csrf:true}),
+      archive:(id,input)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}/archive`,{method:"POST",body:json(input),csrf:true}),
+      reactivate:(id,input)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}/reactivate`,{method:"POST",body:json(input),csrf:true}),
+      setDefault:(id,input)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}/default`,{method:"POST",body:json(input),csrf:true}),
+      bindCollection:(id,c,input)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}/collections/${encodeURIComponent(c)}`,{method:"PUT",body:json(input),csrf:true}),
+      unbindCollection:(id,c,input)=>request<SiteDto>(`/sites/${encodeURIComponent(id)}/collections/${encodeURIComponent(c)}`,{method:"DELETE",body:json(input),csrf:true}),
+    },
+    operations: {
+      listAudit:(query={})=>request<UnifiedAuditListDto>(`/audit${queryString(query)}`),
+      getAudit:(entryId)=>request<UnifiedAuditEntryDto>(`/audit/${encodeURIComponent(entryId)}`),
+      exportAudit:(query)=>requestText(`/audit/export${queryString(query)}`),
+      getRetentionPolicy:()=>request<RetentionPolicyDto>("/retention/policy"),
+      updateRetentionPolicy:(input)=>request<RetentionPolicyDto>("/retention/policy",{method:"PATCH",body:json(input),csrf:true}),
+      previewRetention:(input)=>request<RetentionPlanDto>("/retention/preview",{method:"POST",body:json(input),csrf:true}),
+      getRetentionPlan:(planId)=>request<RetentionPlanDto>(`/retention/plans/${encodeURIComponent(planId)}`),
+      applyRetention:(planId,input)=>request<RetentionPlanDto>(`/retention/plans/${encodeURIComponent(planId)}/apply`,{method:"POST",body:json(input),csrf:true}),
+      checkMediaConsistency:()=>request<MediaConsistencyReportDto>("/media/consistency"),
     },
     jobs: {
       list: (options = {}) => {
@@ -729,6 +864,81 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
       contentUrl: (mediaId) => `${baseUrl}/media/${encodeURIComponent(mediaId)}/content`,
     },
     authorization: createAuthorizationClient(authorizationPath),
+    identities: {
+      list: (options = {}) => {
+        const search = new URLSearchParams();
+        for (const [key, value] of Object.entries(options)) {
+          if (value !== undefined) search.set(key, String(value));
+        }
+        const query = search.size === 0 ? "" : `?${search.toString()}`;
+        return request<ManagedIdentityListDto>(`/identities${query}`);
+      },
+      get: (identityId) =>
+        request<ManagedIdentityDto>(`/identities/${encodeURIComponent(identityId)}`),
+      create: (input) => request<ManagedIdentityDto>("/identities", {
+        method: "POST", body: json(input), csrf: true,
+      }),
+      update: (identityId, input) =>
+        request<ManagedIdentityDto>(`/identities/${encodeURIComponent(identityId)}`, {
+          method: "PATCH", body: json(input), csrf: true,
+        }),
+      disable: (identityId, input) =>
+        request<ManagedIdentityDto>(`/identities/${encodeURIComponent(identityId)}/disable`, {
+          method: "POST", body: json(input), csrf: true,
+        }),
+      reactivate: (identityId, input) =>
+        request<ManagedIdentityDto>(`/identities/${encodeURIComponent(identityId)}/reactivate`, {
+          method: "POST", body: json(input), csrf: true,
+        }),
+      resetCredentials: (identityId, input) =>
+        request<ManagedIdentityDto>(`/identities/${encodeURIComponent(identityId)}/credentials/reset`, {
+          method: "POST", body: json(input), csrf: true,
+        }),
+      createInvitation: (identityId, input) => request<CreatedCredentialTokenDto>(
+        `/identities/${encodeURIComponent(identityId)}/invitations`,
+        { method: "POST", body: json(input), csrf: true },
+      ),
+      createResetToken: (identityId, input) => request<CreatedCredentialTokenDto>(
+        `/identities/${encodeURIComponent(identityId)}/credentials/reset-token`,
+        { method: "POST", body: json(input), csrf: true },
+      ),
+      createSystemMembership: (identityId, input) => request<ManagedIdentityDto>(
+        `/identities/${encodeURIComponent(identityId)}/system-membership`,
+        { method: "POST", body: json(input), csrf: true },
+      ),
+      completeInvitation: (input) => request<void>("/credentials/setup", {
+        method: "POST", body: json(input),
+      }),
+      completeReset: (input) => request<void>("/credentials/reset/complete", {
+        method: "POST", body: json(input),
+      }),
+      listSessions: (identityId) =>
+        request<ManagedSessionListDto>(`/identities/${encodeURIComponent(identityId)}/sessions`),
+      revokeSession: (sessionId) =>
+        request<ManagedSessionDto>(`/sessions/${encodeURIComponent(sessionId)}`, {
+          method: "DELETE", csrf: true,
+        }),
+      revokeAllSessions: (identityId) =>
+        request<SessionRevocationResultDto>(`/identities/${encodeURIComponent(identityId)}/sessions/revoke`, {
+          method: "POST", body: json({}), csrf: true,
+        }),
+      transferOwner: (input) => request<ManagedIdentityDto>("/owner/transfer", {
+        method: "POST", body: json(input), csrf: true,
+      }),
+      createService: (input) => request<ManagedIdentityDto>("/service-identities", {
+        method: "POST", body: json(input), csrf: true,
+      }),
+      listApiKeys: (identityId) => request<ApiKeyListDto>(
+        `/service-identities/${encodeURIComponent(identityId)}/api-keys`,
+      ),
+      createApiKey: (identityId, input) => request<CreatedApiKeyDto>(
+        `/service-identities/${encodeURIComponent(identityId)}/api-keys`,
+        { method: "POST", body: json(input), csrf: true },
+      ),
+      revokeApiKey: (apiKeyId) => request<ApiKeyDto>(`/api-keys/${encodeURIComponent(apiKeyId)}`, {
+        method: "DELETE", csrf: true,
+      }),
+    },
     identityRealms: {
       listGlobalIdentities: () => request<GlobalIdentityListDto>("/global-identities"),
       list: () => request<IdentityRealmListDto>(identityRealmPath()),
@@ -802,6 +1012,14 @@ function normalizeBaseUrl(value: string): string {
     return "";
   }
   return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function queryString(value: object): string {
+  const search = new URLSearchParams();
+  for (const [key, member] of Object.entries(value)) {
+    if (member !== undefined) search.set(key, String(member));
+  }
+  return search.size === 0 ? "" : `?${search.toString()}`;
 }
 
 async function parseJson(response: Response): Promise<unknown> {

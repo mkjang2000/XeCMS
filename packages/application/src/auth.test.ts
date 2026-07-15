@@ -14,6 +14,7 @@ const identity: IdentityRecord = {
   username: "admin",
   passwordHash: "encoded:correct-password",
   isOwner: true,
+  passwordChangeRequired: false,
 };
 
 describe("AuthApplicationService reauthentication", () => {

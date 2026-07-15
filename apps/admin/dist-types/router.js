@@ -44,6 +44,8 @@ export function createAdminRouter(api, queryClient) {
         });
         if (session.user === null)
             throw redirect("/admin/login");
+        if (session.passwordChangeRequired === true)
+            throw redirect("/admin/password-change");
         return session;
     };
     return createBrowserRouter([
@@ -57,6 +59,24 @@ export function createAdminRouter(api, queryClient) {
         {
             path: "/admin/login",
             lazy: async () => ({ Component: (await import("./pages/auth-pages.js")).LoginPage }),
+            hydrateFallbackElement: _jsx(RouteLoadingPage, {}),
+            errorElement: _jsx(RouteErrorPage, {}),
+        },
+        {
+            path: "/admin/password-change",
+            loader: async () => {
+                const session = await queryClient.fetchQuery({
+                    queryKey: queryKeys.session,
+                    queryFn: () => api.auth.getSession(),
+                    staleTime: 0,
+                });
+                if (session.user === null)
+                    throw redirect("/admin/login");
+                if (session.passwordChangeRequired !== true)
+                    throw redirect("/admin/schema");
+                return session;
+            },
+            lazy: async () => ({ Component: (await import("./pages/auth-pages.js")).PasswordChangePage }),
             hydrateFallbackElement: _jsx(RouteLoadingPage, {}),
             errorElement: _jsx(RouteErrorPage, {}),
         },
@@ -129,6 +149,22 @@ export function createAdminRouter(api, queryClient) {
                 {
                     path: "jobs",
                     lazy: async () => ({ Component: (await import("./pages/jobs-page.js")).JobsPage }),
+                },
+                {
+                    path: "operations",
+                    lazy: async () => ({ Component: (await import("./pages/operations-page.js")).OperationsPage }),
+                },
+                {
+                    path: "users",
+                    lazy: async () => ({ Component: (await import("./pages/user-pages.js")).UserListPage }),
+                },
+                {
+                    path: "users/:identityId",
+                    lazy: async () => ({ Component: (await import("./pages/user-pages.js")).UserDetailPage }),
+                },
+                {
+                    path: "settings",
+                    lazy: async () => ({ Component: (await import("./pages/settings-page.js")).SettingsPage }),
                 },
                 {
                     path: "realms",

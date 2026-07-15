@@ -318,13 +318,27 @@ export function createAdminApi(client = createXeCmsClient()) {
             }),
             getSession: () => call(async () => {
                 const session = await client.auth.getSession();
-                return { user: session.user };
+                return { user: session.user, ...(session.passwordChangeRequired === undefined ? {} : { passwordChangeRequired: session.passwordChangeRequired }) };
             }),
             login: (credentials) => call(async () => {
                 const session = await client.auth.login(credentials);
-                return { user: session.user };
+                return { user: session.user, passwordChangeRequired: session.passwordChangeRequired };
             }),
             logout: () => call(() => client.auth.logout()),
+            changePassword: (input) => call(() => client.auth.changePassword(input)),
+        },
+        settings: { diagnostics: () => call(() => client.settings.diagnostics()), getWorkspace: () => call(() => client.settings.getWorkspace()), updateWorkspace: (input) => call(() => client.settings.updateWorkspace(input)) },
+        sites: { list: () => call(async () => ({ items: (await client.sites.list()).items })), get: (id) => call(() => client.sites.get(id)), create: (input) => call(() => client.sites.create(input)), update: (id, input) => call(() => client.sites.update(id, input)), archive: (id, input) => call(() => client.sites.archive(id, input)), reactivate: (id, input) => call(() => client.sites.reactivate(id, input)), setDefault: (id, input) => call(() => client.sites.setDefault(id, input)), bindCollection: (id, c, input) => call(() => client.sites.bindCollection(id, c, input)), unbindCollection: (id, c, input) => call(() => client.sites.unbindCollection(id, c, input)) },
+        operations: {
+            listAudit: (query) => call(() => client.operations.listAudit(query)),
+            getAudit: (id) => call(() => client.operations.getAudit(id)),
+            exportAudit: (query) => call(() => client.operations.exportAudit(query)),
+            getRetentionPolicy: () => call(() => client.operations.getRetentionPolicy()),
+            updateRetentionPolicy: (input) => call(() => client.operations.updateRetentionPolicy(input)),
+            previewRetention: (expectedPolicyRevision) => call(() => client.operations.previewRetention({ expectedPolicyRevision })),
+            getRetentionPlan: (id) => call(() => client.operations.getRetentionPlan(id)),
+            applyRetention: (id, input) => call(() => client.operations.applyRetention(id, input)),
+            checkMediaConsistency: () => call(async () => { const result = await client.operations.checkMediaConsistency(); return { missing: result.missing.map(item => mapMedia(client, item)), orphanStorageKeys: result.orphanStorageKeys, incomplete: result.incomplete, healthyCount: result.healthyCount }; }),
         },
         jobs: {
             list: (options) => call(() => client.jobs.list(options)),
@@ -584,6 +598,36 @@ export function createAdminApi(client = createXeCmsClient()) {
             }),
             get: (collectionId, documentId, revisionId) => call(async () => mapRevisionDetail(await client.revisions.get(collectionId, documentId, revisionId))),
             restore: (collectionId, documentId, revisionId, input) => call(async () => mapDocument(await client.revisions.restore(collectionId, documentId, revisionId, input))),
+        },
+        identities: {
+            list: (options) => call(async () => {
+                const result = await client.identities.list(options);
+                return {
+                    items: result.items,
+                    ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+                };
+            }),
+            get: (identityId) => call(() => client.identities.get(identityId)),
+            create: (input) => call(() => client.identities.create(input)),
+            update: (identityId, input) => call(() => client.identities.update(identityId, input)),
+            disable: (identityId, expectedRevision) => call(() => client.identities.disable(identityId, { expectedRevision })),
+            reactivate: (identityId, expectedRevision) => call(() => client.identities.reactivate(identityId, { expectedRevision })),
+            resetCredentials: (identityId, input) => call(() => client.identities.resetCredentials(identityId, input)),
+            createInvitation: (identityId, input) => call(() => client.identities.createInvitation(identityId, input)),
+            createResetToken: (identityId, input) => call(() => client.identities.createResetToken(identityId, input)),
+            createSystemMembership: (identityId, expectedRevision) => call(() => client.identities.createSystemMembership(identityId, { expectedRevision })),
+            listSessions: (identityId) => call(async () => ({
+                items: (await client.identities.listSessions(identityId)).items,
+            })),
+            revokeSession: (sessionId) => call(() => client.identities.revokeSession(sessionId)),
+            revokeAllSessions: (identityId) => call(async () => (await client.identities.revokeAllSessions(identityId)).revokedCount),
+            transferOwner: (input) => call(() => client.identities.transferOwner(input)),
+            createService: (input) => call(() => client.identities.createService(input)),
+            listApiKeys: (identityId) => call(async () => ({
+                items: (await client.identities.listApiKeys(identityId)).items,
+            })),
+            createApiKey: (identityId, input) => call(() => client.identities.createApiKey(identityId, input)),
+            revokeApiKey: (apiKeyId) => call(() => client.identities.revokeApiKey(apiKeyId)),
         },
         identityRealms: {
             listGlobalIdentities: () => call(async () => ({

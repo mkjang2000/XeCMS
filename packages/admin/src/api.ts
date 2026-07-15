@@ -49,11 +49,24 @@ export interface AdminUser {
 
 export interface SessionResult {
   readonly user: AdminUser | null;
+  readonly passwordChangeRequired?: boolean;
 }
 
 export interface BootstrapStatus {
   readonly required: boolean;
 }
+export interface SystemDiagnostics { readonly environment:"development"|"test"|"production";readonly xecmsVersion:string;readonly nodeVersion:string;readonly postgresVersion:string;readonly schemaMode:"editable"|"locked"|"manifest-only";readonly workerEnabled:boolean;readonly uploadLimitBytes:number;readonly allowedMimeTypes:readonly string[];readonly adminOriginCount:number;readonly contentOriginCount:number;readonly storageAdapter:"local"; }
+export interface WorkspaceSettings { readonly workspaceId:string;readonly displayName:string;readonly defaultTimezone:string;readonly adminLocale:string;readonly revision:number;readonly updatedAt:string;readonly updatedBy:string; }
+export interface Site { readonly siteId:string;readonly workspaceId:string;readonly key:string;readonly name:string;readonly canonicalUrl?:string;readonly status:"active"|"archived";readonly isDefault:boolean;readonly revision:number;readonly createdAt:string;readonly createdBy:string;readonly updatedAt:string;readonly updatedBy:string;readonly archivedAt?:string;readonly collectionIds:readonly string[]; }
+export type UnifiedAuditSource = "system"|"document"|"authorization"|"delivery";
+export type UnifiedAuditCategory = "security"|"identity"|"content"|"schema"|"authorization"|"settings"|"site"|"worker"|"media"|"retention";
+export type UnifiedAuditOutcome = "succeeded"|"failed"|"denied"|"informational";
+export interface UnifiedAuditRecord { readonly id:string;readonly source:UnifiedAuditSource;readonly sourceId:string;readonly category:UnifiedAuditCategory;readonly action:string;readonly outcome:UnifiedAuditOutcome;readonly workspaceId:string;readonly realmId?:string;readonly siteId?:string;readonly actorIdentityId?:string;readonly actorSubjectId?:string;readonly actorLabel?:string;readonly targetType:string;readonly targetId?:string;readonly summary:string;readonly before?:unknown;readonly after?:unknown;readonly metadata?:Readonly<Record<string,unknown>>;readonly requestId?:string;readonly occurredAt:string; }
+export interface UnifiedAuditQuery { readonly category?:UnifiedAuditCategory;readonly source?:UnifiedAuditSource;readonly action?:string;readonly actorId?:string;readonly targetId?:string;readonly realmId?:string;readonly siteId?:string;readonly outcome?:UnifiedAuditOutcome;readonly from?:string;readonly to?:string;readonly cursor?:string;readonly limit?:number; }
+export interface UnifiedAuditPage { readonly items:readonly UnifiedAuditRecord[];readonly nextCursor?:string; }
+export interface RetentionPolicy { readonly workspaceId:string;readonly auditDays:number|null;readonly dispatchedOutboxDays:number|null;readonly succeededDeliveryDays:number|null;readonly deadDeliveryDays:number|null;readonly expiredSessionDays:number|null;readonly softDeletedDocumentDays:number|null;readonly revision:number;readonly updatedAt:string;readonly updatedBy:string; }
+export interface RetentionCounts { readonly systemAudit:number;readonly documentAudit:number;readonly authorizationAudit:number;readonly dispatchedOutbox:number;readonly succeededDeliveries:number;readonly deadDeliveries:number;readonly expiredSessions:number;readonly softDeletedDocuments:number; }
+export interface RetentionPlan { readonly id:string;readonly workspaceId:string;readonly policyRevision:number;readonly status:"previewed"|"applied"|"expired";readonly referenceAt:string;readonly cutoffs:{readonly audit:string|null;readonly dispatchedOutbox:string|null;readonly succeededDelivery:string|null;readonly deadDelivery:string|null;readonly expiredSession:string|null;readonly softDeletedDocument:string|null};readonly counts:RetentionCounts;readonly estimatedBytes:Readonly<Record<string,number>>;readonly digest:string;readonly createdAt:string;readonly createdBy:string;readonly expiresAt:string;readonly appliedAt?:string;readonly appliedBy?:string;readonly results?:RetentionCounts; }
 
 export interface AuthCredentials {
   readonly username: string;
@@ -71,6 +84,77 @@ export interface GlobalIdentity {
   readonly originRealmId: string;
   readonly credentialVersion: number;
   readonly disabledAt?: string;
+}
+
+export interface ManagedIdentityMembership {
+  readonly membershipId: string;
+  readonly realmId: string;
+  readonly realmKey: string;
+  readonly realmName: string;
+  readonly realmKind: "system" | "content";
+  readonly subjectId: string;
+  readonly status: RealmMembershipStatus;
+  readonly profileDocumentId?: string;
+}
+
+export interface ManagedIdentity {
+  readonly identityId: string;
+  readonly workspaceId: string;
+  readonly kind: "human" | "service";
+  readonly primaryIdentifier: string;
+  readonly originRealmId: string;
+  readonly isOwner: boolean;
+  readonly status: "active" | "disabled";
+  readonly credentialVersion: number;
+  readonly passwordChangeRequired: boolean;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly disabledAt?: string;
+  readonly memberships: readonly ManagedIdentityMembership[];
+}
+
+export interface ManagedIdentityPage extends PageResult<ManagedIdentity> {
+  readonly nextCursor?: string;
+}
+
+export interface ManagedSession {
+  readonly sessionId: string;
+  readonly audience: "admin" | "content";
+  readonly identityId: string;
+  readonly realmId: string;
+  readonly realmName: string;
+  readonly membershipId: string;
+  readonly createdAt: string;
+  readonly authenticatedAt: string;
+  readonly expiresAt: string;
+  readonly revokedAt?: string;
+  readonly revokedByIdentityId?: string;
+  readonly revokeReason?: string;
+  readonly current: boolean;
+}
+
+export interface CreatedCredentialToken {
+  readonly purpose: "invitation" | "password-reset";
+  readonly identityId: string;
+  readonly secret: string;
+  readonly expiresAt: string;
+}
+
+export interface ApiKeyRecord {
+  readonly apiKeyId: string;
+  readonly identityId: string;
+  readonly name: string;
+  readonly prefix: string;
+  readonly scopes: readonly string[];
+  readonly createdAt: string;
+  readonly expiresAt?: string;
+  readonly lastUsedAt?: string;
+  readonly revokedAt?: string;
+}
+
+export interface CreatedApiKey extends ApiKeyRecord {
+  readonly secret: string;
 }
 
 export interface IdentityRealm {
@@ -681,9 +765,13 @@ export interface AdminApi {
     getBootstrapStatus(): Promise<BootstrapStatus>;
     bootstrap(credentials: AuthCredentials): Promise<{ readonly user: AdminUser }>;
     getSession(): Promise<SessionResult>;
-    login(credentials: AuthCredentials): Promise<{ readonly user: AdminUser }>;
+    login(credentials: AuthCredentials): Promise<{ readonly user: AdminUser; readonly passwordChangeRequired?: boolean }>;
     logout(): Promise<void>;
+    changePassword(input: { readonly currentPassword: string; readonly newPassword: string }): Promise<void>;
   };
+  readonly settings:{diagnostics():Promise<SystemDiagnostics>;getWorkspace():Promise<WorkspaceSettings>;updateWorkspace(input:{readonly expectedRevision:number;readonly displayName:string;readonly defaultTimezone:string;readonly adminLocale:string;readonly currentPassword:string}):Promise<WorkspaceSettings>};
+  readonly sites:{list():Promise<PageResult<Site>>;get(id:string):Promise<Site>;create(input:{readonly key:string;readonly name:string;readonly canonicalUrl?:string}):Promise<Site>;update(id:string,input:{readonly expectedRevision:number;readonly name:string;readonly canonicalUrl?:string}):Promise<Site>;archive(id:string,input:{readonly expectedRevision:number;readonly currentPassword:string;readonly replacementDefaultSiteId?:string}):Promise<Site>;reactivate(id:string,input:{readonly expectedRevision:number;readonly currentPassword:string}):Promise<Site>;setDefault(id:string,input:{readonly expectedRevision:number;readonly currentPassword:string}):Promise<Site>;bindCollection(id:string,collectionId:string,input:{readonly expectedSiteRevision:number;readonly expectedPolicyRevision:number;readonly currentPassword:string}):Promise<Site>;unbindCollection(id:string,collectionId:string,input:{readonly expectedSiteRevision:number;readonly expectedPolicyRevision:number;readonly currentPassword:string}):Promise<Site>};
+  readonly operations:{listAudit(query?:UnifiedAuditQuery):Promise<UnifiedAuditPage>;getAudit(id:string):Promise<UnifiedAuditRecord>;exportAudit(query:UnifiedAuditQuery&{readonly from:string;readonly to:string}):Promise<string>;getRetentionPolicy():Promise<RetentionPolicy>;updateRetentionPolicy(input:Omit<RetentionPolicy,"workspaceId"|"revision"|"updatedAt"|"updatedBy">&{readonly expectedRevision:number;readonly currentPassword:string}):Promise<RetentionPolicy>;previewRetention(expectedPolicyRevision:number):Promise<RetentionPlan>;getRetentionPlan(id:string):Promise<RetentionPlan>;applyRetention(id:string,input:{readonly expectedPolicyRevision:number;readonly currentPassword:string}):Promise<RetentionPlan>;checkMediaConsistency():Promise<MediaConsistencyReport>};
   readonly jobs: {
     list(options?: {
       readonly page?: number;
@@ -807,6 +895,51 @@ export interface AdminApi {
       revisionId: string,
       input: { readonly expectedVersion: number },
     ): Promise<DocumentRecord>;
+  };
+  readonly identities: {
+    list(options?: {
+      readonly limit?: number;
+      readonly cursor?: string;
+      readonly query?: string;
+      readonly kind?: "human" | "service";
+      readonly status?: "active" | "disabled";
+      readonly originRealmId?: string;
+      readonly realmId?: string;
+    }): Promise<ManagedIdentityPage>;
+    get(identityId: string): Promise<ManagedIdentity>;
+    create(input: {
+      readonly primaryIdentifier: string;
+      readonly temporaryPassword: string;
+    }): Promise<ManagedIdentity>;
+    update(identityId: string, input: {
+      readonly expectedRevision: number;
+      readonly primaryIdentifier: string;
+    }): Promise<ManagedIdentity>;
+    disable(identityId: string, expectedRevision: number): Promise<ManagedIdentity>;
+    reactivate(identityId: string, expectedRevision: number): Promise<ManagedIdentity>;
+    resetCredentials(identityId: string, input: {
+      readonly expectedRevision: number;
+      readonly temporaryPassword: string;
+      readonly currentPassword: string;
+      readonly revokeApiKeys: boolean;
+    }): Promise<ManagedIdentity>;
+    createInvitation(identityId: string, input: { readonly expectedRevision: number; readonly currentPassword: string }): Promise<CreatedCredentialToken>;
+    createResetToken(identityId: string, input: { readonly expectedRevision: number; readonly currentPassword: string }): Promise<CreatedCredentialToken>;
+    createSystemMembership(identityId: string, expectedRevision: number): Promise<ManagedIdentity>;
+    listSessions(identityId: string): Promise<PageResult<ManagedSession>>;
+    revokeSession(sessionId: string): Promise<ManagedSession>;
+    revokeAllSessions(identityId: string): Promise<number>;
+    transferOwner(input: {
+      readonly targetIdentityId: string;
+      readonly reason: string;
+      readonly currentPassword: string;
+    }): Promise<ManagedIdentity>;
+    createService(input: { readonly primaryIdentifier: string }): Promise<ManagedIdentity>;
+    listApiKeys(identityId: string): Promise<PageResult<ApiKeyRecord>>;
+    createApiKey(identityId: string, input: {
+      readonly name: string; readonly scopes: readonly string[]; readonly expiresAt?: string;
+    }): Promise<CreatedApiKey>;
+    revokeApiKey(apiKeyId: string): Promise<ApiKeyRecord>;
   };
   readonly identityRealms: {
     listGlobalIdentities(): Promise<PageResult<GlobalIdentity>>;

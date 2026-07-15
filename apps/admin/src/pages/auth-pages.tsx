@@ -163,9 +163,9 @@ export function LoginPage() {
   });
   const mutation = useMutation({
     mutationFn: (credentials: AuthCredentials) => api.auth.login(credentials),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.session });
-      navigate("/admin/schema", { replace: true });
+      navigate(result.passwordChangeRequired === true ? "/admin/password-change" : "/admin/schema", { replace: true });
     },
     onError: (error) => {
       const apiError = toAdminApiError(error);
@@ -181,7 +181,7 @@ export function LoginPage() {
   }, [mutation.error, mutation.isError, setFocus]);
 
   if (status.data?.required) return <Navigate to="/admin/setup" replace />;
-  if (session.data?.user) return <Navigate to="/admin/schema" replace />;
+  if (session.data?.user) return <Navigate to={session.data.passwordChangeRequired === true ? "/admin/password-change" : "/admin/schema"} replace />;
   const apiError = mutation.isError ? toAdminApiError(mutation.error) : null;
 
   return (
@@ -215,6 +215,46 @@ export function LoginPage() {
         <Button type="submit" isDisabled={mutation.isPending}>
           {mutation.isPending ? "로그인 중…" : "로그인"}
         </Button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+interface PasswordChangeValues {
+  readonly currentPassword: string;
+  readonly newPassword: string;
+  readonly confirmation: string;
+}
+
+export function PasswordChangePage() {
+  const api = useAdminApi();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { control, handleSubmit, watch } = useForm<PasswordChangeValues>({
+    defaultValues: { currentPassword: "", newPassword: "", confirmation: "" },
+  });
+  const mutation = useMutation({
+    mutationFn: ({ currentPassword, newPassword }: PasswordChangeValues) =>
+      api.auth.changePassword({ currentPassword, newPassword }),
+    onSuccess: () => {
+      queryClient.clear();
+      navigate("/admin/login", { replace: true });
+    },
+  });
+  return (
+    <AuthLayout title="임시 비밀번호 변경" description="Admin 작업을 계속하려면 본인만 아는 새 비밀번호로 변경하세요.">
+      {mutation.isError ? <Callout tone="error">{toAdminApiError(mutation.error).message}</Callout> : null}
+      <form aria-label="임시 비밀번호 변경" className={styles.form} onSubmit={handleSubmit((values) => mutation.mutate(values))}>
+        <Controller control={control} name="currentPassword" rules={{ required: "현재 비밀번호를 입력해 주세요." }} render={({ field: { ref, ...field }, fieldState }) => (
+          <TextInput inputRef={ref} label="현재 임시 비밀번호" type="password" autoComplete="current-password" isRequired errorMessage={fieldState.error?.message} {...field} />
+        )} />
+        <Controller control={control} name="newPassword" rules={{ required: "새 비밀번호를 입력해 주세요.", minLength: { value: 12, message: "12자 이상이어야 합니다." }, maxLength: { value: 128, message: "128자 이하여야 합니다." } }} render={({ field: { ref, ...field }, fieldState }) => (
+          <TextInput inputRef={ref} label="새 비밀번호" type="password" autoComplete="new-password" isRequired errorMessage={fieldState.error?.message} {...field} />
+        )} />
+        <Controller control={control} name="confirmation" rules={{ required: "새 비밀번호를 다시 입력해 주세요.", validate: (value) => value === watch("newPassword") || "비밀번호가 일치하지 않습니다." }} render={({ field: { ref, ...field }, fieldState }) => (
+          <TextInput inputRef={ref} label="새 비밀번호 확인" type="password" autoComplete="new-password" isRequired errorMessage={fieldState.error?.message} {...field} />
+        )} />
+        <Button type="submit" isDisabled={mutation.isPending}>{mutation.isPending ? "변경 중…" : "비밀번호 변경"}</Button>
       </form>
     </AuthLayout>
   );

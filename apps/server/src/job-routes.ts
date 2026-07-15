@@ -39,8 +39,10 @@ export function registerJobRoutes(options: {
   });
 
   options.app.post("/api/jobs/:deliveryId/retry", async (request): Promise<EventDeliveryDto> => {
-    await actor(request, true, "job.retry");
-    return toDto(await options.worker.retry(deliveryId(request.params)));
+    const current = await actor(request, true, "job.retry");
+    return toDto(await options.worker.retry(deliveryId(request.params), {
+      actorSubjectId: current.subjectId,
+    }));
   });
 
   options.app.post("/api/jobs/run", async (request): Promise<EventWorkerCycleDto> => {

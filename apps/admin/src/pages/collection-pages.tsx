@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, EmptyState } from "@xecms/ui";
+import { Badge, Button, Callout, EmptyState } from "@xecms/ui";
 import { useAdminApi, type CollectionSummary } from "@xecms/admin";
 import styles from "../app.module.css";
 import { LoadError, PageLoading } from "../components/async-state.js";
@@ -21,21 +21,31 @@ export function SchemaListPage() {
   const api = useAdminApi();
   const navigate = useNavigate();
   const query = useQuery({ queryKey: queryKeys.collections, queryFn: () => api.collections.list() });
+  const diagnostics = useQuery({
+    queryKey: queryKeys.diagnostics,
+    queryFn: () => api.settings.diagnostics(),
+  });
+  const editable = diagnostics.data?.schemaMode === "editable";
   return (
     <Page>
       <PageHeader
         eyebrow="Structure"
         title="스키마"
         description="컬렉션과 필드를 정의한 뒤 데이터베이스 변경을 검토합니다."
-        actions={<><Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button><Button onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button></>}
+        actions={<><Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button><Button isDisabled={!editable} onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button></>}
       />
+      {diagnostics.data && !editable ? (
+        <Callout tone="warning">
+          Schema mode가 <strong>{diagnostics.data.schemaMode}</strong>이므로 시각 편집과 적용이 잠겨 있습니다.
+        </Callout>
+      ) : null}
       {query.isPending ? <PageLoading label="컬렉션을 불러오는 중" /> : null}
       {query.isError ? <LoadError error={query.error} onRetry={() => void query.refetch()} /> : null}
       {query.data && query.data.items.length === 0 ? (
         <EmptyState
           title="아직 컬렉션이 없습니다"
           description="첫 컬렉션을 만들고 콘텐츠 구조를 정의해 보세요."
-          action={<Button onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button>}
+          action={<Button isDisabled={!editable} onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button>}
         />
       ) : null}
       {query.data && query.data.items.length > 0 ? (

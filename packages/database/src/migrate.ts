@@ -19,6 +19,9 @@ import {
   applyIdentityRealmMigration,
 } from "./identity-realm-migration.js";
 import { EVENT_WORKER_MIGRATION_ID, applyEventWorkerMigration } from "./event-worker-migration.js";
+import { USER_IDENTITY_MIGRATION_ID, applyUserIdentityMigration } from "./user-identity-migration.js";
+import { SITE_SETTINGS_MIGRATION_ID, applySiteSettingsMigration } from "./site-settings-migration.js";
+import { AUDIT_RETENTION_MIGRATION_ID, applyAuditRetentionMigration } from "./audit-retention-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -200,6 +203,34 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyEventWorkerMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         EVENT_WORKER_MIGRATION_ID,
+      ]);
+    }
+    const userIdentity = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [USER_IDENTITY_MIGRATION_ID],
+    );
+    if (userIdentity.rowCount === 0) {
+      await applyUserIdentityMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        USER_IDENTITY_MIGRATION_ID,
+      ]);
+    }
+    const siteSettings = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`, [SITE_SETTINGS_MIGRATION_ID],
+    );
+    if (siteSettings.rowCount === 0) {
+      await applySiteSettingsMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        SITE_SETTINGS_MIGRATION_ID,
+      ]);
+    }
+    const auditRetention = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`, [AUDIT_RETENTION_MIGRATION_ID],
+    );
+    if (auditRetention.rowCount === 0) {
+      await applyAuditRetentionMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        AUDIT_RETENTION_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

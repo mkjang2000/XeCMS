@@ -769,8 +769,8 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
       await client.query(
         `INSERT INTO ${this.q("_xecms_identities")}
            (id, workspace_id, realm_id, origin_realm_id, username, normalized_username,
-            password_hash, is_owner, credential_version, created_at)
-         VALUES ($1, $2, $3, $3, $4, $5, $6, true, 1, $7)`,
+            password_hash, is_owner, credential_version, created_at, updated_at, updated_by)
+         VALUES ($1, $2, $3, $3, $4, $5, $6, true, 1, $7, $7, $1)`,
         [input.id, DEFAULT_WORKSPACE_ID, SYSTEM_REALM_ID, input.username, normalizeUsername(input.username), input.passwordHash, input.now],
       );
       await client.query(
@@ -788,6 +788,7 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
         username: input.username,
         passwordHash: input.passwordHash,
         isOwner: true,
+        passwordChangeRequired: false,
       };
     } catch (error: unknown) {
       await client.query("ROLLBACK");
@@ -799,7 +800,7 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
 
   public async findIdentityByUsername(username: string): Promise<IdentityRecord | null> {
     const result = await this.pool.query<IdentityRow>(
-      `SELECT id, workspace_id, username, password_hash, is_owner
+      `SELECT id, workspace_id, username, password_hash, is_owner, password_change_required
        FROM ${this.q("_xecms_identities")}
        WHERE normalized_username = $1 AND disabled_at IS NULL`,
       [normalizeUsername(username)],
@@ -813,7 +814,7 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
    */
   public async findOwnerIdentity(): Promise<IdentityRecord | null> {
     const result = await this.pool.query<IdentityRow>(
-      `SELECT id, workspace_id, username, password_hash, is_owner
+      `SELECT id, workspace_id, username, password_hash, is_owner, password_change_required
        FROM ${this.q("_xecms_identities")}
        WHERE workspace_id = $1 AND is_owner = true
        LIMIT 1`,
@@ -864,9 +865,9 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
       }
       await client.query(
         `INSERT INTO ${this.q("_xecms_sessions")}
-           (token_hash, csrf_token_hash, identity_id, created_at, expires_at, audience,
+           (id, token_hash, csrf_token_hash, identity_id, created_at, expires_at, audience,
             realm_id, membership_id, subject_id, authenticated_at, credential_version)
-         VALUES ($1, $2, $3, $4, $5, 'admin', $6, $7, $8, $4, $9)`,
+         VALUES ('session_' || md5($1), $1, $2, $3, $4, $5, 'admin', $6, $7, $8, $4, $9)`,
         [input.sessionTokenHash, input.csrfTokenHash, input.identityId, input.createdAt,
           input.expiresAt, principal.realm_id, principal.id, principal.subject_id,
           Number(principal.credential_version)],
@@ -882,7 +883,8 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
 
   public async findSession(sessionTokenHash: string, now: string): Promise<StoredSession | null> {
     const result = await this.pool.query<SessionRow>(
-      `SELECT i.id, i.workspace_id, i.username, i.password_hash, i.is_owner, s.expires_at
+      `SELECT i.id, i.workspace_id, i.username, i.password_hash, i.is_owner,
+              i.password_change_required, s.expires_at
        FROM ${this.q("_xecms_sessions")} s
        JOIN ${this.q("_xecms_identities")} i ON i.id = s.identity_id
        JOIN ${this.q("_xecms_realm_memberships")} membership
@@ -892,6 +894,7 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
        JOIN ${this.q("_xecms_auth_subjects")} subject
          ON subject.realm_id = s.realm_id AND subject.id = s.subject_id
        WHERE s.token_hash = $1 AND s.expires_at > $2 AND s.audience = 'admin'
+         AND s.revoked_at IS NULL
          AND realm.kind = 'system' AND realm.status = 'active'
          AND membership.status = 'active' AND i.disabled_at IS NULL AND subject.disabled_at IS NULL
          AND s.credential_version = i.credential_version`,
@@ -919,6 +922,7 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
          ON subject.realm_id = session.realm_id AND subject.id = session.subject_id
        WHERE session.token_hash = $1 AND session.csrf_token_hash = $2
          AND session.expires_at > $3 AND session.audience = 'admin'
+         AND session.revoked_at IS NULL
          AND realm.kind = 'system' AND realm.status = 'active'
          AND membership.status = 'active' AND identity.disabled_at IS NULL
          AND subject.disabled_at IS NULL
@@ -929,9 +933,12 @@ export class PostgresDatabase implements SchemaStore, DocumentStore, AuthStore {
   }
 
   public async deleteSession(sessionTokenHash: string): Promise<void> {
-    await this.pool.query(`DELETE FROM ${this.q("_xecms_sessions")} WHERE token_hash = $1`, [
-      sessionTokenHash,
-    ]);
+    await this.pool.query(
+      `UPDATE ${this.q("_xecms_sessions")}
+          SET revoked_at = now(), revoked_by_identity_id = identity_id, revoke_reason = 'logout'
+        WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [sessionTokenHash],
+    );
   }
 
   public async recordAuthEvent(input: {
@@ -1775,6 +1782,7 @@ interface IdentityRow {
   readonly username: string;
   readonly password_hash: string;
   readonly is_owner: boolean;
+  readonly password_change_required: boolean;
 }
 
 interface SessionRow extends IdentityRow {
@@ -1949,6 +1957,7 @@ function identityFromRow(row: IdentityRow): IdentityRecord {
     username: row.username,
     passwordHash: row.password_hash,
     isOwner: row.is_owner,
+    passwordChangeRequired: row.password_change_required,
   };
 }
 

@@ -111,6 +111,8 @@ export interface ActorContext {
   readonly execution?: "identity-provisioning";
   /** Present in production; tests may use legacy capabilities as a narrow fixture fallback. */
   readonly authorization?: ActorAuthorizationGateway;
+  /** Authentication mechanism used by the current request. Legacy/internal actors omit it. */
+  readonly authentication?: "session" | "api-key";
 }
 
 export function actorRealmId(actor: ActorContext): string {

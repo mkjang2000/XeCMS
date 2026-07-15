@@ -68,6 +68,7 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
       staleTime: 15_000,
     });
     if (session.user === null) throw redirect("/admin/login");
+    if (session.passwordChangeRequired === true) throw redirect("/admin/password-change");
     return session;
   };
 
@@ -82,6 +83,22 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
     {
       path: "/admin/login",
       lazy: async () => ({ Component: (await import("./pages/auth-pages.js")).LoginPage }),
+      hydrateFallbackElement: <RouteLoadingPage />,
+      errorElement: <RouteErrorPage />,
+    },
+    {
+      path: "/admin/password-change",
+      loader: async () => {
+        const session = await queryClient.fetchQuery({
+          queryKey: queryKeys.session,
+          queryFn: () => api.auth.getSession(),
+          staleTime: 0,
+        });
+        if (session.user === null) throw redirect("/admin/login");
+        if (session.passwordChangeRequired !== true) throw redirect("/admin/schema");
+        return session;
+      },
+      lazy: async () => ({ Component: (await import("./pages/auth-pages.js")).PasswordChangePage }),
       hydrateFallbackElement: <RouteLoadingPage />,
       errorElement: <RouteErrorPage />,
     },
@@ -154,6 +171,22 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
         {
           path: "jobs",
           lazy: async () => ({ Component: (await import("./pages/jobs-page.js")).JobsPage }),
+        },
+        {
+          path: "operations",
+          lazy: async () => ({ Component: (await import("./pages/operations-page.js")).OperationsPage }),
+        },
+        {
+          path: "users",
+          lazy: async () => ({ Component: (await import("./pages/user-pages.js")).UserListPage }),
+        },
+        {
+          path: "users/:identityId",
+          lazy: async () => ({ Component: (await import("./pages/user-pages.js")).UserDetailPage }),
+        },
+        {
+          path: "settings",
+          lazy: async () => ({ Component: (await import("./pages/settings-page.js")).SettingsPage }),
         },
         {
           path: "realms",

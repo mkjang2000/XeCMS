@@ -72,9 +72,9 @@ export function LoginPage() {
     });
     const mutation = useMutation({
         mutationFn: (credentials) => api.auth.login(credentials),
-        onSuccess: async () => {
+        onSuccess: async (result) => {
             await queryClient.invalidateQueries({ queryKey: queryKeys.session });
-            navigate("/admin/schema", { replace: true });
+            navigate(result.passwordChangeRequired === true ? "/admin/password-change" : "/admin/schema", { replace: true });
         },
         onError: (error) => {
             const apiError = toAdminApiError(error);
@@ -91,8 +91,24 @@ export function LoginPage() {
     if (status.data?.required)
         return _jsx(Navigate, { to: "/admin/setup", replace: true });
     if (session.data?.user)
-        return _jsx(Navigate, { to: "/admin/schema", replace: true });
+        return _jsx(Navigate, { to: session.data.passwordChangeRequired === true ? "/admin/password-change" : "/admin/schema", replace: true });
     const apiError = mutation.isError ? toAdminApiError(mutation.error) : null;
     return (_jsxs(AuthLayout, { title: "Admin Studio \uB85C\uADF8\uC778", description: "XeCMS \uC6B4\uC601 \uACC4\uC815\uC73C\uB85C \uB85C\uADF8\uC778\uD558\uC138\uC694.", children: [apiError && apiError.status !== 401 ? _jsx(Callout, { tone: "error", children: apiError.message }) : null, _jsxs("form", { "aria-label": "\uB85C\uADF8\uC778", className: styles.form, onSubmit: handleSubmit((values) => mutation.mutate(values)), children: [_jsx(Controller, { control: control, name: "username", rules: { required: "사용자 이름을 입력해 주세요." }, render: ({ field: { ref, ...field }, fieldState }) => (_jsx(TextInput, { inputRef: ref, label: "\uC0AC\uC6A9\uC790 \uC774\uB984", autoComplete: "username", isRequired: true, errorMessage: fieldState.error?.message, ...field })) }), _jsx(Controller, { control: control, name: "password", rules: { required: "비밀번호를 입력해 주세요." }, render: ({ field: { ref, ...field }, fieldState }) => (_jsx(TextInput, { inputRef: ref, label: "\uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", isRequired: true, errorMessage: fieldState.error?.message, ...field })) }), _jsx(Button, { type: "submit", isDisabled: mutation.isPending, children: mutation.isPending ? "로그인 중…" : "로그인" })] })] }));
+}
+export function PasswordChangePage() {
+    const api = useAdminApi();
+    const navigate = useNavigate();
+    const queryClient = useQueryClient();
+    const { control, handleSubmit, watch } = useForm({
+        defaultValues: { currentPassword: "", newPassword: "", confirmation: "" },
+    });
+    const mutation = useMutation({
+        mutationFn: ({ currentPassword, newPassword }) => api.auth.changePassword({ currentPassword, newPassword }),
+        onSuccess: () => {
+            queryClient.clear();
+            navigate("/admin/login", { replace: true });
+        },
+    });
+    return (_jsxs(AuthLayout, { title: "\uC784\uC2DC \uBE44\uBC00\uBC88\uD638 \uBCC0\uACBD", description: "Admin \uC791\uC5C5\uC744 \uACC4\uC18D\uD558\uB824\uBA74 \uBCF8\uC778\uB9CC \uC544\uB294 \uC0C8 \uBE44\uBC00\uBC88\uD638\uB85C \uBCC0\uACBD\uD558\uC138\uC694.", children: [mutation.isError ? _jsx(Callout, { tone: "error", children: toAdminApiError(mutation.error).message }) : null, _jsxs("form", { "aria-label": "\uC784\uC2DC \uBE44\uBC00\uBC88\uD638 \uBCC0\uACBD", className: styles.form, onSubmit: handleSubmit((values) => mutation.mutate(values)), children: [_jsx(Controller, { control: control, name: "currentPassword", rules: { required: "현재 비밀번호를 입력해 주세요." }, render: ({ field: { ref, ...field }, fieldState }) => (_jsx(TextInput, { inputRef: ref, label: "\uD604\uC7AC \uC784\uC2DC \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", isRequired: true, errorMessage: fieldState.error?.message, ...field })) }), _jsx(Controller, { control: control, name: "newPassword", rules: { required: "새 비밀번호를 입력해 주세요.", minLength: { value: 12, message: "12자 이상이어야 합니다." }, maxLength: { value: 128, message: "128자 이하여야 합니다." } }, render: ({ field: { ref, ...field }, fieldState }) => (_jsx(TextInput, { inputRef: ref, label: "\uC0C8 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "new-password", isRequired: true, errorMessage: fieldState.error?.message, ...field })) }), _jsx(Controller, { control: control, name: "confirmation", rules: { required: "새 비밀번호를 다시 입력해 주세요.", validate: (value) => value === watch("newPassword") || "비밀번호가 일치하지 않습니다." }, render: ({ field: { ref, ...field }, fieldState }) => (_jsx(TextInput, { inputRef: ref, label: "\uC0C8 \uBE44\uBC00\uBC88\uD638 \uD655\uC778", type: "password", autoComplete: "new-password", isRequired: true, errorMessage: fieldState.error?.message, ...field })) }), _jsx(Button, { type: "submit", isDisabled: mutation.isPending, children: mutation.isPending ? "변경 중…" : "비밀번호 변경" })] })] }));
 }
 //# sourceMappingURL=auth-pages.js.map

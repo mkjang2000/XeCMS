@@ -18,6 +18,7 @@ export interface IdentityRecord {
   readonly username: string;
   readonly passwordHash: string;
   readonly isOwner: boolean;
+  readonly passwordChangeRequired: boolean;
 }
 
 export interface StoredSession {
@@ -108,8 +109,8 @@ export class AuthApplicationService {
     input: { readonly username: string; readonly password: string },
     allowWeakDevelopmentPassword: boolean,
   ): Promise<IdentityRecord> {
-    const username = normalizeAndValidateUsername(input.username);
-    validatePassword(input.password, username, allowWeakDevelopmentPassword);
+    const username = normalizeSystemIdentityIdentifier(input.username);
+    validateIdentityPassword(input.password, username, allowWeakDevelopmentPassword);
     const now = this.runtime.now();
     const identity = await this.store.createInitialOwner({
       id: this.runtime.newIdentityId(),
@@ -143,7 +144,7 @@ export class AuthApplicationService {
     readonly username: string;
     readonly password: string;
   }): Promise<AuthenticatedSession> {
-    const username = normalizeAndValidateUsername(input.username);
+    const username = normalizeSystemIdentityIdentifier(input.username);
     const identity = await this.store.findIdentityByUsername(username);
     const now = this.runtime.now();
     let verified = false;
@@ -212,7 +213,7 @@ export class AuthApplicationService {
     readonly username: string;
     readonly password: string;
   }): Promise<string> {
-    const username = normalizeAndValidateUsername(input.username);
+    const username = normalizeSystemIdentityIdentifier(input.username);
     const identity = await this.store.findIdentityByUsername(username);
     const now = this.runtime.now();
     let verified = false;
@@ -266,7 +267,7 @@ export class AuthApplicationService {
   }
 }
 
-function normalizeAndValidateUsername(value: string): string {
+export function normalizeSystemIdentityIdentifier(value: string): string {
   if (typeof value !== "string") {
     throw new ApplicationError("USERNAME_INVALID", 422, "Username must be a string.");
   }
@@ -281,7 +282,7 @@ function normalizeAndValidateUsername(value: string): string {
   return username;
 }
 
-function validatePassword(password: string, username: string, allowWeak: boolean): void {
+export function validateIdentityPassword(password: string, username: string, allowWeak = false): void {
   if (typeof password !== "string" || password.length > 128 || password.includes("\u0000")) {
     throw new ApplicationError("PASSWORD_INVALID", 422, "Password is not valid.");
   }

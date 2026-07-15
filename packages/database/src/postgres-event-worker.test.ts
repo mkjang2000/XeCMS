@@ -70,7 +70,14 @@ describe.runIf(RUN)("M4-B PostgreSQL outbox and worker", () => {
     const [recovered] = await second.claim({ workerId: "worker_new", now: instant(90_000), lockedUntil: instant(120_000), limit: 1, maxAttempts: 3 });
     expect(recovered).toMatchObject({ id: locked!.id, status: "processing", attempts: 2, lockedBy: "worker_new" });
     await second.fail({ deliveryId: recovered!.id, workerId: "worker_new", now: instant(91_000), nextAvailableAt: instant(92_000), dead: true, errorCode: "TEST_FAILURE", errorMessage: "expected" });
-    await expect(second.retry(recovered!.id, instant(93_000))).resolves.toMatchObject({ status: "pending", attempts: 0 });
+    await expect(second.retry(recovered!.id, instant(93_000), { actorSubjectId: "subject_operator" }))
+      .resolves.toMatchObject({ status: "pending", attempts: 0 });
+    const audit = await pool.query<{ event_type: string; metadata: Record<string, unknown> }>(
+      `SELECT event_type, metadata FROM ${q("_xecms_audit_log")}
+        WHERE event_type = 'job.delivery.retried'`,
+    );
+    expect(audit.rows).toEqual([expect.objectContaining({ event_type: "job.delivery.retried",
+      metadata: expect.objectContaining({ deliveryId: recovered!.id, actorSubjectId: "subject_operator" }) })]);
   });
 
   it("commits the example projection and receipt atomically and ignores duplicate handling", async () => {

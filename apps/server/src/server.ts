@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
@@ -16,7 +16,12 @@ import {
   DocumentApplicationService,
   DocumentLifecycleHookRegistry,
   EventWorkerService,
+  IdentityAdministrationService,
   IdentityRealmApplicationService,
+  WorkspaceSettingsService,
+  SiteService,
+  RetentionService,
+  UnifiedAuditService,
   MediaApplicationService,
   normalizeIdentityIdentifier,
   OWNER_CAPABILITIES,
@@ -66,6 +71,9 @@ import type {
   SchemaPreviewDto,
   SchemaRevisionEnvelopeDto,
   SessionDto,
+  SystemDiagnosticsDto,
+  WorkspaceSettingsDto,
+  UpdateWorkspaceSettingsRequest,
   UpdateDocumentRequest,
 } from "@xecms/contracts";
 import {
@@ -76,6 +84,11 @@ import {
   PostgresAuthorizationStore,
   PostgresContentHierarchyStore,
   PostgresIdentityRealmStore,
+  PostgresIdentityAdministrationStore,
+  PostgresWorkspaceSettingsStore,
+  PostgresSiteStore,
+  PostgresRetentionStore,
+  PostgresUnifiedAuditStore,
   PostgresEventWorkerStore,
   PostgresMediaStore,
   PostgresMigrationPlanner,
@@ -92,7 +105,10 @@ import Fastify, {
 import { loadServerConfig, type ServerConfig } from "./config.js";
 import { registerAuthorizationRoutes } from "./authorization-routes.js";
 import { registerIdentityRealmRoutes } from "./identity-realm-routes.js";
+import { registerIdentityAdministrationRoutes } from "./identity-administration-routes.js";
 import { registerJobRoutes } from "./job-routes.js";
+import { registerSiteRoutes } from "./site-routes.js";
+import { registerOperationsRoutes } from "./operations-routes.js";
 import { LoginRateLimiter } from "./rate-limit.js";
 import { createApplicationRuntime, createSecurityRuntime } from "./security.js";
 
@@ -133,6 +149,53 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     });
   }
   const identityRealmStore = new PostgresIdentityRealmStore(database.pool, database.schema);
+  const identityAdministrationStore = new PostgresIdentityAdministrationStore(
+    database.pool,
+    database.schema,
+  );
+  const identityAdministration = new IdentityAdministrationService(
+    identityAdministrationStore,
+    passwordHasher,
+    {
+      now: () => new Date().toISOString(),
+      newIdentityId: securityRuntime.newIdentityId,
+      newAuditId: () => `audit_${randomUUID()}`,
+      newApiKeyId: () => `api_${randomUUID()}`,
+      randomSecret: () => randomBytes(32).toString("base64url"),
+      hashApiKey: (rawKey) => createHmac("sha256", config.sessionSecret)
+        .update("api-key\0").update(rawKey).digest("base64url"),
+      newCredentialTokenId: () => `credential_${randomUUID()}`,
+      hashCredentialToken: (rawToken) => createHash("sha256").update(rawToken).digest("base64url"),
+    },
+  );
+  const workspaceSettings = new WorkspaceSettingsService(
+    new PostgresWorkspaceSettingsStore(database.pool, database.schema),
+    () => new Date().toISOString(),
+  );
+  const sites = new SiteService(new PostgresSiteStore(database.pool, database.schema), {
+    now: () => new Date().toISOString(), newSiteId: () => `site_${randomUUID()}`,
+  });
+  const unifiedAudit = new UnifiedAuditService(
+    new PostgresUnifiedAuditStore(database.pool, database.schema),
+  );
+  const retention = new RetentionService(
+    new PostgresRetentionStore(database.pool, database.schema),
+    { now: () => new Date().toISOString(), newPlanId: () => `retention_${randomUUID()}` },
+  );
+  const requireActor = (
+    request: FastifyRequest,
+    authService: AuthApplicationService,
+    authorizationService: AuthorizationApplicationService,
+    serverConfig: ServerConfig,
+    requireCsrf: boolean,
+  ) => requireActorBase(
+    request,
+    authService,
+    authorizationService,
+    identityAdministration,
+    serverConfig,
+    requireCsrf,
+  );
   const authorizationStore = new PostgresAuthorizationStore(database.pool, database.schema);
   const authorization = new AuthorizationApplicationService(authorizationStore, {
     now: () => new Date().toISOString(),
@@ -165,10 +228,19 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     actor: AuthorizationActor,
     collections: readonly CollectionDefinition[],
   ): Promise<void> => {
+    const siteByCollection = new Map(
+      (await sites.list(DEFAULT_WORKSPACE_ID)).flatMap((site) =>
+        site.collectionIds.map((collectionId) => [collectionId, site.id] as const)),
+    );
     const policy = await authorization.getPolicy(actor);
     await authorization.syncCoreResources(actor, {
       expectedRevision: policy.revision,
-      collections: collections.map(({ id, name }) => ({ id: String(id), name })),
+      collections: collections.map(({ id, name }) => {
+        const collectionId = String(id);
+        const siteId = siteByCollection.get(collectionId);
+        return { id: collectionId, name,
+          ...(siteId === undefined ? {} : { parentResourceId: `resource:site:${siteId}` }) };
+      }),
     });
   };
   const schema = new SchemaApplicationService(
@@ -463,6 +535,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     const actor = authorizationActor(existingOwner.id);
     await database.withContentProjectionLock(async () => {
       const collections = (await database.getActiveSchema())?.schema.collections ?? [];
+      await sites.reconcileCollections({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        activeCollectionIds: collections.map(({ id }) => String(id)),
+        actorIdentityId: existingOwner.id,
+        actorSubjectId: existingOwner.id,
+      });
       await syncAuthorizationResources(actor, collections);
       await reconcileAuthorizationHierarchy(actor, collections, "startup");
       for (const realm of await identityRealmStore.listRealms(DEFAULT_WORKSPACE_ID)) {
@@ -564,6 +642,58 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     requireActor: async (request, requireCsrf) => {
       const authenticated = await requireSession(request, auth, config, requireCsrf);
       return authorizationActor(authenticated.session.identity.id);
+    },
+  });
+
+  registerIdentityAdministrationRoutes({
+    app,
+    identities: identityAdministration,
+    authorization,
+    requireActor: async (request, requireCsrf) =>
+      (await requireActor(request, auth, authorization, config, requireCsrf)).actor,
+    currentSessionId: async (request) => {
+      const authenticated = await requireSession(request, auth, config, false);
+      return `session_${createHash("md5").update(securityRuntime.hashToken(authenticated.sessionToken)).digest("hex")}`;
+    },
+    verifySystemReauthentication: async (request, actor, password) => {
+      const authenticated = await requireSession(request, auth, config, false);
+      if ((actor.identityId ?? actor.subjectId) !== authenticated.session.identity.id) {
+        throw new ApplicationError("SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH", 403, "The reauthentication challenge does not match the System session.");
+      }
+      await auth.reauthenticate({
+        identityId: authenticated.session.identity.id,
+        username: authenticated.session.identity.username,
+        password,
+      });
+    },
+  });
+  registerSiteRoutes({
+    app, sites, authorization,
+    requireActor: async (request, csrf) => (await requireActor(request, auth, authorization, config, csrf)).actor,
+    reauthenticate: async (request, actor, password) => {
+      const authenticated = await requireSession(request, auth, config, false);
+      if (authenticated.session.identity.id !== actor.identityId) throw new ApplicationError("SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH",403,"The reauthentication challenge does not match the System session.");
+      await auth.reauthenticate({identityId:authenticated.session.identity.id,username:authenticated.session.identity.username,password});
+    },
+  });
+  registerOperationsRoutes({
+    app, audit: unifiedAudit, retention, authorization,
+    requireActor: async (request, csrf) =>
+      (await requireActor(request, auth, authorization, config, csrf)).actor,
+    reauthenticate: async (request, actor, password) => {
+      const authenticated = await requireSession(request, auth, config, false);
+      if (authenticated.session.identity.id !== actor.identityId) {
+        throw new ApplicationError("SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH", 403,
+          "The reauthentication challenge does not match the System session.");
+      }
+      await auth.reauthenticate({ identityId: authenticated.session.identity.id,
+        username: authenticated.session.identity.username, password });
+    },
+    mediaConsistency: async (workspaceId) => {
+      const report = await media.checkConsistency(workspaceId);
+      return { missing: report.missing.map((record) => mediaRecordDto(record, true)),
+        orphanStorageKeys: report.orphanStorageKeys,
+        incomplete: report.incomplete.map(incompleteMediaRecordDto), healthyCount: report.healthyCount };
     },
   });
 
@@ -801,7 +931,40 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
 
   app.get("/api/health", async (): Promise<HealthResponse> => {
     await database.ping();
-    return { status: "ok", database: "connected", version: "0.4.0-m4b" };
+    return { status: "ok", database: "connected", version: "0.4.0-m4c3" };
+  });
+
+  app.get("/api/system/diagnostics", async (request): Promise<SystemDiagnosticsDto> => {
+    const { actor } = await requireActor(request, auth, authorization, config, false);
+    await actor.authorization!.require({ action: "system.settings.read", resourceId: SYSTEM_WORKSPACE_RESOURCE_ID });
+    const postgres = await database.pool.query<{ version: string }>(
+      "SELECT current_setting('server_version') AS version",
+    );
+    return { environment: config.nodeEnv, xecmsVersion: "0.4.0-m4c3", nodeVersion: process.version,
+      postgresVersion: postgres.rows[0]!.version, schemaMode: config.schemaMode,
+      workerEnabled: config.workerEnabled, uploadLimitBytes: config.mediaMaxUploadBytes,
+      allowedMimeTypes: config.mediaAllowedMimeTypes, adminOriginCount: config.adminOrigins.length,
+      contentOriginCount: config.contentOrigins.length, storageAdapter: "local" };
+  });
+
+  app.get("/api/workspace/settings", async (request): Promise<WorkspaceSettingsDto> => {
+    const { actor } = await requireActor(request, auth, authorization, config, false);
+    await actor.authorization!.require({ action: "system.settings.read", resourceId: SYSTEM_WORKSPACE_RESOURCE_ID });
+    return workspaceSettingsDto(await workspaceSettings.get(actor.workspaceId));
+  });
+
+  app.patch("/api/workspace/settings", async (request): Promise<WorkspaceSettingsDto> => {
+    const { actor } = await requireActor(request, auth, authorization, config, true);
+    if (actor.authentication === "api-key") throw new ApplicationError("API_KEY_ADMINISTRATION_FORBIDDEN", 403, "API keys cannot change Workspace settings.");
+    await actor.authorization!.require({ action: "system.settings.update", resourceId: SYSTEM_WORKSPACE_RESOURCE_ID });
+    const body = workspaceSettingsInput(request.body);
+    const authenticated = await requireSession(request, auth, config, false);
+    await auth.reauthenticate({ identityId: authenticated.session.identity.id,
+      username: authenticated.session.identity.username, password: body.currentPassword });
+    return workspaceSettingsDto(await workspaceSettings.update({ workspaceId: actor.workspaceId,
+      expectedRevision: body.expectedRevision, displayName: body.displayName,
+      defaultTimezone: body.defaultTimezone, adminLocale: body.adminLocale,
+      actorIdentityId: actor.identityId ?? actor.subjectId, actorSubjectId: actor.subjectId }));
   });
 
   app.get("/api/bootstrap/status", async () => ({
@@ -881,6 +1044,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       const session = await auth.authenticate({ sessionToken });
       return {
         user: { id: session.identity.id, username: session.identity.username },
+        passwordChangeRequired: session.identity.passwordChangeRequired,
         csrfToken: auth.csrfTokenForSession(sessionToken),
         workspace: { id: DEFAULT_WORKSPACE_ID, name: DEFAULT_WORKSPACE_NAME },
         capabilities: session.capabilities,
@@ -935,6 +1099,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   });
 
   app.put("/api/schema/manifest", async (request): Promise<SchemaDraftEnvelopeDto> => {
+    assertSchemaMutationAllowed(config, "manifest");
     const { actor } = await requireActor(request, auth, authorization, config, true);
     const body = objectBody(request.body);
     if (!("schema" in body)) {
@@ -951,6 +1116,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   });
 
   app.post("/api/schema/ids", async (request): Promise<IssueSchemaIdsResponse> => {
+    assertSchemaMutationAllowed(config, "editor");
     const { actor } = await requireActor(request, auth, authorization, config, true);
     const body = objectBody(request.body);
     const kind = body["kind"];
@@ -969,6 +1135,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   });
 
   app.put("/api/schema/draft", async (request): Promise<SchemaDraftEnvelopeDto> => {
+    assertSchemaMutationAllowed(config, "editor");
     const { actor } = await requireActor(request, auth, authorization, config, true);
     const body = objectBody(request.body);
     const baseRevisionId = nullableString(body["baseRevisionId"], "baseRevisionId");
@@ -987,6 +1154,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   });
 
   app.post("/api/schema/preview", async (request): Promise<SchemaPreviewDto> => {
+    assertSchemaMutationAllowed(config, "editor");
     const { actor } = await requireActor(request, auth, authorization, config, true);
     const body = objectBody(request.body);
     const expectedDraftVersion = requiredString(
@@ -1012,6 +1180,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   });
 
   app.post("/api/schema/apply", async (request): Promise<SchemaRevisionEnvelopeDto> => {
+    assertSchemaMutationAllowed(config, "editor");
     const { actor } = await requireActor(request, auth, authorization, config, true);
     const body = objectBody(request.body);
     const expectedRevisionId = nullableString(body["expectedRevisionId"], "expectedRevisionId");
@@ -1043,6 +1212,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         throw error;
       }
       try {
+        await sites.reconcileCollections({
+          workspaceId: actor.workspaceId,
+          activeCollectionIds: applied.revision.schema.collections.map(({ id }) => String(id)),
+          actorIdentityId: actor.identityId ?? actor.subjectId,
+          actorSubjectId: actor.subjectId,
+        });
         await syncAuthorizationResources(policyActor, applied.revision.schema.collections);
         await reconcileAuthorizationHierarchy(
           policyActor,
@@ -1267,6 +1442,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/move",
     async (request): Promise<MoveDocumentResultDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       return database.withContentProjectionLock(async () => {
         const preview = await calculateMovePreview(
           actor,
@@ -1407,6 +1583,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/tree/reorder",
     async (request): Promise<DocumentTreeDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       const body = objectBody(request.body);
       const orderedDocumentIds = body["orderedDocumentIds"];
       if (!Array.isArray(orderedDocumentIds) || !orderedDocumentIds.every((value) => typeof value === "string")) {
@@ -1473,6 +1650,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents",
     async (request, reply): Promise<DocumentRecordDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       const body = objectBody(request.body);
       if (!("data" in body)) {
         throw badRequest("REQUEST_BODY_INVALID", "data is required.");
@@ -1540,6 +1718,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId",
     async (request): Promise<DocumentRecordDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       const body = objectBody(request.body);
       if (!("data" in body) || typeof body["expectedVersion"] !== "number") {
         throw badRequest("REQUEST_BODY_INVALID", "data and expectedVersion are required.");
@@ -1555,6 +1734,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/publish",
     async (request): Promise<DocumentRecordDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       return documents.publish(
         actor,
         request.params.collectionId,
@@ -1568,6 +1748,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/unpublish",
     async (request): Promise<DocumentRecordDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       return documents.unpublish(
         actor,
         request.params.collectionId,
@@ -1606,6 +1787,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/revisions/:revisionId/restore",
     async (request): Promise<DocumentRecordDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       return documents.restoreRevision(
         actor,
         request.params.collectionId,
@@ -1620,6 +1802,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/restore",
     async (request): Promise<DocumentRecordDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       return documents.restoreDeleted(
         actor,
         request.params.collectionId,
@@ -1633,6 +1816,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/purge",
     async (request, reply) => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       await database.withContentProjectionLock(async () => {
         const policyActor = authorizationActor(actor.subjectId);
         let quarantined: readonly string[] = [];
@@ -1675,6 +1859,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId",
     async (request, reply) => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
+      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
       const body = objectBody(request.body);
       if (typeof body["expectedVersion"] !== "number") {
         throw badRequest("REQUEST_BODY_INVALID", "expectedVersion is required.");
@@ -1827,14 +2012,50 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   };
 }
 
-async function requireActor(
+async function requireActorBase(
   request: FastifyRequest,
   auth: AuthApplicationService,
   authorization: AuthorizationApplicationService,
+  identityAdministration: IdentityAdministrationService,
   config: ServerConfig,
   requireCsrf: boolean,
 ): Promise<{ readonly actor: ActorContext; readonly sessionToken: string }> {
+  const authorizationHeader = request.headers.authorization;
+  if (authorizationHeader?.startsWith("Bearer ")) {
+    if (request.headers.cookie !== undefined || request.headers["x-csrf-token"] !== undefined) {
+      throw new ApplicationError("API_KEY_AUTHENTICATION_MIXED", 400, "Bearer API key authentication cannot be mixed with cookies or CSRF tokens.");
+    }
+    const rawKey = authorizationHeader.slice("Bearer ".length).trim();
+    const apiKey = await identityAdministration.authenticateApiKey(rawKey);
+    if (apiKey === null) {
+      throw new ApplicationError("API_KEY_INVALID", 401, "The API key is invalid or inactive.");
+    }
+    const policyActor = authorizationActor(apiKey.subjectId);
+    return {
+      actor: {
+        subjectId: apiKey.subjectId,
+        identityId: apiKey.identityId,
+        workspaceId: apiKey.workspaceId,
+        realmId: SYSTEM_AUTHORIZATION_REALM_ID,
+        capabilities: [],
+        authorization: authorizationGateway(authorization, policyActor, apiKey.scopes),
+        authentication: "api-key",
+      },
+      sessionToken: rawKey,
+    };
+  }
   const authenticated = await requireSession(request, auth, config, requireCsrf);
+  if (
+    requireCsrf &&
+    authenticated.session.identity.passwordChangeRequired &&
+    request.url.split("?", 1)[0] !== "/api/credentials/password"
+  ) {
+    throw new ApplicationError(
+      "PASSWORD_CHANGE_REQUIRED",
+      403,
+      "The temporary password must be changed before performing Admin mutations.",
+    );
+  }
   return {
     actor: {
       subjectId: authenticated.session.identity.id,
@@ -1846,6 +2067,7 @@ async function requireActor(
         authorization,
         authorizationActor(authenticated.session.identity.id),
       ),
+      authentication: "session",
     },
     sessionToken: authenticated.sessionToken,
   };
@@ -1870,13 +2092,26 @@ function authorizationActor(subjectId: string): AuthorizationActor {
 function authorizationGateway(
   authorization: AuthorizationApplicationService,
   actor: AuthorizationActor,
+  apiKeyScopes?: readonly string[],
 ): NonNullable<ActorContext["authorization"]> {
+  const requireScope = (action: string): void => {
+    if (apiKeyScopes !== undefined && !apiKeyScopes.includes(action)) {
+      throw new ApplicationError("API_KEY_SCOPE_DENIED", 403, `The API key scope does not include '${action}'.`);
+    }
+  };
   return {
     require: async (input) => {
+      requireScope(input.action);
       await authorization.require(actor, input);
     },
-    filterReadableData: (input) => authorization.filterReadableData(actor, input),
-    assertWritableData: (input) => authorization.assertWritableData(actor, input),
+    filterReadableData: (input) => {
+      requireScope(input.action ?? "content.read");
+      return authorization.filterReadableData(actor, input);
+    },
+    assertWritableData: (input) => {
+      requireScope(input.action ?? "content.update");
+      return authorization.assertWritableData(actor, input);
+    },
   };
 }
 
@@ -1943,6 +2178,15 @@ function assertAllowedOrigin(request: FastifyRequest, config: ServerConfig): voi
   assertAllowedRequestOrigin(request, config.adminOrigins);
 }
 
+function assertSchemaMutationAllowed(config: ServerConfig, surface: "editor" | "manifest"): void {
+  if (config.schemaMode === "locked") {
+    throw new ApplicationError("SCHEMA_MUTATION_LOCKED", 423, "Schema mutation is locked by the server environment.");
+  }
+  if (config.schemaMode === "manifest-only" && surface === "editor") {
+    throw new ApplicationError("SCHEMA_MANIFEST_ONLY", 423, "Only Schema Manifest import is allowed by the server environment.");
+  }
+}
+
 function assertAllowedContentOrigin(request: FastifyRequest, config: ServerConfig): void {
   assertAllowedRequestOrigin(request, config.contentOrigins);
 }
@@ -1992,12 +2236,37 @@ function sessionDto(
 ): AuthenticatedSessionDto {
   return {
     user: { id: session.identity.id, username: session.identity.username },
+    passwordChangeRequired: session.identity.passwordChangeRequired,
     csrfToken: session.csrfToken,
     workspace: { id: DEFAULT_WORKSPACE_ID, name: DEFAULT_WORKSPACE_NAME },
     capabilities: session.capabilities,
     schema: { revisionId: active?.revisionId ?? null },
     expiresAt: session.expiresAt,
   };
+}
+
+function workspaceSettingsDto(value: {
+  readonly id: string; readonly displayName: string; readonly defaultTimezone: string;
+  readonly adminLocale: string; readonly revision: number; readonly updatedAt: string;
+  readonly updatedBy: string;
+}): WorkspaceSettingsDto {
+  return { workspaceId: value.id, displayName: value.displayName,
+    defaultTimezone: value.defaultTimezone, adminLocale: value.adminLocale,
+    revision: value.revision, updatedAt: value.updatedAt, updatedBy: value.updatedBy };
+}
+
+function workspaceSettingsInput(value: unknown): UpdateWorkspaceSettingsRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ApplicationError("WORKSPACE_SETTINGS_REQUEST_INVALID", 400, "Workspace settings body must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  const allowed = ["expectedRevision", "displayName", "defaultTimezone", "adminLocale", "currentPassword"];
+  if (Object.keys(input).some((key) => !allowed.includes(key)) ||
+      !Number.isSafeInteger(input["expectedRevision"]) || Number(input["expectedRevision"]) < 1 ||
+      ["displayName", "defaultTimezone", "adminLocale", "currentPassword"].some((key) => typeof input[key] !== "string" || (input[key] as string).length === 0)) {
+    throw new ApplicationError("WORKSPACE_SETTINGS_REQUEST_INVALID", 400, "Workspace settings body is invalid.");
+  }
+  return input as unknown as UpdateWorkspaceSettingsRequest;
 }
 
 function revisionDto(revision: {

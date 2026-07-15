@@ -25,6 +25,7 @@ export interface ServerConfig {
   readonly workerBatchSize: number;
   readonly workerLeaseMs: number;
   readonly workerMaxAttempts: number;
+  readonly schemaMode: "editable" | "locked" | "manifest-only";
 }
 
 export function loadServerConfig(
@@ -82,6 +83,10 @@ export function loadServerConfig(
   const workerBatchSize = positiveInteger(env["XECMS_WORKER_BATCH_SIZE"] ?? "20", "XECMS_WORKER_BATCH_SIZE", 200);
   const workerLeaseMs = positiveInteger(env["XECMS_WORKER_LEASE_MS"] ?? "30000", "XECMS_WORKER_LEASE_MS", 3_600_000);
   const workerMaxAttempts = positiveInteger(env["XECMS_WORKER_MAX_ATTEMPTS"] ?? "8", "XECMS_WORKER_MAX_ATTEMPTS", 100);
+  const schemaMode = env["XECMS_SCHEMA_MODE"] ?? (rawNodeEnv === "production" ? "locked" : "editable");
+  if (schemaMode !== "editable" && schemaMode !== "locked" && schemaMode !== "manifest-only") {
+    throw new Error("XECMS_SCHEMA_MODE must be editable, locked, or manifest-only.");
+  }
   return {
     nodeEnv: rawNodeEnv,
     host: env["XECMS_HOST"] ?? "127.0.0.1",
@@ -107,6 +112,7 @@ export function loadServerConfig(
     workerBatchSize,
     workerLeaseMs,
     workerMaxAttempts,
+    schemaMode,
   };
 }
 

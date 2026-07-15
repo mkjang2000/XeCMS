@@ -28,6 +28,12 @@ export function SchemaToolsPage() {
     queryKey: queryKeys.schemaTypes,
     queryFn: () => api.schemaArtifacts.generateTypes(),
   });
+  const diagnostics = useQuery({
+    queryKey: queryKeys.diagnostics,
+    queryFn: () => api.settings.diagnostics(),
+  });
+  const manifestImportAllowed = diagnostics.data?.schemaMode !== "locked"
+    && diagnostics.data !== undefined;
   const [source, setSource] = useState("");
   const [localError, setLocalError] = useState<string>();
   useEffect(() => {
@@ -61,6 +67,11 @@ export function SchemaToolsPage() {
         title="Manifest · TypeScript"
         description="전체 Schema IR을 canonical JSON으로 이동하고 동일한 스키마에서 결정론적인 TypeScript 타입을 생성합니다."
       />
+      {diagnostics.data?.schemaMode === "locked" ? (
+        <Callout tone="warning">Schema mode가 <strong>locked</strong>이므로 Manifest 가져오기가 잠겨 있습니다.</Callout>
+      ) : diagnostics.data?.schemaMode === "manifest-only" ? (
+        <Callout tone="info">Manifest-only mode입니다. Manifest 가져오기는 허용되지만 시각 편집과 적용은 잠겨 있습니다.</Callout>
+      ) : null}
       {manifest.isPending ? <PageLoading label="Schema manifest를 불러오는 중" /> : null}
       {manifest.isError ? <LoadError error={manifest.error} onRetry={() => void manifest.refetch()} /> : null}
       {manifest.data ? (
@@ -82,7 +93,7 @@ export function SchemaToolsPage() {
           />
           {importMutation.isSuccess ? <Callout tone="success">Manifest를 Schema draft로 가져왔습니다. 변경 사항 검토 후 적용해 주세요.</Callout> : null}
           <div className={styles.actions}>
-            <Button onPress={() => importMutation.mutate()} isDisabled={importMutation.isPending || !source.trim()}>
+            <Button onPress={() => importMutation.mutate()} isDisabled={!manifestImportAllowed || importMutation.isPending || !source.trim()}>
               {importMutation.isPending ? "가져오는 중…" : "Manifest를 초안으로 가져오기"}
             </Button>
             <Button variant="quiet" onPress={() => setSource(manifest.data.serialized)} isDisabled={importMutation.isPending}>서버 원본으로 되돌리기</Button>

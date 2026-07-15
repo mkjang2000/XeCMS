@@ -376,6 +376,11 @@ export function SchemaEditorPage() {
   });
   const collections = useQuery({ queryKey: queryKeys.collections, queryFn: () => api.collections.list() });
   const realms = useQuery({ queryKey: queryKeys.identityRealms, queryFn: () => api.identityRealms.list() });
+  const diagnostics = useQuery({
+    queryKey: queryKeys.diagnostics,
+    queryFn: () => api.settings.diagnostics(),
+  });
+  const editable = diagnostics.data?.schemaMode === "editable";
   const { control, handleSubmit, reset, setError, setValue, formState: { errors, isDirty } } = useForm<SchemaFormValues>({ defaultValues: toFormValues() });
   const { fields, append, remove } = useFieldArray({ control, name: "fields", keyName: "formKey" });
   const hierarchyEnabled = useWatch({ control, name: "hierarchyEnabled" });
@@ -457,6 +462,11 @@ export function SchemaEditorPage() {
         description="간단한 필드는 시각 편집기로, 중첩 구조와 재사용 컴포넌트는 canonical manifest에서 완전히 제어할 수 있습니다."
         actions={<Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button>}
       />
+      {diagnostics.data && !editable ? (
+        <Callout tone="warning">
+          Schema mode가 <strong>{diagnostics.data.schemaMode}</strong>이므로 이 화면의 저장과 적용이 잠겨 있습니다.
+        </Callout>
+      ) : null}
       {isVersionConflict ? <ConflictNotice onReload={() => void reloadLatest()} /> : null}
       {mutationError && !isVersionConflict && mutationError.message !== "DUPLICATE_FIELD_NAME" && mutationError.message !== "INVALID_AUTH_CONFIGURATION" ? <LoadError error={mutationError} /> : null}
       <form className={styles.formStack} onSubmit={handleSubmit((values) => mutation.mutate(values))}>
@@ -640,7 +650,7 @@ export function SchemaEditorPage() {
           {errors.fields?.root?.message ? <Callout tone="error">{errors.fields.root.message}</Callout> : null}
         </section>
         <div className={styles.formActions}>
-          <Button type="submit" isDisabled={mutation.isPending || authBlockingMessages.length > 0}>{mutation.isPending ? "초안 저장 중…" : "변경 사항 검토"}</Button>
+          <Button type="submit" isDisabled={!editable || mutation.isPending || authBlockingMessages.length > 0}>{mutation.isPending ? "초안 저장 중…" : "변경 사항 검토"}</Button>
           <Button type="button" variant="secondary" isDisabled={mutation.isPending} onPress={() => navigate("/admin/schema")}>취소</Button>
         </div>
       </form>

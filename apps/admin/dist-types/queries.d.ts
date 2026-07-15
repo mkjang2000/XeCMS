@@ -1,6 +1,12 @@
 export declare const queryKeys: {
     bootstrap: readonly ["bootstrap"];
     session: readonly ["session"];
+    diagnostics: readonly ["settings", "diagnostics"];
+    workspaceSettings: readonly ["settings", "workspace"];
+    sites: readonly ["settings", "sites"];
+    audit: (filter: string) => readonly ["operations", "audit", string];
+    retentionPolicy: readonly ["operations", "retention", "policy"];
+    retentionPlan: (id: string) => readonly ["operations", "retention", "plan", string];
     collections: readonly ["collections"];
     schemaManifest: readonly ["schema", "manifest"];
     schemaTypes: readonly ["schema", "types"];
@@ -21,6 +27,10 @@ export declare const queryKeys: {
     realmAuthorization: (realmId: string) => readonly ["authorization", "realm", string, "policy"];
     realmAuthorizationAudit: (realmId: string) => readonly ["authorization", "realm", string, "audit"];
     globalIdentities: readonly ["identity-realms", "global-identities"];
+    identities: (query?: string, status?: string) => readonly ["identities", "list", string, string];
+    identity: (identityId: string) => readonly ["identities", string];
+    identitySessions: (identityId: string) => readonly ["identities", string, "sessions"];
+    identityApiKeys: (identityId: string) => readonly ["identities", string, "api-keys"];
     identityRealms: readonly ["identity-realms", "list"];
     identityRealm: (realmId: string) => readonly ["identity-realms", string, "detail"];
     realmMemberships: (realmId: string) => readonly ["identity-realms", string, "memberships"];

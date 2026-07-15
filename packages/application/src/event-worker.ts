@@ -9,7 +9,8 @@ export interface DurableEvent {
   readonly workspaceId: string;
   readonly realmId?: string;
   readonly aggregate: {
-    readonly type: "document" | "identity" | "realm" | "authorization" | "media";
+    readonly type: "document" | "identity" | "realm" | "authorization" | "media"
+      | "workspace" | "site" | "retention";
     readonly id: string;
     readonly version?: number;
   };
@@ -78,7 +79,9 @@ export interface EventWorkerStore {
     readonly handlerId?: string;
   }): Promise<EventDeliveryPage>;
   get(deliveryId: string): Promise<EventDelivery | null>;
-  retry(deliveryId: string, now: string): Promise<EventDelivery>;
+  retry(deliveryId: string, now: string, actor?: {
+    readonly actorSubjectId?: string; readonly actorIdentityId?: string;
+  }): Promise<EventDelivery>;
 }
 
 export interface EventWorkerRuntime {
@@ -122,8 +125,10 @@ export class EventWorkerService {
     return delivery;
   }
 
-  public retry(deliveryId: string): Promise<EventDelivery> {
-    return this.store.retry(deliveryId, this.runtime.now());
+  public retry(deliveryId: string, actor?: {
+    readonly actorSubjectId?: string; readonly actorIdentityId?: string;
+  }): Promise<EventDelivery> {
+    return this.store.retry(deliveryId, this.runtime.now(), actor);
   }
 
   private async executeCycle(): Promise<EventWorkerCycleResult> {

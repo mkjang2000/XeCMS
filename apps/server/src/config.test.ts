@@ -88,4 +88,13 @@ describe("loadServerConfig", () => {
       }),
     ).toThrow("at least 32 bytes");
   });
+
+  it("locks production Schema by default and validates explicit Schema modes", () => {
+    expect(loadServerConfig({ NODE_ENV: "production", DATABASE_URL: "postgresql://unused",
+      XECMS_SESSION_SECRET: "0123456789abcdef0123456789abcdef" }).schemaMode).toBe("locked");
+    expect(loadServerConfig({ NODE_ENV: "development", XECMS_SCHEMA_MODE: "manifest-only" }).schemaMode)
+      .toBe("manifest-only");
+    expect(() => loadServerConfig({ NODE_ENV: "development", XECMS_SCHEMA_MODE: "open" }))
+      .toThrow("XECMS_SCHEMA_MODE");
+  });
 });
