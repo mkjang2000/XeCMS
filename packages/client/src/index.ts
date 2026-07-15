@@ -117,6 +117,15 @@ import {
   type UpdateRetentionPolicyRequest,
   type PreviewRetentionRequest,
   type ApplyRetentionRequest,
+  type PluginCatalogListDto,
+  type PluginListDto,
+  type PluginRecordDto,
+  type PluginPlanDto,
+  type PreviewPluginPlanRequest,
+  type ApplyPluginPlanRequest,
+  type UpdatePluginConfigRequest,
+  type PluginExportDto,
+  type AdminPluginExtensionListDto,
 } from "@xecms/contracts";
 
 export * from "@xecms/contracts";
@@ -234,6 +243,13 @@ export interface XeCmsClient {
     getRetentionPlan(planId:string):Promise<RetentionPlanDto>;
     applyRetention(planId:string,input:ApplyRetentionRequest):Promise<RetentionPlanDto>;
     checkMediaConsistency():Promise<MediaConsistencyReportDto>;
+  };
+  readonly plugins:{
+    catalog():Promise<PluginCatalogListDto>;list():Promise<PluginListDto>;get(pluginId:string):Promise<PluginRecordDto>;
+    updateConfig(pluginId:string,input:UpdatePluginConfigRequest):Promise<PluginRecordDto>;
+    preview(input:PreviewPluginPlanRequest):Promise<PluginPlanDto>;getPlan(planId:string):Promise<PluginPlanDto>;
+    apply(planId:string,input:ApplyPluginPlanRequest):Promise<PluginPlanDto>;
+    getExport(exportId:string):Promise<PluginExportDto>;adminExtensions():Promise<AdminPluginExtensionListDto>;
   };
   readonly jobs: {
     list(options?: {
@@ -680,6 +696,16 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
       getRetentionPlan:(planId)=>request<RetentionPlanDto>(`/retention/plans/${encodeURIComponent(planId)}`),
       applyRetention:(planId,input)=>request<RetentionPlanDto>(`/retention/plans/${encodeURIComponent(planId)}/apply`,{method:"POST",body:json(input),csrf:true}),
       checkMediaConsistency:()=>request<MediaConsistencyReportDto>("/media/consistency"),
+    },
+    plugins:{
+      catalog:()=>request<PluginCatalogListDto>("/plugins/catalog"),list:()=>request<PluginListDto>("/plugins"),
+      get:(id)=>request<PluginRecordDto>(`/plugins/${encodeURIComponent(id)}`),
+      updateConfig:(id,input)=>request<PluginRecordDto>(`/plugins/${encodeURIComponent(id)}/config`,{method:"PATCH",body:json(input),csrf:true}),
+      preview:(input)=>request<PluginPlanDto>("/plugins/plans",{method:"POST",body:json(input),csrf:true}),
+      getPlan:(id)=>request<PluginPlanDto>(`/plugins/plans/${encodeURIComponent(id)}`),
+      apply:(id,input)=>request<PluginPlanDto>(`/plugins/plans/${encodeURIComponent(id)}/apply`,{method:"POST",body:json(input),csrf:true}),
+      getExport:(id)=>request<PluginExportDto>(`/plugins/exports/${encodeURIComponent(id)}`),
+      adminExtensions:()=>request<AdminPluginExtensionListDto>("/admin/extensions"),
     },
     jobs: {
       list: (options = {}) => {

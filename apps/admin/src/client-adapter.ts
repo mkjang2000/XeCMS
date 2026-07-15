@@ -422,6 +422,7 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
       applyRetention:(id,input)=>call(()=>client.operations.applyRetention(id,input)),
       checkMediaConsistency:()=>call(async()=>{const result=await client.operations.checkMediaConsistency();return{missing:result.missing.map(item=>mapMedia(client,item)),orphanStorageKeys:result.orphanStorageKeys,incomplete:result.incomplete,healthyCount:result.healthyCount}}),
     },
+    plugins:{catalog:()=>call(async()=>({items:(await client.plugins.catalog()).items})),list:()=>call(async()=>({items:(await client.plugins.list()).items})),get:(id)=>call(()=>client.plugins.get(id)),updateConfig:(id,input)=>call(()=>client.plugins.updateConfig(id,input)),preview:(input)=>call(()=>client.plugins.preview(input)),getPlan:(id)=>call(()=>client.plugins.getPlan(id)),apply:(id,input)=>call(()=>client.plugins.apply(id,input)),getExport:(id)=>call(()=>client.plugins.getExport(id)),extensions:()=>call(async()=>(await client.plugins.adminExtensions()).cards)},
     jobs: {
       list: (options) => call(() => client.jobs.list(options)),
       get: (deliveryId) => call(() => client.jobs.get(deliveryId)),

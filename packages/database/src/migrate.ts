@@ -22,6 +22,7 @@ import { EVENT_WORKER_MIGRATION_ID, applyEventWorkerMigration } from "./event-wo
 import { USER_IDENTITY_MIGRATION_ID, applyUserIdentityMigration } from "./user-identity-migration.js";
 import { SITE_SETTINGS_MIGRATION_ID, applySiteSettingsMigration } from "./site-settings-migration.js";
 import { AUDIT_RETENTION_MIGRATION_ID, applyAuditRetentionMigration } from "./audit-retention-migration.js";
+import { PLUGIN_PLATFORM_MIGRATION_ID, applyPluginPlatformMigration } from "./plugin-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -231,6 +232,15 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyAuditRetentionMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         AUDIT_RETENTION_MIGRATION_ID,
+      ]);
+    }
+    const pluginPlatform = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`, [PLUGIN_PLATFORM_MIGRATION_ID],
+    );
+    if (pluginPlatform.rowCount === 0) {
+      await applyPluginPlatformMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        PLUGIN_PLATFORM_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

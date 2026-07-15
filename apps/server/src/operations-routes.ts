@@ -120,7 +120,7 @@ function auditQuery(value: unknown, cursorAllowed: boolean): UnifiedAuditFilter 
   exact(query, allowed);
   const output: Record<string, unknown> = {};
   const category = optionalEnum(query["category"], ["security", "identity", "content", "schema",
-    "authorization", "settings", "site", "worker", "media", "retention"] as const, "category");
+    "authorization", "settings", "site", "worker", "media", "retention", "plugin"] as const, "category");
   const source = optionalEnum(query["source"], ["system", "document", "authorization", "delivery"] as const, "source");
   const outcome = optionalEnum(query["outcome"], ["succeeded", "failed", "denied", "informational"] as const, "outcome");
   if (category !== undefined) output["category"] = category as UnifiedAuditCategory;

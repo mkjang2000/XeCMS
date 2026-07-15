@@ -11,7 +11,9 @@
     { "path": "../../packages/core" },
     { "path": "../../packages/contracts" },
     { "path": "../../packages/application" },
-    { "path": "../../packages/database" }
+    { "path": "../../packages/database" },
+    { "path": "../../packages/plugin-sdk" },
+    { "path": "../../examples/example-plugin" }
   ],
   "include": ["src/**/*.ts"]
 }

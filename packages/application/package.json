@@ -13,6 +13,7 @@
   "dependencies": {
     "@xecms/authorization": "workspace:*",
     "@xecms/core": "workspace:*",
+    "@xecms/plugin-sdk": "workspace:*",
     "@xecms/schema": "workspace:*"
   },
   "devDependencies": {

@@ -7,6 +7,8 @@ export declare const queryKeys: {
     audit: (filter: string) => readonly ["operations", "audit", string];
     retentionPolicy: readonly ["operations", "retention", "policy"];
     retentionPlan: (id: string) => readonly ["operations", "retention", "plan", string];
+    plugins: readonly ["plugins", "catalog"];
+    pluginExtensions: readonly ["plugins", "extensions"];
     collections: readonly ["collections"];
     schemaManifest: readonly ["schema", "manifest"];
     schemaTypes: readonly ["schema", "types"];

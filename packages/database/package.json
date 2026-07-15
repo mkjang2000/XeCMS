@@ -13,10 +13,12 @@
   "dependencies": {
     "@xecms/application": "workspace:*",
     "@xecms/core": "workspace:*",
+    "@xecms/plugin-sdk": "workspace:*",
     "@xecms/schema": "workspace:*",
     "pg": "^8.16.3"
   },
   "devDependencies": {
+    "@xecms/example-plugin": "workspace:*",
     "@types/pg": "^8.15.5"
   }
 }

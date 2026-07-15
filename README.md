@@ -28,6 +28,7 @@ at-least-once로 처리한다.
 - [M4-C1 Users & Credentials 상세 사양](./docs/m4c1-user-identity-administration.md)
 - [M4-C2 Sites & System Settings 상세 사양](./docs/m4c2-sites-system-settings.md)
 - [M4-C3 Unified Audit & Retention 상세 사양](./docs/m4c3-audit-retention.md)
+- [M4-C4 Trusted Plugin Platform 상세 사양](./docs/m4c4-plugin-platform.md)
 - [Admin Studio 사양](./docs/admin-ui-specification.md)
 - [Schema IR 사양](./docs/schema-ir-specification.md)
 - [Document와 Revision 사양](./docs/document-revision-specification.md)

@@ -1,6 +1,6 @@
 # M4-C Administration, Plugin & Productization 구현 계획
 
-> 상태: M4-C1·M4-C2·M4-C3 완료, 다음 M4-C4 (2026-07-15)
+> 상태: M4-C1·M4-C2·M4-C3·M4-C4 완료, 다음 M4-C5 (2026-07-15)
 > 상위 계획: [M4 구현 계획](./m4-implementation-plan.md)  
 > 선행 조건: [M4-B Hook, Event & Worker](./m4b-event-worker-specification.md) 완료
 
@@ -160,6 +160,10 @@ Adapter로 연결한다. 로컬 개발에서는 명시적인 개발 전달 방�
 - 보존 작업 실패 후 재실행이 멱등하고 부분 삭제를 완료 처리하지 않는다.
 
 ## 6. M4-C4 — Plugin Platform
+
+> 완료: TypeScript·PostgreSQL·HTTP·Admin Chromium Gate 통과
+>
+> 상세 계약: [M4-C4 Trusted Plugin Platform 상세 사양](./m4c4-plugin-platform.md)
 
 ### 6.1 포함 범위
 

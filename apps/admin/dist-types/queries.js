@@ -7,6 +7,8 @@ export const queryKeys = {
     audit: (filter) => ["operations", "audit", filter],
     retentionPolicy: ["operations", "retention", "policy"],
     retentionPlan: (id) => ["operations", "retention", "plan", id],
+    plugins: ["plugins", "catalog"],
+    pluginExtensions: ["plugins", "extensions"],
     collections: ["collections"],
     schemaManifest: ["schema", "manifest"],
     schemaTypes: ["schema", "types"],

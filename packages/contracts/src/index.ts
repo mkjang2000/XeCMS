@@ -71,7 +71,7 @@ export interface SiteCollectionBindingRequest { readonly expectedSiteRevision:nu
 
 export type UnifiedAuditSourceDto = "system" | "document" | "authorization" | "delivery";
 export type UnifiedAuditCategoryDto = "security" | "identity" | "content" | "schema"
-  | "authorization" | "settings" | "site" | "worker" | "media" | "retention";
+  | "authorization" | "settings" | "site" | "worker" | "media" | "retention" | "plugin";
 export type UnifiedAuditOutcomeDto = "succeeded" | "failed" | "denied" | "informational";
 export interface UnifiedAuditEntryDto {
   readonly id:string; readonly source:UnifiedAuditSourceDto; readonly sourceId:string;
@@ -121,6 +121,22 @@ export interface RetentionPlanDto {
 }
 export interface PreviewRetentionRequest { readonly expectedPolicyRevision:number; }
 export interface ApplyRetentionRequest { readonly expectedPolicyRevision:number; readonly currentPassword:string; }
+
+export type PluginDesiredStateDto="installed"|"enabled"|"disabled";
+export type PluginPlanActionDto="install"|"enable"|"disable"|"uninstall";
+export type PluginDataActionDto="preserve"|"export"|"purge";
+export interface PluginRecordDto{readonly workspaceId:string;readonly pluginId:string;readonly packageName:string;readonly version:string;readonly manifest:Readonly<Record<string,unknown>>;readonly manifestDigest:string;readonly desiredState:PluginDesiredStateDto;readonly config:Readonly<Record<string,unknown>>;readonly revision:number;readonly restartRequired:boolean;readonly installedAt:string;readonly installedBy:string;readonly updatedAt:string;readonly updatedBy:string}
+export interface PluginCatalogRecordDto{readonly pluginId:string;readonly packageName:string;readonly version:string;readonly displayName:string;readonly description?:string;readonly manifest:Readonly<Record<string,unknown>>;readonly manifestDigest:string;readonly installed:PluginRecordDto|null;readonly runtimeLoaded:boolean;readonly restartRequired:boolean}
+export interface PluginCatalogListDto{readonly items:readonly PluginCatalogRecordDto[]}
+export interface PluginListDto{readonly items:readonly PluginRecordDto[]}
+export interface PluginBlockerDto{readonly code:string;readonly message:string;readonly details?:Readonly<Record<string,unknown>>}
+export interface PluginPlanDto{readonly id:string;readonly workspaceId:string;readonly pluginId:string;readonly action:PluginPlanActionDto;readonly dataAction?:PluginDataActionDto;readonly expectedPluginRevision:number|null;readonly manifestDigest:string;readonly status:"previewed"|"applied";readonly blockers:readonly PluginBlockerDto[];readonly dependencyIds:readonly string[];readonly schemaReferences:readonly string[];readonly dataCounts:Readonly<Record<string,number>>;readonly migrationIds:readonly string[];readonly digest:string;readonly createdAt:string;readonly createdBy:string;readonly expiresAt:string;readonly appliedAt?:string;readonly appliedBy?:string;readonly result?:PluginRecordDto|null;readonly exportId?:string}
+export interface PreviewPluginPlanRequest{readonly pluginId:string;readonly action:PluginPlanActionDto;readonly dataAction?:PluginDataActionDto;readonly expectedPluginRevision:number|null}
+export interface ApplyPluginPlanRequest{readonly pluginId:string;readonly expectedPluginRevision:number|null;readonly currentPassword:string}
+export interface UpdatePluginConfigRequest{readonly expectedRevision:number;readonly config:Readonly<Record<string,unknown>>;readonly currentPassword:string}
+export interface PluginExportDto{readonly id:string;readonly pluginId:string;readonly createdAt:string;readonly data:unknown}
+export interface AdminPluginCardDto{readonly pluginId:string;readonly pluginName:string;readonly id:string;readonly slot:"dashboard.main"|"operations.overview"|"settings.after";readonly title:string;readonly description:string;readonly status?:string;readonly link?:{readonly label:string;readonly href:string}}
+export interface AdminPluginExtensionListDto{readonly cards:readonly AdminPluginCardDto[]}
 
 export interface UserDto {
   readonly id: string;

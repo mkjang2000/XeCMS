@@ -24,6 +24,8 @@
     "@xecms/application": "workspace:*",
     "@xecms/contracts": "workspace:*",
     "@xecms/database": "workspace:*",
+    "@xecms/plugin-sdk": "workspace:*",
+    "@xecms/example-plugin": "workspace:*",
     "@xecms/schema": "workspace:*",
     "fastify": "^5.6.2"
   },

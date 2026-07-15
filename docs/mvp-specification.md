@@ -374,10 +374,10 @@ integration 19개와 Chromium M2+M3 시나리오 2개가 통과했으며 세부 
 
 ## 9. M4 — Extensible CMS
 
-> 상태: M4-A·M4-B·M4-C1·M4-C2·M4-C3 완료, 다음 M4-C4 (2026-07-15)
+> 상태: M4-A·M4-B·M4-C1·M4-C2·M4-C3·M4-C4 완료, 다음 M4-C5 (2026-07-15)
 > 구현 계획: [M4 구현 계획](./m4-implementation-plan.md)  
-> 완료 묶음: [M4-C3 Unified Audit & Retention](./m4c3-audit-retention.md)
-> 다음 묶음: [M4-C Administration 계획의 C4](./m4c-administration-productization-plan.md#6-m4-c4--plugin-platform)
+> 완료 묶음: [M4-C4 Trusted Plugin Platform](./m4c4-plugin-platform.md)
+> 다음 묶음: [M4-C Administration 계획의 C5](./m4c-administration-productization-plan.md#7-m4-c5--operations--distribution)
 
 ### 9.1 목표
 

@@ -10,8 +10,10 @@
     { "path": "./packages/client" },
     { "path": "./packages/ui" },
     { "path": "./packages/admin" },
+    { "path": "./packages/plugin-sdk" },
     { "path": "./apps/server" },
     { "path": "./apps/admin" },
-    { "path": "./examples/domain-prototype" }
+    { "path": "./examples/domain-prototype" },
+    { "path": "./examples/example-plugin" }
   ]
 }

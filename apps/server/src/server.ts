@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import cookie from "@fastify/cookie";
+import examplePlugin from "@xecms/example-plugin";
 import fastifyStatic from "@fastify/static";
 import {
   ApplicationError,
@@ -23,6 +24,8 @@ import {
   RetentionService,
   UnifiedAuditService,
   MediaApplicationService,
+  PluginCatalog,
+  PluginService,
   normalizeIdentityIdentifier,
   OWNER_CAPABILITIES,
   RelationApplicationService,
@@ -91,12 +94,14 @@ import {
   PostgresUnifiedAuditStore,
   PostgresEventWorkerStore,
   PostgresMediaStore,
+  PostgresPluginStore,
   PostgresMigrationPlanner,
   PostgresRelationStore,
   ScryptPasswordHasher,
   qualifiedName,
 } from "@xecms/database";
 import type { CollectionDefinition } from "@xecms/schema";
+import type { XeCmsPluginModule } from "@xecms/plugin-sdk";
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -109,6 +114,7 @@ import { registerIdentityAdministrationRoutes } from "./identity-administration-
 import { registerJobRoutes } from "./job-routes.js";
 import { registerSiteRoutes } from "./site-routes.js";
 import { registerOperationsRoutes } from "./operations-routes.js";
+import { registerPluginRoutes } from "./plugin-routes.js";
 import { LoginRateLimiter } from "./rate-limit.js";
 import { createApplicationRuntime, createSecurityRuntime } from "./security.js";
 
@@ -118,6 +124,7 @@ export interface BuildServerOptions {
   readonly config?: ServerConfig;
   readonly database?: PostgresDatabase;
   readonly logger?: boolean;
+  readonly plugins?: readonly XeCmsPluginModule[];
 }
 
 export interface XeCmsServer {
@@ -130,6 +137,8 @@ export interface XeCmsServer {
 
 export async function buildServer(options: BuildServerOptions = {}): Promise<XeCmsServer> {
   const config = options.config ?? loadServerConfig();
+  const pluginModules=options.plugins??[examplePlugin];
+  const pluginCatalog=new PluginCatalog(pluginModules);
   const database =
     options.database ??
     new PostgresDatabase({
@@ -175,6 +184,14 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   const sites = new SiteService(new PostgresSiteStore(database.pool, database.schema), {
     now: () => new Date().toISOString(), newSiteId: () => `site_${randomUUID()}`,
   });
+  const pluginStore=new PostgresPluginStore(database.pool,database.schema);
+  const desiredPlugins=await pluginStore.list(DEFAULT_WORKSPACE_ID);
+  const loadedPluginIds=new Set(desiredPlugins.filter(record=>record.desiredState==="enabled").map(record=>record.pluginId));
+  const loadedPluginModules=pluginModules.filter(module=>loadedPluginIds.has(module.manifest.id));
+  const plugins=new PluginService(pluginStore,pluginCatalog,{now:()=>new Date().toISOString(),newPlanId:()=>`plugin_plan_${randomUUID()}`,loadedPluginIds});
+  await plugins.assertStartupState(DEFAULT_WORKSPACE_ID);
+  for(const module of loadedPluginModules){const health=await module.server?.health?.();if(health?.status==="degraded")throw new ApplicationError("PLUGIN_STARTUP_HEALTH_FAILED",503,`Plugin '${module.manifest.id}' startup health check failed: ${health.detail??"degraded"}`)}
+  await plugins.reconcileRuntime(DEFAULT_WORKSPACE_ID);
   const unifiedAudit = new UnifiedAuditService(
     new PostgresUnifiedAuditStore(database.pool, database.schema),
   );
@@ -256,6 +273,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     new PostgresRelationStore(database.pool, database.schema),
   );
   const lifecycleHooks = new DocumentLifecycleHookRegistry();
+  for(const module of loadedPluginModules)for(const hook of module.server?.hooks??[])lifecycleHooks.register({id:hook.id,...(hook.priority===undefined?{}:{priority:hook.priority}),stages:hook.stages,run:(context)=>hook.run(context as unknown as Readonly<Record<string,unknown>>) });
   const documents = new DocumentApplicationService(
     database,
     database,
@@ -279,7 +297,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       handlerId: searchHandlerId,
       now: new Date().toISOString(),
     }),
-  }], {
+  },...loadedPluginModules.flatMap(module=>(module.server?.eventHandlers??[]).map(handler=>({id:handler.id,topics:handler.topics,handle:(event:import("@xecms/application").DurableEvent,context:{readonly idempotencyKey:string;readonly deliveryId:string})=>handler.handle(event as unknown as Readonly<Record<string,unknown>>,context)})))], {
     now: () => new Date().toISOString(),
     workerId: `worker_${process.pid}_${randomUUID()}`,
     leaseMs: config.workerLeaseMs,
@@ -696,6 +714,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         incomplete: report.incomplete.map(incompleteMediaRecordDto), healthyCount: report.healthyCount };
     },
   });
+  registerPluginRoutes({
+    app,plugins,authorization,loadedModules:loadedPluginModules,
+    loadedConfigs:new Map(desiredPlugins.filter(record=>record.desiredState==="enabled").map(record=>[record.pluginId,record.config])),
+    requireActor:async(request,csrf)=>(await requireActor(request,auth,authorization,config,csrf)).actor,
+    reauthenticate:async(request,actor,password)=>{const authenticated=await requireSession(request,auth,config,false);if(authenticated.session.identity.id!==actor.identityId)throw new ApplicationError("SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH",403,"The reauthentication challenge does not match the System session.");await auth.reauthenticate({identityId:authenticated.session.identity.id,username:authenticated.session.identity.username,password});},
+  });
 
   registerAuthorizationRoutes({
     app,
@@ -931,7 +955,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
 
   app.get("/api/health", async (): Promise<HealthResponse> => {
     await database.ping();
-    return { status: "ok", database: "connected", version: "0.4.0-m4c3" };
+    return { status: "ok", database: "connected", version: "0.4.0-m4c4" };
   });
 
   app.get("/api/system/diagnostics", async (request): Promise<SystemDiagnosticsDto> => {
@@ -940,7 +964,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     const postgres = await database.pool.query<{ version: string }>(
       "SELECT current_setting('server_version') AS version",
     );
-    return { environment: config.nodeEnv, xecmsVersion: "0.4.0-m4c3", nodeVersion: process.version,
+    return { environment: config.nodeEnv, xecmsVersion: "0.4.0-m4c4", nodeVersion: process.version,
       postgresVersion: postgres.rows[0]!.version, schemaMode: config.schemaMode,
       workerEnabled: config.workerEnabled, uploadLimitBytes: config.mediaMaxUploadBytes,
       allowedMimeTypes: config.mediaAllowedMimeTypes, adminOriginCount: config.adminOrigins.length,

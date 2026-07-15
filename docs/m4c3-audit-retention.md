@@ -35,7 +35,7 @@ Safe operational cleanup + Audit/Outbox
 ```ts
 type AuditCategory =
   | "security" | "identity" | "content" | "schema" | "authorization"
-  | "settings" | "site" | "worker" | "media" | "retention";
+  | "settings" | "site" | "worker" | "media" | "retention" | "plugin";
 
 interface UnifiedAuditEntry {
   id: string;                     // source:id

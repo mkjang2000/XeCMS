@@ -9,7 +9,9 @@
   "references": [
     { "path": "../schema" },
     { "path": "../core" },
-    { "path": "../application" }
+    { "path": "../application" },
+    { "path": "../plugin-sdk" },
+    { "path": "../../examples/example-plugin" }
   ],
   "include": ["src/**/*.ts"]
 }

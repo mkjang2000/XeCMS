@@ -2,7 +2,7 @@ import { ApplicationError } from "./errors.js";
 
 export type UnifiedAuditSource = "system" | "document" | "authorization" | "delivery";
 export type UnifiedAuditCategory = "security" | "identity" | "content" | "schema"
-  | "authorization" | "settings" | "site" | "worker" | "media" | "retention";
+  | "authorization" | "settings" | "site" | "worker" | "media" | "retention" | "plugin";
 export type UnifiedAuditOutcome = "succeeded" | "failed" | "denied" | "informational";
 
 export interface UnifiedAuditEntry {

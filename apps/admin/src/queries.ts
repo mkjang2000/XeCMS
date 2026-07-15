@@ -7,6 +7,8 @@ export const queryKeys = {
   audit: (filter:string) => ["operations","audit",filter] as const,
   retentionPolicy: ["operations","retention","policy"] as const,
   retentionPlan: (id:string) => ["operations","retention","plan",id] as const,
+  plugins: ["plugins","catalog"] as const,
+  pluginExtensions: ["plugins","extensions"] as const,
   collections: ["collections"] as const,
   schemaManifest: ["schema", "manifest"] as const,
   schemaTypes: ["schema", "types"] as const,

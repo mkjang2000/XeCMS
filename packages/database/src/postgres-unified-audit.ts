@@ -84,6 +84,7 @@ export class PostgresUnifiedAuditStore implements UnifiedAuditStore {
           WHEN audit.event_type LIKE 'schema.%' THEN 'schema'
           WHEN audit.event_type LIKE 'media.%' THEN 'media'
           WHEN audit.event_type LIKE 'retention.%' THEN 'retention'
+          WHEN audit.event_type LIKE 'plugin.%' THEN 'plugin'
           WHEN audit.event_type LIKE 'job.%' THEN 'worker'
           ELSE 'security'
         END::text AS category,

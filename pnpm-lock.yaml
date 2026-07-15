@@ -93,6 +93,12 @@ importers:
       '@xecms/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@xecms/example-plugin':
+        specifier: workspace:*
+        version: link:../../examples/example-plugin
+      '@xecms/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@xecms/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -118,6 +124,12 @@ importers:
       '@xecms/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+
+  examples/example-plugin:
+    dependencies:
+      '@xecms/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   packages/admin:
     dependencies:
@@ -155,6 +167,9 @@ importers:
       '@xecms/core':
         specifier: workspace:*
         version: link:../core
+      '@xecms/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
       '@xecms/schema':
         specifier: workspace:*
         version: link:../schema
@@ -187,6 +202,9 @@ importers:
       '@xecms/core':
         specifier: workspace:*
         version: link:../core
+      '@xecms/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
       '@xecms/schema':
         specifier: workspace:*
         version: link:../schema
@@ -197,6 +215,11 @@ importers:
       '@types/pg':
         specifier: ^8.15.5
         version: 8.20.0
+      '@xecms/example-plugin':
+        specifier: workspace:*
+        version: link:../../examples/example-plugin
+
+  packages/plugin-sdk: {}
 
   packages/schema: {}
 

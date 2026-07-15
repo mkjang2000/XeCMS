@@ -73,6 +73,10 @@ export function AppShell() {
             <Icon name="shield" size={18} />
             <span>운영 및 감사</span>
           </NavLink>
+          <NavLink to="/admin/plugins">
+            <Icon name="schema" size={18} />
+            <span>Plugins</span>
+          </NavLink>
           <NavLink to="/admin/settings">
             <Icon name="workspace" size={18} />
             <span>설정 및 사이트</span>

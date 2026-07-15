@@ -177,6 +177,10 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
           lazy: async () => ({ Component: (await import("./pages/operations-page.js")).OperationsPage }),
         },
         {
+          path: "plugins",
+          lazy: async () => ({ Component: (await import("./pages/plugins-page.js")).PluginsPage }),
+        },
+        {
           path: "users",
           lazy: async () => ({ Component: (await import("./pages/user-pages.js")).UserListPage }),
         },

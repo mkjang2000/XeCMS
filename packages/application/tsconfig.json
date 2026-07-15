@@ -11,6 +11,7 @@
     { "path": "../authorization" },
     { "path": "../schema" },
     { "path": "../core" }
+    ,{ "path": "../plugin-sdk" }
   ],
   "include": ["src/**/*.ts"]
 }

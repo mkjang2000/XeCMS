@@ -11,6 +11,7 @@ export * from "./site-settings.js";
 export * from "./sites.js";
 export * from "./audit.js";
 export * from "./retention.js";
+export * from "./plugins.js";
 export * from "./media.js";
 export * from "./relations.js";
 export * from "./realm-authorization-provisioning.js";

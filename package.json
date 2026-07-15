@@ -32,12 +32,14 @@
     "test:e2e:m3": "node scripts/run-m3-e2e.mjs",
     "test:e2e:m4a": "node scripts/run-m4a-e2e.mjs",
     "test:e2e:m4b": "node scripts/run-m4b-e2e.mjs",
+    "test:e2e:m4c4": "node scripts/run-m4c4-e2e.mjs",
     "verify:m1": "pnpm clean && pnpm check:dev-sources && pnpm verify:m0:after-clean && pnpm build:admin && pnpm test:e2e",
     "verify:m2a": "pnpm verify:m1",
     "verify:m2": "pnpm check && pnpm test:e2e:m2",
     "verify:m3": "pnpm check && pnpm test:e2e:m3",
     "verify:m4a": "pnpm check && pnpm test:e2e:m4a",
-    "verify:m4b": "pnpm check && pnpm test:e2e:m4b"
+    "verify:m4b": "pnpm check && pnpm test:e2e:m4b",
+    "verify:m4c4": "pnpm check && pnpm test:e2e:m4c4"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

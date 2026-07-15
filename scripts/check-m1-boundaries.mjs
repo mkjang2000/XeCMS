@@ -5,11 +5,19 @@ const root = new URL("../", import.meta.url);
 const rules = [
   {
     directory: "packages/application",
-    allowedXeCms: new Set(["@xecms/authorization", "@xecms/core", "@xecms/schema"]),
+    allowedXeCms: new Set(["@xecms/authorization", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk"]),
   },
   {
     directory: "packages/database",
-    allowedXeCms: new Set(["@xecms/application", "@xecms/core", "@xecms/schema"]),
+    allowedXeCms: new Set(["@xecms/application", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk", "@xecms/example-plugin"]),
+  },
+  {
+    directory: "packages/plugin-sdk",
+    allowedXeCms: new Set(),
+  },
+  {
+    directory: "examples/example-plugin",
+    allowedXeCms: new Set(["@xecms/plugin-sdk"]),
   },
   {
     directory: "packages/contracts",
@@ -43,6 +51,8 @@ const rules = [
       "@xecms/contracts",
       "@xecms/core",
       "@xecms/database",
+      "@xecms/example-plugin",
+      "@xecms/plugin-sdk",
       "@xecms/schema",
     ]),
   },
