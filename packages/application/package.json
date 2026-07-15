@@ -1,0 +1,21 @@
+{
+  "name": "@xecms/application",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@xecms/authorization": "workspace:*",
+    "@xecms/core": "workspace:*",
+    "@xecms/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1"
+  }
+}

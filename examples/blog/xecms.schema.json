@@ -1,0 +1,655 @@
+{
+  "format": "xecms.schema",
+  "formatVersion": 1,
+  "collections": [
+    {
+      "id": "col_blog_site",
+      "name": "siteSettings",
+      "label": "사이트 설정",
+      "kind": "singleton",
+      "fields": [
+        {
+          "id": "fld_blog_site_name",
+          "name": "siteName",
+          "label": "사이트 이름",
+          "required": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        {
+          "id": "fld_blog_site_description",
+          "name": "description",
+          "label": "사이트 설명",
+          "type": "textarea",
+          "maxLength": 320
+        },
+        {
+          "id": "fld_blog_site_launch_date",
+          "name": "launchDate",
+          "label": "개설일",
+          "type": "date"
+        },
+        {
+          "id": "fld_blog_site_theme",
+          "name": "theme",
+          "label": "테마",
+          "required": true,
+          "type": "enum",
+          "options": [
+            {
+              "label": "시스템 설정",
+              "value": "system"
+            },
+            {
+              "label": "밝게",
+              "value": "light"
+            },
+            {
+              "label": "어둡게",
+              "value": "dark"
+            }
+          ],
+          "defaultValue": "system"
+        },
+        {
+          "id": "fld_blog_site_logo",
+          "name": "logo",
+          "label": "로고",
+          "type": "upload",
+          "acceptedMimeTypes": [
+            "image/png",
+            "image/jpeg"
+          ]
+        },
+        {
+          "id": "fld_blog_site_seo",
+          "name": "seo",
+          "label": "검색 엔진 설정",
+          "type": "component",
+          "componentId": "cmp_blog_seo"
+        },
+        {
+          "id": "fld_blog_site_social_links",
+          "name": "socialLinks",
+          "label": "소셜 링크",
+          "type": "array",
+          "fields": [
+            {
+              "id": "fld_blog_site_social_label",
+              "name": "label",
+              "label": "이름",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "id": "fld_blog_site_social_url",
+              "name": "url",
+              "label": "URL",
+              "required": true,
+              "type": "text"
+            }
+          ],
+          "maxItems": 10
+        }
+      ]
+    },
+    {
+      "id": "col_blog_authors",
+      "name": "authors",
+      "label": "작성자",
+      "fields": [
+        {
+          "id": "fld_blog_author_name",
+          "name": "name",
+          "label": "이름",
+          "required": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        {
+          "id": "fld_blog_author_bio",
+          "name": "bio",
+          "label": "소개",
+          "type": "textarea",
+          "maxLength": 1000
+        },
+        {
+          "id": "fld_blog_author_avatar",
+          "name": "avatar",
+          "label": "프로필 이미지",
+          "type": "upload",
+          "acceptedMimeTypes": [
+            "image/png",
+            "image/jpeg"
+          ]
+        },
+        {
+          "id": "fld_blog_author_roles",
+          "name": "roles",
+          "label": "역할",
+          "type": "select",
+          "options": [
+            {
+              "label": "작성자",
+              "value": "writer"
+            },
+            {
+              "label": "편집자",
+              "value": "editor"
+            },
+            {
+              "label": "사진가",
+              "value": "photographer"
+            }
+          ],
+          "multiple": true,
+          "defaultValue": [
+            "writer"
+          ]
+        },
+        {
+          "id": "fld_blog_author_profile",
+          "name": "profile",
+          "label": "추가 프로필",
+          "type": "object",
+          "fields": [
+            {
+              "id": "fld_blog_author_profile_location",
+              "name": "location",
+              "label": "활동 지역",
+              "type": "text"
+            },
+            {
+              "id": "fld_blog_author_profile_website",
+              "name": "website",
+              "label": "웹사이트",
+              "type": "text"
+            }
+          ]
+        },
+        {
+          "id": "fld_blog_author_metadata",
+          "name": "metadata",
+          "label": "외부 메타데이터",
+          "type": "json",
+          "defaultValue": {}
+        }
+      ]
+    },
+    {
+      "id": "col_blog_categories",
+      "name": "categories",
+      "label": "카테고리",
+      "fields": [
+        {
+          "id": "fld_blog_category_title",
+          "name": "title",
+          "label": "이름",
+          "required": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        {
+          "id": "fld_blog_category_slug",
+          "name": "slug",
+          "label": "슬러그",
+          "required": true,
+          "unique": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        {
+          "id": "fld_blog_category_summary",
+          "name": "summary",
+          "label": "설명",
+          "type": "textarea",
+          "maxLength": 500
+        }
+      ],
+      "hierarchy": {
+        "enabled": true,
+        "maxDepth": 2,
+        "slugPath": true,
+        "permissionInheritance": true
+      }
+    },
+    {
+      "id": "col_blog_posts",
+      "name": "posts",
+      "label": "게시글",
+      "fields": [
+        {
+          "id": "fld_blog_post_title",
+          "name": "title",
+          "label": "제목",
+          "required": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        {
+          "id": "fld_blog_post_slug",
+          "name": "slug",
+          "label": "슬러그",
+          "required": true,
+          "unique": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        {
+          "id": "fld_blog_post_excerpt",
+          "name": "excerpt",
+          "label": "요약",
+          "type": "textarea",
+          "maxLength": 500
+        },
+        {
+          "id": "fld_blog_post_body",
+          "name": "body",
+          "label": "본문",
+          "required": true,
+          "type": "rich-text",
+          "editor": "xecms.basic"
+        },
+        {
+          "id": "fld_blog_post_status",
+          "name": "status",
+          "label": "편집 상태",
+          "required": true,
+          "type": "select",
+          "options": [
+            {
+              "label": "초안",
+              "value": "draft"
+            },
+            {
+              "label": "검토 중",
+              "value": "review"
+            },
+            {
+              "label": "완료",
+              "value": "ready"
+            }
+          ],
+          "defaultValue": "draft"
+        },
+        {
+          "id": "fld_blog_post_kind",
+          "name": "kind",
+          "label": "글 유형",
+          "required": true,
+          "type": "enum",
+          "options": [
+            {
+              "label": "일반",
+              "value": "article"
+            },
+            {
+              "label": "소식",
+              "value": "news"
+            },
+            {
+              "label": "튜토리얼",
+              "value": "tutorial"
+            }
+          ],
+          "defaultValue": "article"
+        },
+        {
+          "id": "fld_blog_post_featured",
+          "name": "featured",
+          "label": "추천 글",
+          "type": "boolean",
+          "defaultValue": false
+        },
+        {
+          "id": "fld_blog_post_published_at",
+          "name": "publishedAt",
+          "label": "게시 일시",
+          "type": "datetime"
+        },
+        {
+          "id": "fld_blog_post_event_date",
+          "name": "eventDate",
+          "label": "관련 날짜",
+          "type": "date"
+        },
+        {
+          "id": "fld_blog_post_reading_minutes",
+          "name": "readingMinutes",
+          "label": "예상 읽기 시간",
+          "type": "number",
+          "minimum": 1,
+          "maximum": 240,
+          "integer": true
+        },
+        {
+          "id": "fld_blog_post_tags",
+          "name": "tags",
+          "label": "태그",
+          "type": "select",
+          "options": [
+            {
+              "label": "XeCMS",
+              "value": "xecms"
+            },
+            {
+              "label": "TypeScript",
+              "value": "typescript"
+            },
+            {
+              "label": "운영",
+              "value": "operations"
+            }
+          ],
+          "multiple": true
+        },
+        {
+          "id": "fld_blog_post_author",
+          "name": "author",
+          "label": "작성자",
+          "required": true,
+          "type": "relation",
+          "relationId": "rel_blog_post_author",
+          "targetCollectionId": "col_blog_authors",
+          "cardinality": "one"
+        },
+        {
+          "id": "fld_blog_post_category",
+          "name": "category",
+          "label": "카테고리",
+          "type": "relation",
+          "relationId": "rel_blog_post_category",
+          "targetCollectionId": "col_blog_categories",
+          "cardinality": "one",
+          "onDelete": "nullify"
+        },
+        {
+          "id": "fld_blog_post_related",
+          "name": "relatedPosts",
+          "label": "관련 글",
+          "type": "relation",
+          "relationId": "rel_blog_post_related",
+          "targetCollectionId": "col_blog_posts",
+          "cardinality": "many",
+          "onDelete": "nullify"
+        },
+        {
+          "id": "fld_blog_post_cover",
+          "name": "cover",
+          "label": "대표 이미지",
+          "type": "upload",
+          "acceptedMimeTypes": [
+            "image/png",
+            "image/jpeg"
+          ]
+        },
+        {
+          "id": "fld_blog_post_gallery",
+          "name": "gallery",
+          "label": "갤러리",
+          "type": "upload",
+          "multiple": true,
+          "acceptedMimeTypes": [
+            "image/png",
+            "image/jpeg"
+          ]
+        },
+        {
+          "id": "fld_blog_post_seo",
+          "name": "seo",
+          "label": "검색 엔진 설정",
+          "type": "component",
+          "componentId": "cmp_blog_seo"
+        },
+        {
+          "id": "fld_blog_post_sections",
+          "name": "sections",
+          "label": "본문 섹션",
+          "type": "array",
+          "fields": [
+            {
+              "id": "fld_blog_post_section_heading",
+              "name": "heading",
+              "label": "소제목",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "id": "fld_blog_post_section_body",
+              "name": "body",
+              "label": "내용",
+              "required": true,
+              "type": "textarea"
+            }
+          ],
+          "maxItems": 20
+        },
+        {
+          "id": "fld_blog_post_layout",
+          "name": "layout",
+          "label": "레이아웃 설정",
+          "type": "object",
+          "fields": [
+            {
+              "id": "fld_blog_post_layout_width",
+              "name": "width",
+              "label": "너비",
+              "type": "enum",
+              "options": [
+                {
+                  "label": "좁게",
+                  "value": "narrow"
+                },
+                {
+                  "label": "기본",
+                  "value": "normal"
+                },
+                {
+                  "label": "넓게",
+                  "value": "wide"
+                }
+              ],
+              "defaultValue": "normal"
+            },
+            {
+              "id": "fld_blog_post_layout_toc",
+              "name": "showTableOfContents",
+              "label": "목차 표시",
+              "type": "boolean",
+              "defaultValue": true
+            }
+          ]
+        },
+        {
+          "id": "fld_blog_post_blocks",
+          "name": "contentBlocks",
+          "label": "콘텐츠 블록",
+          "type": "blocks",
+          "allowedComponentIds": [
+            "cmp_blog_hero",
+            "cmp_blog_callout"
+          ]
+        },
+        {
+          "id": "fld_blog_post_metadata",
+          "name": "metadata",
+          "label": "확장 메타데이터",
+          "type": "json"
+        }
+      ]
+    },
+    {
+      "id": "col_blog_pages",
+      "name": "pages",
+      "label": "페이지",
+      "fields": [
+        {
+          "id": "fld_blog_page_title",
+          "name": "title",
+          "label": "제목",
+          "required": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        {
+          "id": "fld_blog_page_slug",
+          "name": "slug",
+          "label": "슬러그",
+          "required": true,
+          "unique": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        {
+          "id": "fld_blog_page_body",
+          "name": "body",
+          "label": "본문",
+          "required": true,
+          "type": "rich-text",
+          "editor": "xecms.basic"
+        },
+        {
+          "id": "fld_blog_page_seo",
+          "name": "seo",
+          "label": "검색 엔진 설정",
+          "type": "component",
+          "componentId": "cmp_blog_seo"
+        }
+      ],
+      "hierarchy": {
+        "enabled": true,
+        "maxDepth": 2,
+        "slugPath": true,
+        "permissionInheritance": true
+      }
+    },
+    {
+      "id": "col_blog_comments",
+      "name": "comments",
+      "label": "댓글",
+      "fields": [
+        {
+          "id": "fld_blog_comment_name",
+          "name": "name",
+          "label": "작성자 이름",
+          "required": true,
+          "type": "text",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        {
+          "id": "fld_blog_comment_message",
+          "name": "message",
+          "label": "내용",
+          "required": true,
+          "type": "textarea",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        {
+          "id": "fld_blog_comment_post",
+          "name": "post",
+          "label": "게시글",
+          "required": true,
+          "type": "relation",
+          "relationId": "rel_blog_comment_post",
+          "targetCollectionId": "col_blog_posts",
+          "cardinality": "one",
+          "onDelete": "cascade"
+        }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "cmp_blog_seo",
+      "name": "seoMetadata",
+      "label": "검색 엔진 메타데이터",
+      "fields": [
+        {
+          "id": "fld_blog_seo_title",
+          "name": "title",
+          "label": "검색 결과 제목",
+          "type": "text",
+          "maxLength": 70
+        },
+        {
+          "id": "fld_blog_seo_description",
+          "name": "description",
+          "label": "검색 결과 설명",
+          "type": "textarea",
+          "maxLength": 160
+        },
+        {
+          "id": "fld_blog_seo_no_index",
+          "name": "noIndex",
+          "label": "검색 제외",
+          "type": "boolean",
+          "defaultValue": false
+        }
+      ]
+    },
+    {
+      "id": "cmp_blog_hero",
+      "name": "heroBlock",
+      "label": "히어로 블록",
+      "fields": [
+        {
+          "id": "fld_blog_hero_heading",
+          "name": "heading",
+          "label": "제목",
+          "required": true,
+          "type": "text",
+          "maxLength": 120
+        },
+        {
+          "id": "fld_blog_hero_eyebrow",
+          "name": "eyebrow",
+          "label": "상단 문구",
+          "type": "text",
+          "maxLength": 80
+        }
+      ]
+    },
+    {
+      "id": "cmp_blog_callout",
+      "name": "calloutBlock",
+      "label": "강조 블록",
+      "fields": [
+        {
+          "id": "fld_blog_callout_tone",
+          "name": "tone",
+          "label": "강조 유형",
+          "required": true,
+          "type": "enum",
+          "options": [
+            {
+              "label": "정보",
+              "value": "info"
+            },
+            {
+              "label": "주의",
+              "value": "warning"
+            }
+          ],
+          "defaultValue": "info"
+        },
+        {
+          "id": "fld_blog_callout_body",
+          "name": "body",
+          "label": "내용",
+          "required": true,
+          "type": "textarea"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+:root {
+  color-scheme: light;
+  --xe-font-sans: "Pretendard Variable", Pretendard, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+  --xe-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --xe-color-canvas: #f5f6fa;
+  --xe-color-surface: #ffffff;
+  --xe-color-surface-subtle: #f8f9fc;
+  --xe-color-surface-muted: #f0f2f7;
+  --xe-color-surface-raised: #ffffff;
+  --xe-color-border: #e3e6ee;
+  --xe-color-border-strong: #d1d6e0;
+  --xe-color-border-emphasis: #aeb6c6;
+
+  --xe-color-text: #293245;
+  --xe-color-text-strong: #161d2d;
+  --xe-color-text-muted: #687286;
+  --xe-color-text-subtle: #8f98aa;
+  --xe-color-text-placeholder: #a4acba;
+
+  --xe-color-primary: #5865e8;
+  --xe-color-primary-hover: #4854d4;
+  --xe-color-primary-strong: #3d48bd;
+  --xe-color-primary-soft: #eef0ff;
+  --xe-color-primary-border: #d9ddff;
+
+  --xe-color-danger: #c4322a;
+  --xe-color-danger-hover: #a92620;
+  --xe-color-danger-soft: #fff0ef;
+  --xe-color-danger-border: #f6c8c4;
+  --xe-color-warning: #98600d;
+  --xe-color-warning-soft: #fff7e7;
+  --xe-color-warning-border: #f0d9a5;
+  --xe-color-success: #16784a;
+  --xe-color-success-soft: #eaf8f0;
+  --xe-color-success-border: #bce5cc;
+  --xe-color-info: #285fae;
+  --xe-color-info-soft: #edf5ff;
+  --xe-color-info-border: #c8dcf7;
+
+  --xe-color-focus: #6975f1;
+  --xe-color-focus-ring: rgb(88 101 232 / 16%);
+
+  --xe-color-nav: #151b2c;
+  --xe-color-nav-deep: #101624;
+  --xe-color-nav-surface: #202840;
+  --xe-color-nav-border: rgb(255 255 255 / 8%);
+  --xe-color-nav-text: #d9deea;
+  --xe-color-nav-muted: #8f99ae;
+
+  --xe-radius-xs: 6px;
+  --xe-radius-sm: 9px;
+  --xe-radius-md: 12px;
+  --xe-radius-lg: 16px;
+  --xe-radius-xl: 22px;
+
+  --xe-shadow-button: 0 1px 2px rgb(41 50 69 / 12%), 0 3px 8px rgb(88 101 232 / 12%);
+  --xe-shadow-button-hover: 0 2px 4px rgb(41 50 69 / 12%), 0 5px 12px rgb(88 101 232 / 16%);
+  --xe-shadow-card: 0 1px 2px rgb(16 24 40 / 3%);
+  --xe-shadow-card-hover: 0 12px 28px rgb(33 41 60 / 9%);
+  --xe-shadow-popover: 0 14px 36px rgb(24 32 52 / 16%), 0 2px 8px rgb(24 32 52 / 8%);
+  --xe-shadow-dialog: 0 28px 72px rgb(8 13 24 / 28%);
+
+  --xe-control-height-sm: 2.25rem;
+  --xe-control-height: 2.65rem;
+
+  --xe-space-1: 0.25rem;
+  --xe-space-2: 0.5rem;
+  --xe-space-3: 0.75rem;
+  --xe-space-4: 1rem;
+  --xe-space-5: 1.25rem;
+  --xe-space-6: 1.5rem;
+  --xe-space-8: 2rem;
+  --xe-space-10: 2.5rem;
+  --xe-space-12: 3rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  color: var(--xe-color-text);
+  background: var(--xe-color-canvas);
+  font-family: var(--xe-font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  color: var(--xe-color-text-strong);
+  background: var(--xe-color-primary-border);
+}
+
+:focus-visible {
+  outline: 3px solid var(--xe-color-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "references": [
+    { "path": "../authorization" },
+    { "path": "../schema" },
+    { "path": "../core" }
+  ],
+  "include": ["src/**/*.ts"]
+}

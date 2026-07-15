@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/schema" },
+    { "path": "./packages/core" },
+    { "path": "./packages/authorization" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/application" },
+    { "path": "./packages/database" },
+    { "path": "./packages/client" },
+    { "path": "./packages/ui" },
+    { "path": "./packages/admin" },
+    { "path": "./apps/server" },
+    { "path": "./apps/admin" },
+    { "path": "./examples/domain-prototype" }
+  ]
+}

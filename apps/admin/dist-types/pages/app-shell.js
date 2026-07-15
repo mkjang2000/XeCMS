@@ -1,0 +1,25 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { NavLink, Outlet, useNavigate } from "react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@xecms/ui";
+import { useAdminApi } from "@xecms/admin";
+import { Icon } from "../components/icon.js";
+import styles from "../app-shell.module.css";
+import { queryKeys } from "../queries.js";
+export function AppShell() {
+    const api = useAdminApi();
+    const navigate = useNavigate();
+    const queryClient = useQueryClient();
+    const session = useQuery({ queryKey: queryKeys.session, queryFn: () => api.auth.getSession() });
+    const logout = useMutation({
+        mutationFn: () => api.auth.logout(),
+        onSuccess: () => {
+            queryClient.clear();
+            navigate("/admin/login", { replace: true });
+        },
+    });
+    const username = session.data?.user?.username ?? "사용자";
+    const initials = username.slice(0, 2);
+    return (_jsxs("div", { className: styles.shell, children: [_jsx("a", { className: styles.skipLink, href: "#main-content", children: "\uBCF8\uBB38\uC73C\uB85C \uAC74\uB108\uB6F0\uAE30" }), _jsxs("aside", { className: styles.sidebar, children: [_jsxs("div", { className: styles.brandLockup, "aria-label": "XeCMS Admin Studio", children: [_jsx("span", { className: styles.brandMark, "aria-hidden": "true", children: "Xe" }), _jsxs("span", { className: styles.brandCopy, children: [_jsx("span", { className: styles.brandName, children: "XeCMS" }), _jsx("span", { className: styles.brandMeta, children: "Admin Studio" })] })] }), _jsxs("div", { className: styles.workspaceCard, children: [_jsx("span", { className: styles.workspaceIcon, children: _jsx(Icon, { name: "workspace", size: 17 }) }), _jsxs("span", { className: styles.workspaceCopy, children: [_jsx("strong", { children: "Default Workspace" }), _jsx("span", { children: "Development instance" })] })] }), _jsxs("nav", { className: styles.nav, "aria-label": "Admin \uC8FC \uBA54\uB274", children: [_jsx("span", { className: styles.navLabel, children: "Workspace" }), _jsxs(NavLink, { to: "/admin/content", children: [_jsx(Icon, { name: "content", size: 18 }), _jsx("span", { children: "\uCF58\uD150\uCE20" })] }), _jsxs(NavLink, { to: "/admin/schema", children: [_jsx(Icon, { name: "schema", size: 18 }), _jsx("span", { children: "\uC2A4\uD0A4\uB9C8" })] }), _jsxs(NavLink, { to: "/admin/media", children: [_jsx(Icon, { name: "media", size: 18 }), _jsx("span", { children: "\uBBF8\uB514\uC5B4" })] }), _jsxs(NavLink, { to: "/admin/realms", children: [_jsx(Icon, { name: "identity", size: 18 }), _jsx("span", { children: "Identity Realms" })] }), _jsxs(NavLink, { to: "/admin/access", children: [_jsx(Icon, { name: "shield", size: 18 }), _jsx("span", { children: "\uAD8C\uD55C" })] }), _jsxs(NavLink, { to: "/admin/jobs", children: [_jsx(Icon, { name: "events", size: 18 }), _jsx("span", { children: "\uC774\uBCA4\uD2B8 \uC791\uC5C5" })] })] }), _jsxs("div", { className: styles.sidebarFooter, children: [_jsxs("div", { className: styles.account, children: [_jsx("span", { className: styles.avatar, "aria-hidden": "true", children: initials }), _jsxs("span", { className: styles.accountCopy, children: [_jsx("strong", { children: username }), _jsx("span", { children: "System administrator" })] })] }), _jsxs(Button, { variant: "quiet", size: "small", className: styles.logoutButton, onPress: () => logout.mutate(), isDisabled: logout.isPending, children: [_jsx(Icon, { name: "logout", size: 17 }), _jsx("span", { className: styles.logoutLabel, children: logout.isPending ? "로그아웃 중…" : "로그아웃" })] })] })] }), _jsxs("div", { className: styles.content, children: [_jsxs("header", { className: styles.topbar, children: [_jsxs("div", { className: styles.topbarContext, children: [_jsx("strong", { children: "Admin Studio" }), _jsx("span", { className: styles.topbarDivider, "aria-hidden": "true" }), _jsx("span", { children: "Default Workspace" })] }), _jsx("span", { className: styles.environment, children: "Development" })] }), _jsx("main", { id: "main-content", className: styles.main, tabIndex: -1, children: _jsx(Outlet, {}) })] })] }));
+}
+//# sourceMappingURL=app-shell.js.map

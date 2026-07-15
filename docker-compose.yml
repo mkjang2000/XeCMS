@@ -1,0 +1,47 @@
+name: xecms
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${XECMS_POSTGRES_DB:-xecms}
+      POSTGRES_USER: ${XECMS_POSTGRES_USER:-xecms}
+      POSTGRES_PASSWORD: ${XECMS_POSTGRES_PASSWORD:-xecms}
+    ports:
+      - "${XECMS_POSTGRES_PORT:-54320}:5432"
+    volumes:
+      - xecms-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    stop_grace_period: 10s
+
+  postgres-e2e:
+    image: postgres:18-alpine
+    profiles:
+      - e2e
+    environment:
+      POSTGRES_DB: xecms_e2e
+      POSTGRES_USER: xecms
+      POSTGRES_PASSWORD: xecms
+    ports:
+      - "${XECMS_E2E_POSTGRES_PORT:-55432}:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 1s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+    stop_grace_period: 5s
+
+volumes:
+  xecms-postgres-data:

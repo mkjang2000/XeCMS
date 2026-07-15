@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@xecms/application": ["packages/application/src/index.ts"],
+      "@xecms/contracts": ["packages/contracts/src/index.ts"],
+      "@xecms/core": ["packages/core/src/index.ts"],
+      "@xecms/database": ["packages/database/src/index.ts"],
+      "@xecms/schema": ["packages/schema/src/index.ts"]
+    },
+    "noEmit": true
+  }
+}

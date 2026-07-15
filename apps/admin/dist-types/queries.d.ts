@@ -1,0 +1,30 @@
+export declare const queryKeys: {
+    bootstrap: readonly ["bootstrap"];
+    session: readonly ["session"];
+    collections: readonly ["collections"];
+    schemaManifest: readonly ["schema", "manifest"];
+    schemaTypes: readonly ["schema", "types"];
+    media: readonly ["media"];
+    collectionDraft: (collectionId: string) => readonly ["collections", string, "draft"];
+    collectionApplied: (collectionId: string) => readonly ["collections", string, "applied"];
+    migration: (collectionId: string, draftVersion: string) => readonly ["collections", string, "migration", string];
+    documentsRoot: (collectionId: string) => readonly ["documents", string];
+    documentTree: (collectionId: string) => readonly ["documents", string, "tree"];
+    relationOptions: (collectionIds: readonly string[]) => readonly ["documents", "relation-options", ...string[]];
+    documents: (collectionId: string, page: number, state?: "active" | "deleted") => readonly ["documents", string, "state", "active" | "deleted", "page", number];
+    document: (collectionId: string, documentId: string) => readonly ["documents", string, string];
+    revisionsRoot: (collectionId: string, documentId: string) => readonly ["documents", string, string, "revisions"];
+    revisions: (collectionId: string, documentId: string) => readonly ["documents", string, string, "revisions", "list"];
+    revision: (collectionId: string, documentId: string, revisionId: string) => readonly ["documents", string, string, "revisions", string];
+    authorization: readonly ["authorization", "system", "policy"];
+    authorizationAudit: readonly ["authorization", "system", "audit"];
+    realmAuthorization: (realmId: string) => readonly ["authorization", "realm", string, "policy"];
+    realmAuthorizationAudit: (realmId: string) => readonly ["authorization", "realm", string, "audit"];
+    globalIdentities: readonly ["identity-realms", "global-identities"];
+    identityRealms: readonly ["identity-realms", "list"];
+    identityRealm: (realmId: string) => readonly ["identity-realms", string, "detail"];
+    realmMemberships: (realmId: string) => readonly ["identity-realms", string, "memberships"];
+    realmFullAccess: (realmId: string) => readonly ["identity-realms", string, "full-access"];
+    jobs: (page: number, status: string, topic: string, handlerId: string) => readonly ["jobs", "list", number, string, string, string];
+};
+//# sourceMappingURL=queries.d.ts.map

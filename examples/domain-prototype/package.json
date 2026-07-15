@@ -1,0 +1,11 @@
+{
+  "name": "@xecms/example-domain-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@xecms/authorization": "workspace:*",
+    "@xecms/core": "workspace:*",
+    "@xecms/schema": "workspace:*"
+  }
+}

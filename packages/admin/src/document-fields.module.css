@@ -1,0 +1,53 @@
+.booleanField {
+  padding-block: 0.45rem;
+}
+
+.nativeField {
+  display: grid;
+  gap: 0.42rem;
+  color: var(--xe-color-text);
+  font-size: 0.82rem;
+}
+
+.nativeField > span {
+  color: var(--xe-color-text-strong);
+  font-weight: 650;
+}
+
+.nativeField b {
+  margin-left: 0.25rem;
+  color: var(--xe-color-danger);
+}
+
+.nativeField input,
+.nativeField select {
+  min-height: 2.65rem;
+  padding: 0.58rem 0.72rem;
+  color: var(--xe-color-text);
+  border: 1px solid var(--xe-color-border-strong);
+  border-radius: var(--xe-radius-sm);
+  background: var(--xe-color-surface);
+  font: inherit;
+}
+
+.nativeField select[multiple] {
+  min-height: 8rem;
+}
+
+.nativeField input:focus,
+.nativeField select:focus {
+  outline: 3px solid var(--xe-color-focus-ring);
+  outline-offset: 1px;
+  border-color: var(--xe-color-primary);
+}
+
+.nativeField em,
+.nativeField small {
+  color: var(--xe-color-text-muted);
+  font-size: 0.74rem;
+  font-style: normal;
+}
+
+.nativeField small {
+  color: var(--xe-color-danger);
+}
