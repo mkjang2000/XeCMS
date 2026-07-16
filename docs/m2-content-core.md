@@ -167,6 +167,12 @@ Tree 조회에서 받은 hierarchy `version`을 move의 `expectedVersion`으로 
 
 move는 parent, sibling order, depth, path와 closure를 한 transaction에서 갱신한다. 실패하면 어느 일부도 반영하지 않는다. 다음 command는 거부한다.
 
+현재 저장소는 변경된 node만 bulk UPSERT하지만 closure는 collection 단위로 재생성한다.
+2026-07-16 PostgreSQL 측정에서 5,000 node leaf move는 약 1.76초, 10,000 node는 약
+4.21초였고 root descendants 10,000건 조회는 약 6.45초였다. 대규모 collection에서는
+affected subtree/path만 closure를 갱신하는 후속 최적화 전까지 구조 변경을 maintenance
+작업으로 취급한다.
+
 - 자기 자신 또는 자신의 후손 아래로 이동
 - 다른 Collection의 Document를 parent로 사용
 - `maxDepth`보다 깊어지는 subtree 이동

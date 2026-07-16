@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import examplePlugin from "@xecms/example-plugin";
 import { AuthorizationApplicationService,PluginCatalog,PluginService,SYSTEM_WORKSPACE_RESOURCE_ID } from "@xecms/application";
-import { definePlugin } from "@xecms/plugin-sdk";
+import { definePlugin,pluginManifestDigest } from "@xecms/plugin-sdk";
 import { afterAll,beforeAll,describe,expect,it } from "vitest";
 import { qualifiedName,quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID,DEFAULT_WORKSPACE_NAME,SYSTEM_REALM_ID } from "./migrate.js";
@@ -33,4 +33,21 @@ describe.runIf(RUN)("M4-C4 Plugin PostgreSQL lifecycle",()=>{
     const audit=await database.pool.query(`SELECT event_type FROM ${q("_xecms_audit_log")} WHERE event_type LIKE 'plugin.%' ORDER BY id`);expect(audit.rows.map(row=>row.event_type)).toEqual(["plugin.installed","plugin.enabled","plugin.config.updated","plugin.disabled","plugin.uninstalled"]);
   });
   it("rolls back failed Plugin migration without installed or migration state",async()=>{const failing=definePlugin({manifest:{manifestVersion:1,id:"failing-plugin",packageName:"@test/failing-plugin",version:"1.0.0",displayName:"Failing",compatibility:{core:">=0.4.0 <0.5.0",admin:">=0.4.0 <0.5.0",sdk:"1.x"},serverEntry:"server",migrations:[{id:"0001_fail",checksum:"fail-v1"}],dataTables:["_xecms_plugin_failing_plugin_data"]},server:{migrations:[{id:"0001_fail",checksum:"fail-v1",up:async({query,table})=>{await query(`CREATE TABLE ${table("_xecms_plugin_failing_plugin_data")}(id text PRIMARY KEY)`);await query("THIS IS NOT SQL")},down:async({query,table})=>{await query(`DROP TABLE ${table("_xecms_plugin_failing_plugin_data")}`)}}]}});const failingService=new PluginService(store,new PluginCatalog([failing]),{now:()=>now,newPlanId:()=>"failing_plan",loadedPluginIds:new Set()});const plan=await failingService.preview({workspaceId:DEFAULT_WORKSPACE_ID,pluginId:"failing-plugin",action:"install",expectedPluginRevision:null,actorIdentityId:ownerId});await expect(failingService.apply({workspaceId:DEFAULT_WORKSPACE_ID,planId:plan.id,pluginId:"failing-plugin",expectedPluginRevision:null,actorIdentityId:ownerId,actorSubjectId:ownerId})).rejects.toBeDefined();expect(await store.get(DEFAULT_WORKSPACE_ID,"failing-plugin")).toBeNull();expect((await database.pool.query(`SELECT * FROM ${q("_xecms_plugin_migrations")} WHERE plugin_id='failing-plugin'`)).rowCount).toBe(0);expect((await database.pool.query(`SELECT to_regclass($1) AS name`,[`${schema}._xecms_plugin_failing_plugin_data`])).rows[0]).toEqual({name:null})});
+  it("detects Plugin Field usage by exact field type without matching unrelated schema strings",async()=>{
+    const fieldId="field-probe:custom";
+    const fieldPlugin=definePlugin({manifest:{manifestVersion:1,id:"field-probe",packageName:"@test/field-probe",version:"1.0.0",displayName:"Field probe",compatibility:{core:">=0.4.0 <0.5.0",admin:">=0.4.0 <0.5.0",sdk:"1.x"},extensions:{fields:[{id:fieldId,label:"Custom",storage:"json",widget:"json"}]}}});
+    await database.pool.query(`INSERT INTO ${q("_xecms_plugins")}(workspace_id,plugin_id,package_name,version,manifest,manifest_digest,desired_state,config,revision,restart_required,installed_at,installed_by,updated_at,updated_by) VALUES($1,$2,$3,$4,$5::jsonb,$6,'enabled','{}',1,false,$7,$8,$7,$8)`,[DEFAULT_WORKSPACE_ID,fieldPlugin.manifest.id,fieldPlugin.manifest.packageName,fieldPlugin.manifest.version,JSON.stringify(fieldPlugin.manifest),pluginManifestDigest(fieldPlugin.manifest),now,ownerId]);
+    const falsePositive={format:"xecms.schema",formatVersion:1,collections:[{id:"col_field_probe",name:"fieldProbe",label:`Documentation for ${fieldId}`,fields:[{id:"fld_field_probe_title",name:"title",type:"text"}]}]};
+    await database.pool.query(`INSERT INTO ${q("_xecms_schema_revisions")}(revision_id,parent_revision_id,schema_json,diff_json,hash,created_at,created_by) VALUES('rev_field_probe',NULL,$1::jsonb,'[]','field-probe-hash',$2,$3)`,[JSON.stringify(falsePositive),now,ownerId]);
+    await database.pool.query(`UPDATE ${q("_xecms_schema_state")} SET active_revision_id='rev_field_probe' WHERE singleton=true`);
+    const fieldService=new PluginService(store,new PluginCatalog([fieldPlugin]),{now:()=>now,newPlanId:()=>`field_plan_${++sequence}`,loadedPluginIds:new Set([fieldPlugin.manifest.id])});
+    const allowed=await fieldService.preview({workspaceId:DEFAULT_WORKSPACE_ID,pluginId:fieldPlugin.manifest.id,action:"disable",expectedPluginRevision:1,actorIdentityId:ownerId});
+    expect(allowed.blockers).toEqual([]);
+
+    const exactUsage={...falsePositive,collections:[{...falsePositive.collections[0],fields:[{id:"fld_field_probe_custom",name:"custom",type:fieldId}]}]};
+    await database.pool.query(`UPDATE ${q("_xecms_schema_revisions")} SET schema_json=$1::jsonb WHERE revision_id='rev_field_probe'`,[JSON.stringify(exactUsage)]);
+    const blocked=await fieldService.preview({workspaceId:DEFAULT_WORKSPACE_ID,pluginId:fieldPlugin.manifest.id,action:"disable",expectedPluginRevision:1,actorIdentityId:ownerId});
+    expect(blocked.blockers).toEqual([expect.objectContaining({code:"SCHEMA_USAGE"})]);
+    expect(blocked.schemaReferences).toEqual([`active:${fieldId}`]);
+  });
 });

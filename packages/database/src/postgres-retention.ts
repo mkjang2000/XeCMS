@@ -7,6 +7,7 @@ import {
   type RetentionPolicy,
   type RetentionStore,
 } from "@xecms/application";
+import { createHash } from "node:crypto";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 import { qualifiedName, validateDatabaseSchema } from "./identifiers.js";
 
@@ -72,7 +73,7 @@ export class PostgresRetentionStore implements RetentionStore {
       const policy = await this.lockPolicy(client, input.workspaceId);
       assertPolicyRevision(policy, input.expectedPolicyRevision);
       const snapshot = await this.measure(client, input.workspaceId, input.cutoffs, input.referenceAt);
-      const digest = `${input.digestSeed}:${digestCounts(snapshot.counts)}`;
+      const digest = planDigest(input.digestSeed, snapshot.candidateDigest);
       const result = await client.query<PlanRow>(
         `INSERT INTO ${this.q("_xecms_retention_plans")}
            (id, workspace_id, policy_revision, status, reference_at, cutoffs, counts,
@@ -132,11 +133,14 @@ export class PostgresRetentionStore implements RetentionStore {
         );
       }
       const current = await this.measure(client, input.workspaceId, plan.cutoffs, plan.referenceAt);
-      if (!sameCounts(current.counts, plan.counts)) {
+      const digestSeed = planDigestSeed(plan.digest);
+      const currentDigest = digestSeed === null ? null : planDigest(digestSeed, current.candidateDigest);
+      if (!sameCounts(current.counts, plan.counts) || currentDigest !== plan.digest) {
         throw new ApplicationError(
           "RETENTION_PLAN_STALE", 409,
           "Retention candidates changed after preview. Create a new preview before applying.",
-          { details: { previewed: plan.counts, current: current.counts } },
+          { details: { previewed: plan.counts, current: current.counts,
+            candidateSetChanged: currentDigest !== plan.digest } },
         );
       }
 
@@ -169,22 +173,30 @@ export class PostgresRetentionStore implements RetentionStore {
   }
 
   private async measure(client: PoolClient, workspaceId: string, cutoffs: RetentionCutoffs,
-    referenceAt: string): Promise<{ counts: RetentionCounts; estimatedBytes: Record<string, number> }> {
+    referenceAt: string): Promise<{ counts: RetentionCounts; estimatedBytes: Record<string, number>;
+      candidateDigest: string }> {
     const specs = this.candidateSpecs(workspaceId, cutoffs, referenceAt);
     const counts = emptyCounts();
     const estimatedBytes: Record<string, number> = {};
+    const candidates: [typeof COUNT_KEYS[number], string[]][] = [];
     for (const [key, spec] of specs) {
-      if (spec === null) { counts[key] = 0; estimatedBytes[key] = 0; continue; }
-      const result = await client.query<{ count: string; bytes: string }>(
+      if (spec === null) {
+        counts[key] = 0; estimatedBytes[key] = 0; candidates.push([key, []]); continue;
+      }
+      const result = await client.query<{ count: string; bytes: string; ids: string[] }>(
         `SELECT count(*)::text AS count,
-                COALESCE(sum(pg_column_size(candidate)), 0)::text AS bytes
+                COALESCE(sum(pg_column_size(candidate)), 0)::text AS bytes,
+                COALESCE(array_agg(candidate.id::text ORDER BY candidate.id::text),
+                         '{}'::text[]) AS ids
            FROM (${spec.sql}) candidate`,
         spec.values,
       );
       counts[key] = Number(result.rows[0]!.count);
       estimatedBytes[key] = Number(result.rows[0]!.bytes);
+      candidates.push([key, result.rows[0]!.ids]);
     }
-    return { counts, estimatedBytes };
+    return { counts, estimatedBytes,
+      candidateDigest: createHash("sha256").update(JSON.stringify(candidates)).digest("hex") };
   }
 
   private async deleteCandidates(client: PoolClient, workspaceId: string, cutoffs: RetentionCutoffs,
@@ -406,8 +418,12 @@ function emptyCounts(): Record<typeof COUNT_KEYS[number], number> {
 function sameCounts(left: RetentionCounts, right: RetentionCounts): boolean {
   return COUNT_KEYS.every((key) => left[key] === right[key]);
 }
-function digestCounts(counts: RetentionCounts): string {
-  return COUNT_KEYS.map((key) => `${key}:${counts[key]}`).join("|");
+function planDigest(seed: string, candidateDigest: string): string {
+  return `v2:${seed}:${candidateDigest}`;
+}
+function planDigestSeed(digest: string): string | null {
+  const match = /^v2:([a-f0-9]{64}):[a-f0-9]{64}$/.exec(digest);
+  return match?.[1] ?? null;
 }
 function assertPolicyRevision(row: PolicyRow, expectedRevision: number): void {
   const actualRevision = Number(row.revision);

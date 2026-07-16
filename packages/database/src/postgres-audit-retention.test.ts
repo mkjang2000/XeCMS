@@ -97,6 +97,14 @@ describe.runIf(RUN)("M4-C3 unified Audit and retention PostgreSQL gates", () => 
       `SELECT 1 FROM ${q("_xecms_sessions")} WHERE id = 'session_old'`,
     )).resolves.toMatchObject({ rowCount: 1 });
 
+    const substitutedPlan = await retention.preview({ workspaceId: DEFAULT_WORKSPACE_ID,
+      expectedPolicyRevision: policy.revision, actorIdentityId: ownerId });
+    await database.pool.query(`DELETE FROM ${q("_xecms_sessions")} WHERE id = 'session_stale'`);
+    await insertExpiredSession("session_substituted", "substituted-token");
+    await expect(retention.apply({ workspaceId: DEFAULT_WORKSPACE_ID, planId: substitutedPlan.id,
+      expectedPolicyRevision: policy.revision, actorIdentityId: ownerId, actorSubjectId: ownerId }))
+      .rejects.toMatchObject({ code: "RETENTION_PLAN_STALE", status: 409 });
+
     const plan = await retention.preview({ workspaceId: DEFAULT_WORKSPACE_ID,
       expectedPolicyRevision: policy.revision, actorIdentityId: ownerId });
     expect(plan.counts).toMatchObject({ systemAudit: 1, documentAudit: 1,

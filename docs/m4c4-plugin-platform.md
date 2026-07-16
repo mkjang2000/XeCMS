@@ -150,10 +150,12 @@ checksum)`을 기록한다. 이미 적용된 ID의 checksum이 달라지면 star
 ## 7. Disable과 Uninstall 안전성
 
 - dependent enabled/installed Plugin이 있으면 disable/uninstall을 거부한다.
-- active/draft Schema가 Plugin Field type을 사용하면 disable/uninstall을 거부한다.
+- active/draft Schema field tree에서 정확히 같은 Plugin Field `type`을 사용하면
+  disable/uninstall을 거부한다. label이나 다른 문자열에 ID가 포함된 것만으로는 막지 않는다.
 - Plugin data row가 있으면 uninstall plan에 `preserve | export | purge` 선택이 필요하다.
 - `preserve`: state와 permission만 제거하고 migration/data table은 남긴다.
-- `export`: JSON export artifact를 DB에 저장한 뒤 `down` migration을 역순 실행한다.
+- `export`: PostgreSQL에서 JSONB export artifact를 직접 조립해 DB에 저장한 뒤 `down`
+  migration을 역순 실행한다. Plugin row 전체를 Node heap으로 가져오지 않는다.
 - `purge`: 명시적 승인 아래 `down` migration을 역순 실행하고 data를 삭제한다.
 - export/purge는 disabled Plugin에서만 가능하다.
 - disable 상태가 실제 runtime에 반영된 재시작 이후에만 uninstall할 수 있다.
@@ -161,6 +163,10 @@ checksum)`을 기록한다. 이미 적용된 ID의 checksum이 달라지면 star
 
 Plugin Permission이 Role에 할당되어 있거나 Plugin Route/Field가 사용 중이면 제거하지 않는다.
 권한 assignment와 schema reference는 blocker detail로 반환한다.
+
+export는 여전히 하나의 transaction과 JSONB artifact를 사용한다. 100,000행·행당 약 128B
+측정에서는 약 0.61초, Node heap 증가는 약 0.2MB였지만, 훨씬 큰 dataset은 외부
+Object Storage 기반 streaming export가 필요하다.
 
 ## 8. PostgreSQL Migration
 

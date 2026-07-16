@@ -169,13 +169,7 @@ try {
     "postgres-e2e",
   ]);
   if (!fastMode) {
-    await run(pnpm, [
-      "exec",
-      "vitest",
-      "run",
-      "packages/cli/src/operations.integration.test.ts",
-      "apps/server/src/m4c5-readiness.integration.test.ts",
-    ]);
+    await run(pnpm, ["test:postgres:all"]);
   }
 
   for (const journey of browserJourneys) {

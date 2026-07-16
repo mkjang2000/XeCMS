@@ -1,6 +1,6 @@
 {
   "name": "xecms",
-  "version": "0.0.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.30.1",
@@ -12,6 +12,8 @@
     "build:admin": "pnpm --filter @xecms/admin-app build",
     "clean": "tsc -b --clean",
     "test": "vitest run",
+    "test:postgres:all": "node scripts/run-postgres-tests.mjs",
+    "test:p2:benchmarks": "node scripts/run-p2-benchmarks.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "check:boundaries": "node scripts/check-domain-boundaries.mjs && node scripts/check-m1-boundaries.mjs",

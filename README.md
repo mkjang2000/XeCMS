@@ -7,7 +7,7 @@ XeCMS는 처음에는 Admin Studio에서 콘텐츠 구조와 데이터를 관리
 PostgreSQL을 공식 저장소로 사용하며 Schema부터 Migration, REST API, Admin UI까지 하나의
 모델을 공유한다.
 
-> 현재 버전은 **0.4.0 프리릴리스**다. MVP 기능과 전체 검증 체계는 완성됐지만
+> 현재 버전은 **0.4.1**이다. MVP 기능과 전체 검증 체계는 완성됐지만
 > `@xecms/*` 패키지와 공식 컨테이너 이미지는 아직 공개 Registry에 배포하지 않았다.
 > 지금은 이 저장소를 clone하여 실행하는 방식을 지원한다.
 
@@ -120,21 +120,20 @@ Migration은 forward-only다. Upgrade와 복구 절차는
 pnpm check
 ```
 
-전체 release gate는 임시 PostgreSQL, 이전 DB upgrade, 실제 backup/restore, 배포 tarball과
-M1부터 M4-C5까지의 격리된 Chromium 사용자 여정을 포함한다.
+전체 release gate는 모든 PostgreSQL 조건부 회귀 테스트, 이전 DB upgrade, 실제
+backup/restore, 배포 tarball과 M1부터 M4-C5까지의 격리된 Chromium 사용자 여정을 포함한다.
 
 ```bash
 pnpm exec playwright install chromium
 pnpm verify:m4c5
 ```
 
-현재 기본 suite는 61개 파일의 374개 test를 통과하며 70개 환경 의존 test를 조건부로
-분리한다. Release gate에서는 여기에 실제 PostgreSQL 운영 시나리오와 Chromium 누적
-11개 여정을 추가로 검증한다.
+`pnpm test:postgres:all`은 PostgreSQL 조건부 test 파일을 자동 탐색해 직렬 실행한다.
+Release gate에서는 이 전체 회귀와 Chromium 누적 11개 여정을 함께 검증한다.
 
 ## 현재 범위
 
-0.4.0은 MVP가 완료된 프리릴리스다. 다음 항목은 의도적으로 현재 범위에서 제외한다.
+0.4.1은 MVP 안정화 릴리스다. 다음 항목은 의도적으로 현재 범위에서 제외한다.
 
 - 여러 Workspace를 제공하는 완전한 SaaS multi-tenancy
 - 명시적 Deny와 임의 JavaScript policy language

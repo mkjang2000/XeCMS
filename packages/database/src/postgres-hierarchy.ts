@@ -181,7 +181,7 @@ export class PostgresContentHierarchyStore implements ContentHierarchyStore {
       promoteChildren: true,
       ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
     });
-    await this.persistSnapshot(client, context, snapshot.version, result);
+    await this.persistSnapshot(client, context, snapshot, result);
     return result;
   }
 
@@ -326,7 +326,7 @@ export class PostgresContentHierarchyStore implements ContentHierarchyStore {
     const snapshot = await this.loadSnapshot(client, context, true);
     await validateReferences();
     const result = command(snapshot);
-    await this.persistSnapshot(client, context, snapshot.version, result);
+    await this.persistSnapshot(client, context, snapshot, result);
     return result;
   }
 
@@ -369,7 +369,7 @@ export class PostgresContentHierarchyStore implements ContentHierarchyStore {
   private async persistSnapshot(
     client: PoolClient,
     context: ContentHierarchyStoreContext,
-    previousVersion: number,
+    previous: ContentHierarchySnapshot,
     result: ContentHierarchyCommandResult,
   ): Promise<void> {
     await client.query("SET CONSTRAINTS ALL DEFERRED");
@@ -379,25 +379,28 @@ export class PostgresContentHierarchyStore implements ContentHierarchyStore {
        WHERE workspace_id = $1 AND collection_id = $2 AND NOT (document_id = ANY($3::text[]))`,
       [context.workspaceId, context.collectionId, ids],
     );
-    for (const position of result.state.positions) {
-      await client.query(
-        `INSERT INTO ${this.q("_xecms_content_hierarchy_nodes")}
-           (workspace_id, collection_id, document_id, parent_document_id, sort_key, depth)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (workspace_id, collection_id, document_id) DO UPDATE SET
-           parent_document_id = EXCLUDED.parent_document_id,
-           sort_key = EXCLUDED.sort_key,
-           depth = EXCLUDED.depth`,
-        [
-          context.workspaceId,
-          context.collectionId,
-          position.documentId,
-          position.parentId,
-          position.sortKey,
-          position.depth,
-        ],
-      );
-    }
+    const previousById = new Map(previous.positions.map((position) => [position.documentId, position]));
+    const changed = result.state.positions.filter((position) => {
+      const before = previousById.get(position.documentId);
+      return before === undefined || before.parentId !== position.parentId
+        || before.sortKey !== position.sortKey || before.depth !== position.depth;
+    });
+    if (changed.length > 0) await client.query(
+      `INSERT INTO ${this.q("_xecms_content_hierarchy_nodes")}
+         (workspace_id, collection_id, document_id, parent_document_id, sort_key, depth)
+       SELECT $1, $2, position.document_id, position.parent_document_id,
+              position.sort_key, position.depth
+         FROM jsonb_to_recordset($3::jsonb) AS position(
+           document_id text, parent_document_id text, sort_key integer, depth integer)
+       ON CONFLICT (workspace_id, collection_id, document_id) DO UPDATE SET
+         parent_document_id = EXCLUDED.parent_document_id,
+         sort_key = EXCLUDED.sort_key,
+         depth = EXCLUDED.depth`,
+      [context.workspaceId, context.collectionId, JSON.stringify(changed.map((position) => ({
+        document_id: position.documentId, parent_document_id: position.parentId,
+        sort_key: position.sortKey, depth: position.depth,
+      })))],
+    );
     await this.rebuildClosure(client, context);
     const updated = await client.query(
       `UPDATE ${this.q("_xecms_content_hierarchy_state")}
@@ -409,14 +412,14 @@ export class PostgresContentHierarchyStore implements ContentHierarchyStore {
         result.state.version,
         result.event.occurredAt,
         result.event.actorId,
-        previousVersion,
+        previous.version,
       ],
     );
     if (updated.rowCount !== 1) {
       throw new ContentHierarchyDomainError(
         "HIERARCHY_VERSION_CONFLICT",
         "Hierarchy changed while the structure transaction was being committed.",
-        { expectedVersion: previousVersion },
+        { expectedVersion: previous.version },
       );
     }
     await this.insertEvent(client, result.event);

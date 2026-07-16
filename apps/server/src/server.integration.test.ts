@@ -1021,8 +1021,20 @@ describe.runIf(RUN)("XeCMS 0003 document lifecycle event upgrade", () => {
       await database.pool.query(`
         DROP TABLE ${qualifiedName(schemaName, "_xecms_document_events")};
         DELETE FROM ${qualifiedName(schemaName, "_xecms_core_migrations")}
-          WHERE id = '0003_document_lifecycle_events'
+          WHERE id IN (
+            '0003_document_lifecycle_events',
+            '0014_m4b_event_worker',
+            '0015_m4c1_users_credentials',
+            '0016_m4c2_sites_settings',
+            '0017_m4c3_audit_retention',
+            '0018_m4c4_plugin_platform'
+          )
       `);
+      await database.pool.query(
+        `DELETE FROM ${qualifiedName(schemaName, "_xecms_outbox_events")}
+          WHERE aggregate_type = 'document' AND aggregate_id = $1`,
+        [documentId],
+      );
       const preUpgradeMarkers = await database.pool.query<{ id: string }>(
         `SELECT id FROM ${qualifiedName(schemaName, "_xecms_core_migrations")} ORDER BY id`,
       );
@@ -1059,7 +1071,7 @@ describe.runIf(RUN)("XeCMS 0003 document lifecycle event upgrade", () => {
         expectedVersion: 1,
         data: { title: "Updated after 0003" },
       });
-      expect(updated.statusCode).toBe(200);
+      expect(updated.statusCode, updated.body).toBe(200);
       expect(updated.json()).toMatchObject({ version: 2, data: { title: "Updated after 0003" } });
       const published = await mutate("POST", `${base}/${documentId}/publish`, {
         expectedVersion: 2,

@@ -1168,6 +1168,12 @@ async function createLoginIdentity(
      WHERE is_owner = true`,
     [id, username, username.toLocaleLowerCase("en-US")],
   );
+  await database.pool.query(
+    `UPDATE ${qualifiedName(schemaName, "_xecms_auth_subjects")}
+        SET identity_id = $1, updated_at = now()
+      WHERE id = $1`,
+    [id],
+  );
 }
 
 async function assertSameLevelPeerCannotMutate(

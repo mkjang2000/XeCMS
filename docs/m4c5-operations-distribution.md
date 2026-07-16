@@ -108,10 +108,13 @@ restore는 다음을 강제한다.
 
 1. checksum과 format/version 사전 검증
 2. `--confirm-empty`와 대상 DB schema 부재, media directory 비어 있음
-3. path traversal 없는 media archive
+3. 고정 artifact 파일명과 path traversal·link·특수 entry가 없는 media archive
 4. DB restore 성공 후 staging media를 원자 이동
 5. migration/Schema/Plugin/media를 Doctor로 사후 검증
-6. 실패 시 이번 restore가 만든 빈 대상 schema와 staging만 정리
+6. 실패 시 이번 restore가 만든 대상 schema, staging과 promotion된 media root를 함께 정리
+
+format version 1은 같은 `0.4.x` release line에서 현재 patch 이하의 backup만 복원한다.
+미래 patch나 다른 minor/major backup은 migration을 시작하기 전에 fail-closed한다.
 
 운영 중인 Instance 위로 merge restore하거나 일부 table만 자동 복구하지 않는다.
 
@@ -133,11 +136,11 @@ restore는 다음을 강제한다.
   Authorization, Plugin과 media checksum을 비교한다.
 - 이전 fixture upgrade와 migration 재실행이 멱등하다.
 - Doctor가 정상/Schema drift/migration drift/plugin drift/storage failure를 구분한다.
-- M0~M4-C5 package, PostgreSQL, HTTP와 Chromium 누적 Gate가 통과한다.
+- 모든 PostgreSQL 조건부 suite와 M0~M4-C5 package, HTTP, Chromium 누적 Gate가 통과한다.
 
 ## 10. 구현 및 검증 결과
 
-- `@xecms/cli` 0.4.0이 `xecms`와 `create-xecms` binary, 세 starter, Doctor,
+- `@xecms/cli` 0.4.1이 `xecms`와 `create-xecms` binary, 세 starter, Doctor,
   forward-only migration, Schema/type 명령과 backup/restore를 제공한다.
 - CLI release tarball에는 실행용 `dist`와 manifest만 포함하며 test와 build metadata는 제외한다.
 - 실제 PostgreSQL에서 이전 release fixture의 18개 core migration upgrade와 재실행 멱등성을
