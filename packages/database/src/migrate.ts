@@ -27,6 +27,10 @@ import {
   OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
   applyOwnerDelegationReconciliationMigration,
 } from "./owner-delegation-migration.js";
+import {
+  ADMIN_APP_STORE_MIGRATION_ID,
+  applyAdminAppStoreMigration,
+} from "./admin-app-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -40,6 +44,7 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   IDENTITY_REALM_MIGRATION_ID,EVENT_WORKER_MIGRATION_ID,USER_IDENTITY_MIGRATION_ID,
   SITE_SETTINGS_MIGRATION_ID,AUDIT_RETENTION_MIGRATION_ID,PLUGIN_PLATFORM_MIGRATION_ID,
   OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
+  ADMIN_APP_STORE_MIGRATION_ID,
 ] as const);
 
 export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> {
@@ -265,6 +270,15 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyOwnerDelegationReconciliationMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
+      ]);
+    }
+    const adminAppStore = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`, [ADMIN_APP_STORE_MIGRATION_ID],
+    );
+    if (adminAppStore.rowCount === 0) {
+      await applyAdminAppStoreMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        ADMIN_APP_STORE_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

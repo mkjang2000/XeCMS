@@ -54,6 +54,15 @@ export interface ManagedSession {
   readonly current: boolean;
 }
 
+export type ManagedSessionListStatus = "active" | "history" | "all";
+
+export interface ManagedSessionPage {
+  readonly items: readonly ManagedSession[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly total: number;
+}
+
 export interface ApiKeyRecord {
   readonly id: string;
   readonly identityId: string;
@@ -195,7 +204,11 @@ export interface IdentityAdministrationStore {
     readonly identityId: string;
     readonly workspaceId: string;
     readonly currentSessionId?: string;
-  }): Promise<readonly ManagedSession[]>;
+    readonly status: ManagedSessionListStatus;
+    readonly page: number;
+    readonly pageSize: number;
+    readonly now: string;
+  }): Promise<ManagedSessionPage>;
   getSession(sessionId: string, workspaceId: string): Promise<ManagedSession | null>;
   revokeSession(input: {
     readonly sessionId: string;
@@ -436,8 +449,21 @@ export class IdentityAdministrationService {
     });
   }
 
-  public listSessions(input: Parameters<IdentityAdministrationStore["listSessions"]>[0]): Promise<readonly ManagedSession[]> {
-    return this.store.listSessions(input);
+  public listSessions(input: {
+    readonly identityId: string;
+    readonly workspaceId: string;
+    readonly currentSessionId?: string;
+    readonly status?: ManagedSessionListStatus;
+    readonly page?: number;
+    readonly pageSize?: number;
+  }): Promise<ManagedSessionPage> {
+    return this.store.listSessions({
+      ...input,
+      status: input.status ?? "all",
+      page: input.page ?? 1,
+      pageSize: input.pageSize ?? 50,
+      now: this.runtime.now(),
+    });
   }
 
   public async getSession(sessionId: string, workspaceId: string): Promise<ManagedSession> {

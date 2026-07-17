@@ -24,6 +24,27 @@ describe("loadServerConfig", () => {
     expect(legacy.adminOrigins).toEqual(["http://localhost:5173"]);
   });
 
+  it("allows the temporary Admin Origin bypass only in development", () => {
+    expect(loadServerConfig({
+      NODE_ENV: "development",
+      DISABLE_ADMIN_ORIGINS: "true",
+    }).disableAdminOrigins).toBe(true);
+    expect(loadServerConfig({
+      NODE_ENV: "development",
+      DISABLE_ADMIN_ORIGINS: "false",
+    }).disableAdminOrigins).toBe(false);
+    expect(() => loadServerConfig({
+      NODE_ENV: "production",
+      DATABASE_URL: "postgresql://unused",
+      XECMS_SESSION_SECRET: "0123456789abcdef0123456789abcdef",
+      DISABLE_ADMIN_ORIGINS: "true",
+    })).toThrow("allowed only in development");
+    expect(() => loadServerConfig({
+      NODE_ENV: "development",
+      DISABLE_ADMIN_ORIGINS: "not-a-boolean",
+    })).toThrow("DISABLE_ADMIN_ORIGINS");
+  });
+
   it("keeps Content origins separate from Admin Studio origins", () => {
     const config = loadServerConfig({
       NODE_ENV: "development",

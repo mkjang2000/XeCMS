@@ -377,7 +377,11 @@ export interface XeCmsClient {
     createSystemMembership(identityId: string, input: ManagedIdentityRevisionRequest): Promise<ManagedIdentityDto>;
     completeInvitation(input: CompleteCredentialTokenRequest): Promise<void>;
     completeReset(input: CompleteCredentialTokenRequest): Promise<void>;
-    listSessions(identityId: string): Promise<ManagedSessionListDto>;
+    listSessions(identityId: string, options?: {
+      readonly status?: "active" | "history";
+      readonly page?: number;
+      readonly pageSize?: number;
+    }): Promise<ManagedSessionListDto>;
     revokeSession(sessionId: string): Promise<ManagedSessionDto>;
     revokeAllSessions(identityId: string): Promise<SessionRevocationResultDto>;
     transferOwner(input: TransferOwnerRequest): Promise<ManagedIdentityDto>;
@@ -973,8 +977,16 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
       completeReset: (input) => request<void>("/credentials/reset/complete", {
         method: "POST", body: json(input),
       }),
-      listSessions: (identityId) =>
-        request<ManagedSessionListDto>(`/identities/${encodeURIComponent(identityId)}/sessions`),
+      listSessions: (identityId, options = {}) => {
+        const search = new URLSearchParams();
+        for (const [key, value] of Object.entries(options)) {
+          if (value !== undefined) search.set(key, String(value));
+        }
+        const query = search.size === 0 ? "" : `?${search.toString()}`;
+        return request<ManagedSessionListDto>(
+          `/identities/${encodeURIComponent(identityId)}/sessions${query}`,
+        );
+      },
       revokeSession: (sessionId) =>
         request<ManagedSessionDto>(`/sessions/${encodeURIComponent(sessionId)}`, {
           method: "DELETE", csrf: true,

@@ -114,8 +114,8 @@ xecms backup create <directory>
 xecms backup restore <directory> --confirm-empty
 ```
 
-Migration은 forward-only다. Upgrade와 복구 절차는
-[운영 Runbook](./docs/operations-runbook.md)을 따른다.
+Migration은 forward-only다. 정식 Upgrade와 복구 절차는 공개 문서와 함께 제공할 예정이다.
+현재 지원 범위와 문서 상태는 [문서 인덱스](./docs/README.md)에서 확인할 수 있다.
 
 ## 개발과 검증
 
@@ -149,10 +149,6 @@ Release gate에서는 이 전체 회귀와 Chromium 누적 11개 여정을 함�
 
 ## 문서
 
-- [문서 인덱스와 관리 원칙](./docs/README.md)
-- [시스템 사양](./docs/system-specification.md)
-- [개발 가이드](./docs/development-guide.md)
-- [운영 Runbook](./docs/operations-runbook.md)
-- [릴리스 및 구현 이력](./docs/release-history.md)
-- [Custom Admin Apps 사양](./docs/custom-admin-apps-specification.md)
-- [Custom Admin Apps 개발 순서](./docs/custom-admin-apps-roadmap.md)
+- [공개 문서 인덱스](./docs/README.md)
+
+설치, Upgrade, 운영, API와 확장 개발 문서는 정식 배포 범위가 확정되는 순서대로 공개한다.

@@ -9,6 +9,8 @@ import {
   type ManagedIdentityPage,
   type ManagedIdentityStatus,
   type ManagedSession,
+  type ManagedSessionPage,
+  type ManagedSessionListStatus,
 } from "@xecms/application";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
@@ -597,7 +599,31 @@ export class PostgresIdentityAdministrationStore implements IdentityAdministrati
 
   public async listSessions(input: {
     readonly identityId: string; readonly workspaceId: string; readonly currentSessionId?: string;
-  }): Promise<readonly ManagedSession[]> {
+    readonly status: ManagedSessionListStatus; readonly page: number; readonly pageSize: number;
+    readonly now: string;
+  }): Promise<ManagedSessionPage> {
+    if (!Number.isSafeInteger(input.page) || input.page < 1) {
+      throw new ApplicationError("SESSION_PAGE_INVALID", 400, "Session page must be a positive integer.");
+    }
+    if (!Number.isSafeInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > 100) {
+      throw new ApplicationError("SESSION_PAGE_SIZE_INVALID", 400, "Session page size must be between 1 and 100.");
+    }
+    if (!(["active", "history", "all"] as const).includes(input.status)) {
+      throw new ApplicationError("SESSION_STATUS_INVALID", 400, "Session status filter is invalid.");
+    }
+    const statusFilter = input.status === "active"
+      ? "AND session.revoked_at IS NULL AND session.expires_at > $3::timestamptz"
+      : input.status === "history"
+        ? "AND (session.revoked_at IS NOT NULL OR session.expires_at <= $3::timestamptz)"
+        : "AND $3::timestamptz IS NOT NULL";
+    const values = [input.identityId, input.workspaceId, input.now];
+    const totalResult = await this.pool.query<{ readonly total: string } & QueryResultRow>(
+      `SELECT count(*)::text AS total
+         FROM ${this.q("_xecms_sessions")} session
+         JOIN ${this.q("_xecms_identities")} identity ON identity.id = session.identity_id
+        WHERE session.identity_id = $1 AND identity.workspace_id = $2 ${statusFilter}`,
+      values,
+    );
     const result = await this.pool.query<ManagedSessionRow>(
       `SELECT session.id, session.audience, session.identity_id, session.realm_id,
               realm.name AS realm_name, session.membership_id, session.created_at,
@@ -606,11 +632,17 @@ export class PostgresIdentityAdministrationStore implements IdentityAdministrati
          FROM ${this.q("_xecms_sessions")} session
          JOIN ${this.q("_xecms_identities")} identity ON identity.id = session.identity_id
          JOIN ${this.q("_xecms_realms")} realm ON realm.id = session.realm_id
-        WHERE session.identity_id = $1 AND identity.workspace_id = $2
-        ORDER BY session.created_at DESC, session.id DESC`,
-      [input.identityId, input.workspaceId],
+        WHERE session.identity_id = $1 AND identity.workspace_id = $2 ${statusFilter}
+        ORDER BY session.created_at DESC, session.id DESC
+        LIMIT $4 OFFSET $5`,
+      [...values, input.pageSize, (input.page - 1) * input.pageSize],
     );
-    return result.rows.map((row) => sessionFromRow(row, row.id === input.currentSessionId));
+    return {
+      items: result.rows.map((row) => sessionFromRow(row, row.id === input.currentSessionId)),
+      page: input.page,
+      pageSize: input.pageSize,
+      total: Number(totalResult.rows[0]?.total ?? 0),
+    };
   }
 
   public async getSession(sessionId: string, workspaceId: string): Promise<ManagedSession | null> {

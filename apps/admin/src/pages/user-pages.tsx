@@ -158,6 +158,8 @@ export function UserDetailPage() {
   const [apiKeyExpiresAt, setApiKeyExpiresAt] = useState("");
   const [createdApiKeySecret, setCreatedApiKeySecret] = useState<string | null>(null);
   const [revokeApiKeyId, setRevokeApiKeyId] = useState<string | null>(null);
+  const [sessionView, setSessionView] = useState<"active" | "history">("active");
+  const [sessionPage, setSessionPage] = useState(1);
   const [credentialTokenPurpose, setCredentialTokenPurpose] = useState<"invitation" | "password-reset" | null>(null);
   const [credentialTokenPassword, setCredentialTokenPassword] = useState("");
   const [createdCredentialToken, setCreatedCredentialToken] = useState<{ readonly secret: string; readonly expiresAt: string } | null>(null);
@@ -167,8 +169,12 @@ export function UserDetailPage() {
     enabled: identityId !== undefined,
   });
   const sessions = useQuery({
-    queryKey: queryKeys.identitySessions(identityId ?? "missing"),
-    queryFn: () => api.identities.listSessions(identityId!),
+    queryKey: queryKeys.identitySessions(identityId ?? "missing", sessionView, sessionPage),
+    queryFn: () => api.identities.listSessions(identityId!, {
+      status: sessionView,
+      page: sessionPage,
+      pageSize: 10,
+    }),
     enabled: identityId !== undefined,
   });
   const apiKeys = useQuery({
@@ -202,21 +208,24 @@ export function UserDetailPage() {
     onSuccess: async () => {
       setResetOpen(false); setTemporaryPassword(""); setCurrentPassword(""); setRevokeApiKeys(false);
       await refresh();
-      await queryClient.invalidateQueries({ queryKey: queryKeys.identitySessions(identityId!) });
+      setSessionPage(1);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.identitySessionsRoot(identityId!) });
     },
   });
   const revokeSession = useMutation({
     mutationFn: (sessionId: string) => api.identities.revokeSession(sessionId),
     onSuccess: async () => {
       setRevokeSessionId(null);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.identitySessions(identityId!) });
+      setSessionPage(1);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.identitySessionsRoot(identityId!) });
     },
   });
   const revokeAllSessions = useMutation({
     mutationFn: () => api.identities.revokeAllSessions(identityId!),
     onSuccess: async () => {
       setRevokeAllOpen(false);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.identitySessions(identityId!) });
+      setSessionPage(1);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.identitySessionsRoot(identityId!) });
     },
   });
   const transferOwner = useMutation({
@@ -296,19 +305,26 @@ export function UserDetailPage() {
       </section>
       {current.kind === "human" ? (
         <section className={styles.panel} aria-labelledby="credentials-title">
-          <SectionHeader id="credentials-title" title="Credential & session" description="비밀번호 reset은 모든 interactive session을 즉시 폐기합니다." />
+          <SectionHeader id="credentials-title" title="Credential & session" description="활성 session만 기본 표시합니다. 폐기·만료 이력은 별도 페이지에서 조회할 수 있습니다." />
           <div className={styles.formActions}>
             <Button variant="secondary" onPress={() => setCredentialTokenPurpose("invitation")} isDisabled={current.status === "disabled"}>초대 token 발급</Button>
             <Button variant="secondary" onPress={() => setCredentialTokenPurpose("password-reset")} isDisabled={current.isOwner || current.status === "disabled"}>Reset token 발급</Button>
             <Button variant="secondary" onPress={() => setResetOpen(true)} isDisabled={current.isOwner || current.status === "disabled"}>임시 비밀번호 재설정</Button>
-            <Button variant="danger" onPress={() => setRevokeAllOpen(true)} isDisabled={!sessions.data?.items.some(({ revokedAt }) => revokedAt === undefined)}>모든 session 폐기</Button>
+            <Button variant="danger" onPress={() => setRevokeAllOpen(true)} isDisabled={sessionView !== "active" || (sessions.data?.total ?? 0) === 0}>모든 session 폐기</Button>
           </div>
           {createdCredentialToken !== null ? (
             <Callout tone="warning"><strong>지금 한 번만 표시됩니다.</strong><br /><code>{createdCredentialToken.secret}</code><br />만료: {formatInstant(createdCredentialToken.expiresAt)}<br /><Button size="small" variant="quiet" onPress={() => setCreatedCredentialToken(null)}>확인</Button></Callout>
           ) : null}
+          <div className={styles.viewSwitcher} role="group" aria-label="Session 표시 범위">
+            <Button size="small" variant={sessionView === "active" ? "secondary" : "quiet"} onPress={() => { setSessionView("active"); setSessionPage(1); }}>활성 session</Button>
+            <Button size="small" variant={sessionView === "history" ? "secondary" : "quiet"} onPress={() => { setSessionView("history"); setSessionPage(1); }}>폐기·만료 이력</Button>
+          </div>
           {sessions.isPending ? <PageLoading label="Session을 불러오는 중" /> : null}
           {sessions.isError ? <LoadError error={sessions.error} onRetry={() => void sessions.refetch()} /> : null}
-          {sessions.data?.items.length === 0 ? <EmptyState title="기록된 session이 없습니다" description="로그인하면 관리 가능한 session 기록이 생성됩니다." /> : null}
+          {sessions.data?.items.length === 0 ? <EmptyState
+            title={sessionView === "active" ? "활성 session이 없습니다" : "폐기·만료 이력이 없습니다"}
+            description={sessionView === "active" ? "로그인하면 관리 가능한 활성 session이 표시됩니다." : "폐기되거나 만료된 session이 생기면 이곳에 표시됩니다."}
+          /> : null}
           {sessions.data && sessions.data.items.length > 0 ? (
             <div className={styles.tableWrap}><table className={styles.table}>
               <thead><tr><th>Audience / Realm</th><th>인증</th><th>만료</th><th>상태</th><th>작업</th></tr></thead>
@@ -316,10 +332,23 @@ export function UserDetailPage() {
                 <td><strong>{session.audience === "admin" ? "Admin" : "Content"}{session.current ? " · 현재" : ""}</strong><span className={styles.secondaryLine}>{session.realmName}</span></td>
                 <td>{formatInstant(session.authenticatedAt)}</td>
                 <td>{formatInstant(session.expiresAt)}</td>
-                <td>{session.revokedAt === undefined ? <Badge tone="success">활성</Badge> : <Badge tone="neutral">폐기됨</Badge>}</td>
-                <td>{session.revokedAt === undefined ? <Button size="small" variant="danger" onPress={() => setRevokeSessionId(session.sessionId)}>폐기</Button> : <span className={styles.secondaryLine}>{session.revokeReason ?? formatInstant(session.revokedAt)}</span>}</td>
+                <td>{session.revokedAt !== undefined
+                  ? <Badge tone="neutral">폐기됨</Badge>
+                  : Date.parse(session.expiresAt) <= Date.now()
+                    ? <Badge tone="neutral">만료됨</Badge>
+                    : <Badge tone="success">활성</Badge>}</td>
+                <td>{session.revokedAt === undefined && Date.parse(session.expiresAt) > Date.now()
+                  ? <Button size="small" variant="danger" onPress={() => setRevokeSessionId(session.sessionId)}>폐기</Button>
+                  : <span className={styles.secondaryLine}>{session.revokeReason ?? (session.revokedAt === undefined ? "자동 만료" : formatInstant(session.revokedAt))}</span>}</td>
               </tr>)}</tbody>
             </table></div>
+          ) : null}
+          {sessions.data && sessions.data.total > sessions.data.pageSize ? (
+            <div className={styles.pagination} role="group" aria-label="Session 이력 페이지">
+              <Button size="small" variant="quiet" isDisabled={sessions.data.page <= 1} onPress={() => setSessionPage((page) => Math.max(1, page - 1))}>이전</Button>
+              <span>{sessions.data.page} / {Math.ceil(sessions.data.total / sessions.data.pageSize)} · 총 {sessions.data.total}건</span>
+              <Button size="small" variant="quiet" isDisabled={sessions.data.page * sessions.data.pageSize >= sessions.data.total} onPress={() => setSessionPage((page) => page + 1)}>다음</Button>
+            </div>
           ) : null}
           <ErrorCallout error={resetCredentials.error ?? createCredentialToken.error ?? revokeSession.error ?? revokeAllSessions.error} />
         </section>

@@ -10,6 +10,7 @@
   },
   "files": ["dist"],
   "dependencies": {
+    "@xecms/admin-apps": "workspace:*",
     "@xecms/application": "workspace:*",
     "@xecms/core": "workspace:*",
     "@xecms/plugin-sdk": "workspace:*",

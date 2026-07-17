@@ -12,6 +12,7 @@ import {
   type ManagedIdentityKind,
   type ManagedIdentityStatus,
   type ManagedSession,
+  type ManagedSessionListStatus,
   type CredentialTokenPurpose,
 } from "@xecms/application";
 import type {
@@ -284,12 +285,18 @@ export function registerIdentityAdministrationRoutes(options: {
         await requireTargetMutation(actor, target, "identity.session.revoke");
       }
       const currentSessionId = await options.currentSessionId(request);
+      const query = parseSessionListQuery(request.query);
+      const page = await options.identities.listSessions({
+        identityId: id,
+        workspaceId: actor.workspaceId,
+        currentSessionId,
+        ...query,
+      });
       return {
-        items: (await options.identities.listSessions({
-          identityId: id,
-          workspaceId: actor.workspaceId,
-          currentSessionId,
-        })).map(toSessionDto),
+        items: page.items.map(toSessionDto),
+        page: page.page,
+        pageSize: page.pageSize,
+        total: page.total,
       };
     },
   );
@@ -422,6 +429,23 @@ function parseListQuery(value: unknown): {
   return { limit, ...(cursor === undefined ? {} : { cursor }), ...(query === undefined ? {} : { query }),
     ...(kind === undefined ? {} : { kind }), ...(status === undefined ? {} : { status }),
     ...(originRealmId === undefined ? {} : { originRealmId }), ...(realmId === undefined ? {} : { realmId }) };
+}
+
+function parseSessionListQuery(value: unknown): {
+  readonly status: ManagedSessionListStatus;
+  readonly page: number;
+  readonly pageSize: number;
+} {
+  const input = object(value, "Session query");
+  unexpected(input, ["status", "page", "pageSize"]);
+  const status = enumeration(input["status"], "status", ["active", "history"] as const) ?? "active";
+  const page = input["page"] === undefined ? 1 : Number(input["page"]);
+  const pageSize = input["pageSize"] === undefined ? 10 : Number(input["pageSize"]);
+  if (!Number.isSafeInteger(page) || page < 1) invalid("page must be a positive integer.");
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    invalid("pageSize must be between 1 and 100.");
+  }
+  return { status, page, pageSize };
 }
 
 function parseCreate(value: unknown): CreateManagedIdentityRequest {

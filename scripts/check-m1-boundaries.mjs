@@ -5,11 +5,11 @@ const root = new URL("../", import.meta.url);
 const rules = [
   {
     directory: "packages/application",
-    allowedXeCms: new Set(["@xecms/authorization", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk"]),
+    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/authorization", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk"]),
   },
   {
     directory: "packages/database",
-    allowedXeCms: new Set(["@xecms/application", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk", "@xecms/example-plugin"]),
+    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/application", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk", "@xecms/example-plugin"]),
   },
   {
     directory: "packages/plugin-sdk",
@@ -25,7 +25,7 @@ const rules = [
   },
   {
     directory: "packages/contracts",
-    allowedXeCms: new Set(["@xecms/schema"]),
+    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/schema"]),
   },
   {
     directory: "packages/client",
@@ -40,6 +40,10 @@ const rules = [
     allowedXeCms: new Set(["@xecms/ui"]),
   },
   {
+    directory: "packages/admin-apps",
+    allowedXeCms: new Set(),
+  },
+  {
     directory: "apps/admin",
     allowedXeCms: new Set([
       "@xecms/admin",
@@ -51,6 +55,7 @@ const rules = [
   {
     directory: "apps/server",
     allowedXeCms: new Set([
+      "@xecms/admin-apps",
       "@xecms/application",
       "@xecms/contracts",
       "@xecms/core",

@@ -521,6 +521,13 @@ const PERMISSION_CATALOG_SOURCE = [
   ["site.update", "none", true],
   ["site.archive", "none", true],
   ["site.collection.bind", "none", true],
+  ["admin-app.read", "none", true],
+  ["admin-app.create", "none", true],
+  ["admin-app.update", "none", true],
+  ["admin-app.apply", "none", true],
+  ["admin-app.delete", "none", true],
+  ["admin-app.export", "none", true],
+  ["admin-app.access", "none", true],
 ] as const satisfies readonly (readonly [string, HierarchyGuard, boolean, boolean?])[];
 
 export const DEFAULT_PERMISSION_CATALOG: readonly AuthorizationPermissionRecord[] = Object.freeze(
@@ -634,6 +641,13 @@ export function createInitialAuthorizationPolicy(
     "schema.update",
     "schema.apply",
     "schema.export",
+    "admin-app.read",
+    "admin-app.create",
+    "admin-app.update",
+    "admin-app.apply",
+    "admin-app.delete",
+    "admin-app.export",
+    "admin-app.access",
     ...ROLE_MANAGEMENT_PERMISSIONS,
     "authority-level.read",
     "identity.read",
@@ -646,6 +660,8 @@ export function createInitialAuthorizationPolicy(
   const contentAdministratorDelegations = uniqueStrings([
     ...CONTENT_PERMISSIONS,
     "schema.read",
+    "admin-app.read",
+    "admin-app.access",
     "role.read",
     "media.read",
     "media.upload",

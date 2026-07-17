@@ -1,4 +1,6 @@
 export * from "./auth.js";
+export * from "./admin-apps.js";
+export * from "./admin-app-dependencies.js";
 export * from "./authorization.js";
 export * from "./documents.js";
 export * from "./document-query.js";

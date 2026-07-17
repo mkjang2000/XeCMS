@@ -737,9 +737,15 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
       createResetToken: (identityId, input) => call(() => client.identities.createResetToken(identityId, input)),
       createSystemMembership: (identityId, expectedRevision) => call(() =>
         client.identities.createSystemMembership(identityId, { expectedRevision })),
-      listSessions: (identityId) => call(async () => ({
-        items: (await client.identities.listSessions(identityId)).items,
-      })),
+      listSessions: (identityId, options) => call(async () => {
+        const result = await client.identities.listSessions(identityId, options);
+        return {
+          items: result.items,
+          page: result.page,
+          pageSize: result.pageSize,
+          total: result.total,
+        };
+      }),
       revokeSession: (sessionId) => call(() => client.identities.revokeSession(sessionId)),
       revokeAllSessions: (identityId) => call(async () =>
         (await client.identities.revokeAllSessions(identityId)).revokedCount),

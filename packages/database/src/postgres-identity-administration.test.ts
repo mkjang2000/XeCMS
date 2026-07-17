@@ -19,6 +19,14 @@ describe("PostgresIdentityAdministrationStore validation", () => {
     const store = new PostgresIdentityAdministrationStore({} as Pool, "xecms");
     await expect(store.list({ workspaceId: DEFAULT_WORKSPACE_ID, limit: 0 }))
       .rejects.toMatchObject({ code: "IDENTITY_PAGE_INVALID" });
+    await expect(store.listSessions({
+      identityId: "usr_test", workspaceId: DEFAULT_WORKSPACE_ID, status: "active",
+      page: 0, pageSize: 10, now: "2026-07-15T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "SESSION_PAGE_INVALID" });
+    await expect(store.listSessions({
+      identityId: "usr_test", workspaceId: DEFAULT_WORKSPACE_ID, status: "history",
+      page: 1, pageSize: 101, now: "2026-07-15T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "SESSION_PAGE_SIZE_INVALID" });
   });
 });
 
@@ -197,11 +205,23 @@ describe.runIf(RUN)("M4-C1 Identity administration PostgreSQL transaction", () =
       identityId: targetId,
       workspaceId: DEFAULT_WORKSPACE_ID,
       currentSessionId: firstSessionId,
+      status: "all",
+      page: 1,
+      pageSize: 50,
+      now: "2026-07-15T12:01:30.000Z",
     });
-    expect(sessions).toHaveLength(3);
-    expect(sessions.find(({ id }) => id === firstSessionId)).toMatchObject({ current: true, audience: "admin" });
-    const second = sessions.find(({ id }) => id !== firstSessionId && !id.includes("target_session"));
+    expect(sessions.items).toHaveLength(3);
+    expect(sessions.total).toBe(3);
+    expect(sessions.items.find(({ id }) => id === firstSessionId)).toMatchObject({ current: true, audience: "admin" });
+    const second = sessions.items.find(({ id }) => id !== firstSessionId && !id.includes("target_session"));
     expect(second).toBeDefined();
+    const activePage = await store.listSessions({
+      identityId: targetId, workspaceId: DEFAULT_WORKSPACE_ID, status: "active",
+      page: 1, pageSize: 1, now: "2026-07-15T12:01:30.000Z",
+    });
+    expect(activePage).toMatchObject({ page: 1, pageSize: 1, total: 2 });
+    expect(activePage.items).toHaveLength(1);
+    expect(activePage.items[0]?.revokedAt).toBeUndefined();
     await expect(store.revokeSession({
       sessionId: second!.id,
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -221,8 +241,18 @@ describe.runIf(RUN)("M4-C1 Identity administration PostgreSQL transaction", () =
       auditId: "audit_c1_reset",
     });
     expect(reset).toMatchObject({ revision: 5, credentialVersion: 3, passwordChangeRequired: true });
-    expect((await store.listSessions({ identityId: targetId, workspaceId: DEFAULT_WORKSPACE_ID }))
-      .every(({ revokedAt }) => revokedAt !== undefined)).toBe(true);
+    expect((await store.listSessions({
+      identityId: targetId, workspaceId: DEFAULT_WORKSPACE_ID, status: "all",
+      page: 1, pageSize: 50, now: "2026-07-15T12:03:00.000Z",
+    })).items.every(({ revokedAt }) => revokedAt !== undefined)).toBe(true);
+    await expect(store.listSessions({
+      identityId: targetId, workspaceId: DEFAULT_WORKSPACE_ID, status: "active",
+      page: 1, pageSize: 10, now: "2026-07-15T12:03:00.000Z",
+    })).resolves.toMatchObject({ items: [], total: 0 });
+    await expect(store.listSessions({
+      identityId: targetId, workspaceId: DEFAULT_WORKSPACE_ID, status: "history",
+      page: 1, pageSize: 2, now: "2026-07-15T12:03:00.000Z",
+    })).resolves.toMatchObject({ page: 1, pageSize: 2, total: 3 });
 
     await database.createSession({
       sessionTokenHash: "c1_owner_transfer_owner_session",

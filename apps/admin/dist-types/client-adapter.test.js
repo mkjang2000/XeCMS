@@ -7,6 +7,18 @@ const emptySchema = {
     collections: [],
 };
 describe("createAdminApi", () => {
+    it("preserves session pagination through the Admin adapter", async () => {
+        const listSessions = vi.fn().mockResolvedValue({
+            items: [], page: 2, pageSize: 10, total: 14,
+        });
+        const client = { identities: { listSessions } };
+        await expect(createAdminApi(client).identities.listSessions("usr_one", {
+            status: "history", page: 2, pageSize: 10,
+        })).resolves.toEqual({ items: [], page: 2, pageSize: 10, total: 14 });
+        expect(listSessions).toHaveBeenCalledWith("usr_one", {
+            status: "history", page: 2, pageSize: 10,
+        });
+    });
     it("exposes the typed self access profile through the Admin adapter", async () => {
         const evaluateBatch = vi.fn().mockResolvedValue({
             policyRevision: 6,

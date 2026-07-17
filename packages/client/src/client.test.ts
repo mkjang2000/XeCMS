@@ -68,6 +68,21 @@ describe("createXeCmsClient", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("encodes the server-side session status and pagination query", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      jsonResponse({ items: [], page: 3, pageSize: 10, total: 24 }),
+    );
+    const client = createXeCmsClient({ fetch });
+
+    await expect(client.identities.listSessions("user / one", {
+      status: "history", page: 3, pageSize: 10,
+    })).resolves.toMatchObject({ page: 3, pageSize: 10, total: 24 });
+
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      "/api/identities/user%20%2F%20one/sessions?status=history&page=3&pageSize=10",
+    );
+  });
+
   it("maps job inspection, manual execution, and retry to typed protected routes", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

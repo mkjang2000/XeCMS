@@ -7,6 +7,8 @@ export * from "./site-settings-migration.js";
 export * from "./audit-retention-migration.js";
 export * from "./plugin-migration.js";
 export * from "./owner-delegation-migration.js";
+export * from "./admin-app-migration.js";
+export * from "./postgres-admin-apps.js";
 export * from "./postgres-site-settings.js";
 export * from "./postgres-sites.js";
 export * from "./postgres-unified-audit.js";

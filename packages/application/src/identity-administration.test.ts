@@ -50,7 +50,9 @@ function fixture() {
     consumeCredentialToken: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
     createSystemMembership: vi.fn(async () => ({ ...IDENTITY, revision: 2 })),
-    listSessions: vi.fn(async () => []),
+    listSessions: vi.fn(async (input) => ({
+      items: [], page: input.page, pageSize: input.pageSize, total: 0,
+    })),
     getSession: vi.fn(async () => null),
     revokeSession: vi.fn(async (input) => ({
       id: input.sessionId, audience: "admin" as const, identityId: IDENTITY.id,

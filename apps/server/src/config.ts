@@ -10,6 +10,7 @@ export interface ServerConfig {
   readonly databaseUrl: string;
   readonly databaseSchema: string;
   readonly adminOrigins: readonly string[];
+  readonly disableAdminOrigins: boolean;
   readonly contentOrigins: readonly string[];
   readonly adminDist: string;
   readonly sessionSecret: string;
@@ -54,6 +55,13 @@ export function loadServerConfig(
     env["XECMS_ADMIN_ORIGINS"] ?? env["XECMS_ADMIN_ORIGIN"],
     "XECMS_ADMIN_ORIGINS",
   );
+  const disableAdminOrigins = parseBoolean(
+    env["DISABLE_ADMIN_ORIGINS"] ?? "false",
+    "DISABLE_ADMIN_ORIGINS",
+  );
+  if (disableAdminOrigins && rawNodeEnv !== "development") {
+    throw new Error("DISABLE_ADMIN_ORIGINS=true is allowed only in development.");
+  }
   const contentOrigins = normalizeOrigins(env["XECMS_CONTENT_ORIGINS"], "XECMS_CONTENT_ORIGINS");
   const mediaMaxUploadBytes = Number(env["XECMS_MEDIA_MAX_UPLOAD_BYTES"] ?? String(25 * 1024 * 1024));
   if (!Number.isSafeInteger(mediaMaxUploadBytes) || mediaMaxUploadBytes < 1) {
@@ -86,6 +94,7 @@ export function loadServerConfig(
     databaseUrl,
     databaseSchema: env["XECMS_DB_SCHEMA"] ?? "xecms",
     adminOrigins,
+    disableAdminOrigins,
     contentOrigins,
     adminDist:
       env["XECMS_ADMIN_DIST"] === undefined

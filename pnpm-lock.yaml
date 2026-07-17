@@ -84,6 +84,9 @@ importers:
       '@fastify/static':
         specifier: ^8.3.0
         version: 8.3.0
+      '@xecms/admin-apps':
+        specifier: workspace:*
+        version: link:../../packages/admin-apps
       '@xecms/application':
         specifier: workspace:*
         version: link:../../packages/application
@@ -159,8 +162,13 @@ importers:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
 
+  packages/admin-apps: {}
+
   packages/application:
     dependencies:
+      '@xecms/admin-apps':
+        specifier: workspace:*
+        version: link:../admin-apps
       '@xecms/authorization':
         specifier: workspace:*
         version: link:../authorization
@@ -203,6 +211,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@xecms/admin-apps':
+        specifier: workspace:*
+        version: link:../admin-apps
       '@xecms/schema':
         specifier: workspace:*
         version: link:../schema
@@ -211,6 +222,9 @@ importers:
 
   packages/database:
     dependencies:
+      '@xecms/admin-apps':
+        specifier: workspace:*
+        version: link:../admin-apps
       '@xecms/application':
         specifier: workspace:*
         version: link:../application

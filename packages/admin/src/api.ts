@@ -987,7 +987,11 @@ export interface AdminApi {
     createInvitation(identityId: string, input: { readonly expectedRevision: number; readonly currentPassword: string }): Promise<CreatedCredentialToken>;
     createResetToken(identityId: string, input: { readonly expectedRevision: number; readonly currentPassword: string }): Promise<CreatedCredentialToken>;
     createSystemMembership(identityId: string, expectedRevision: number): Promise<ManagedIdentity>;
-    listSessions(identityId: string): Promise<PageResult<ManagedSession>>;
+    listSessions(identityId: string, options?: {
+      readonly status?: "active" | "history";
+      readonly page?: number;
+      readonly pageSize?: number;
+    }): Promise<PaginatedPageResult<ManagedSession>>;
     revokeSession(sessionId: string): Promise<ManagedSession>;
     revokeAllSessions(identityId: string): Promise<number>;
     transferOwner(input: {

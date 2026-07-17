@@ -39,7 +39,9 @@ export const queryKeys = {
   globalIdentities: ["identity-realms", "global-identities"] as const,
   identities: (query = "", status = "all") => ["identities", "list", query, status] as const,
   identity: (identityId: string) => ["identities", identityId] as const,
-  identitySessions: (identityId: string) => ["identities", identityId, "sessions"] as const,
+  identitySessionsRoot: (identityId: string) => ["identities", identityId, "sessions"] as const,
+  identitySessions: (identityId: string, status: "active" | "history", page: number) =>
+    ["identities", identityId, "sessions", status, page] as const,
   identityApiKeys: (identityId: string) => ["identities", identityId, "api-keys"] as const,
   identityRealms: ["identity-realms", "list"] as const,
   identityRealm: (realmId: string) => ["identity-realms", realmId, "detail"] as const,

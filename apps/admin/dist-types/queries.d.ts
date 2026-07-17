@@ -32,7 +32,8 @@ export declare const queryKeys: {
     globalIdentities: readonly ["identity-realms", "global-identities"];
     identities: (query?: string, status?: string) => readonly ["identities", "list", string, string];
     identity: (identityId: string) => readonly ["identities", string];
-    identitySessions: (identityId: string) => readonly ["identities", string, "sessions"];
+    identitySessionsRoot: (identityId: string) => readonly ["identities", string, "sessions"];
+    identitySessions: (identityId: string, status: "active" | "history", page: number) => readonly ["identities", string, "sessions", "active" | "history", number];
     identityApiKeys: (identityId: string) => readonly ["identities", string, "api-keys"];
     identityRealms: readonly ["identity-realms", "list"];
     identityRealm: (realmId: string) => readonly ["identity-realms", string, "detail"];

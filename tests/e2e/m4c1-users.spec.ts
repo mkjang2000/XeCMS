@@ -94,6 +94,11 @@ test("M4-C1 사용자 생성·수정·비활성화를 Admin UI에서 완주한�
   await page.getByRole("row").filter({ hasText: "browser.renamed" }).getByRole("link").click();
   await expect(page.getByText("Owner", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Admin · 현재", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "폐기·만료 이력" }).click();
+  await expect(page.getByText("폐기됨", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Admin · 현재", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "활성 session" }).click();
+  await expect(page.getByText("Admin · 현재", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "사용자" }).click();
   await page.getByRole("button", { name: "서비스 계정 생성" }).click();

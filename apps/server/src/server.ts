@@ -8,6 +8,8 @@ import examplePlugin from "@xecms/example-plugin";
 import fastifyStatic from "@fastify/static";
 import {
   ApplicationError,
+  AdminAppApplicationService,
+  CatalogAdminAppDependencyResolver,
   AuthorizationApplicationService,
   AuthApplicationService,
   BasicMediaTypeInspector,
@@ -88,6 +90,7 @@ import {
   LocalMediaStorage,
   PostgresDatabase,
   PostgresAuthorizationStore,
+  PostgresAdminAppStore,
   PostgresContentHierarchyStore,
   PostgresIdentityRealmStore,
   PostgresIdentityAdministrationStore,
@@ -104,7 +107,7 @@ import {
   qualifiedName,
 } from "@xecms/database";
 import type { CollectionDefinition } from "@xecms/schema";
-import type { XeCmsPluginModule } from "@xecms/plugin-sdk";
+import { pluginManifestDigest, type XeCmsPluginModule } from "@xecms/plugin-sdk";
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -118,6 +121,7 @@ import { registerJobRoutes } from "./job-routes.js";
 import { registerSiteRoutes } from "./site-routes.js";
 import { registerOperationsRoutes } from "./operations-routes.js";
 import { registerPluginRoutes } from "./plugin-routes.js";
+import { registerAdminAppRoutes } from "./admin-app-routes.js";
 import { LoginRateLimiter } from "./rate-limit.js";
 import { createApplicationRuntime, createSecurityRuntime } from "./security.js";
 import { parseDocumentQueryRequest } from "./document-query-request.js";
@@ -128,6 +132,19 @@ import {
 
 const XECMS_VERSION = "0.4.1";
 const SESSION_COOKIE = "xecms_session";
+
+function pluginExtensionIds(module: XeCmsPluginModule): ReadonlySet<string> {
+  const extensions = module.manifest.extensions;
+  return new Set([
+    ...(extensions?.permissions ?? []),
+    ...(extensions?.fields ?? []).map(({ id }) => id),
+    ...(extensions?.routes ?? []).map(({ id }) => id),
+    ...(extensions?.hooks ?? []),
+    ...(extensions?.eventHandlers ?? []),
+    ...(extensions?.adminSlots ?? []).map(({ id }) => id),
+    ...(module.admin?.cards ?? []).map(({ id }) => id),
+  ]);
+}
 
 export interface BuildServerOptions {
   readonly config?: ServerConfig;
@@ -193,6 +210,54 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   await plugins.assertStartupState(DEFAULT_WORKSPACE_ID);
   for(const module of loadedPluginModules){const health=await module.server?.health?.();if(health?.status==="degraded")throw new ApplicationError("PLUGIN_STARTUP_HEALTH_FAILED",503,`Plugin '${module.manifest.id}' startup health check failed: ${health.detail??"degraded"}`)}
   await plugins.reconcileRuntime(DEFAULT_WORKSPACE_ID);
+  const authorizationStore = new PostgresAuthorizationStore(database.pool, database.schema);
+  const adminApps = new AdminAppApplicationService(
+    new PostgresAdminAppStore(database.pool, database.schema),
+    new CatalogAdminAppDependencyResolver({
+      getActiveSchema: async (workspaceId) => {
+        if (workspaceId !== DEFAULT_WORKSPACE_ID) return null;
+        const active = await database.getActiveSchema();
+        return active === null ? null : {
+          revisionId: active.revisionId, hash: active.hash, schema: active.schema,
+        };
+      },
+      getRealm: async (workspaceId, realmId) => {
+        const realm = await identityRealmStore.getRealmById(realmId);
+        return realm === null || realm.workspaceId !== workspaceId ? null : realm;
+      },
+      getAuthorization: async (workspaceId, realmId) => {
+        const realm = await identityRealmStore.getRealmById(realmId);
+        if (realm === null || realm.workspaceId !== workspaceId) return null;
+        const policy = await authorizationStore.loadPolicy(realmId);
+        return policy === null ? null : {
+          realmId,
+          revision: policy.revision,
+          permissionKeys: new Set(policy.permissions.map(({ key }) => key)),
+          resourceIds: new Set(policy.resources.map(({ id }) => id)),
+        };
+      },
+      getPlugin: async (workspaceId, pluginId) => {
+        if (!pluginCatalog.has(pluginId)) return null;
+        const module = pluginCatalog.get(pluginId);
+        const installed = await pluginStore.get(workspaceId, pluginId);
+        return {
+          id: pluginId,
+          version: module.manifest.version,
+          manifestDigest: pluginManifestDigest(module.manifest),
+          ...(installed === null ? {} : { installedManifestDigest: installed.manifestDigest }),
+          installed: installed !== null,
+          enabled: installed?.desiredState === "enabled",
+          runtimeLoaded: loadedPluginIds.has(pluginId),
+          extensionIds: pluginExtensionIds(module),
+        };
+      },
+    }),
+    {
+      now: () => new Date().toISOString(),
+      newAppId: () => `aap_${randomUUID()}`,
+      newRevisionId: () => `aar_${randomUUID()}`,
+    },
+  );
   const unifiedAudit = new UnifiedAuditService(
     new PostgresUnifiedAuditStore(database.pool, database.schema),
   );
@@ -214,7 +279,6 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     serverConfig,
     requireCsrf,
   );
-  const authorizationStore = new PostgresAuthorizationStore(database.pool, database.schema);
   const authorization = new AuthorizationApplicationService(authorizationStore, {
     now: () => new Date().toISOString(),
     newAuditId: () => `audit_${randomUUID()}`,
@@ -596,6 +660,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     requestIdHeader: "x-request-id",
     genReqId: () => randomUUID(),
   });
+  if (config.disableAdminOrigins) {
+    app.log.warn("Admin Origin validation is disabled for this development process.");
+  }
   await app.register(cookie);
   app.addContentTypeParser("*", (request, payload, done) => {
     if (request.url.startsWith("/api/media") && request.method === "POST") {
@@ -706,6 +773,27 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       const authenticated = await requireSession(request, auth, config, false);
       if (authenticated.session.identity.id !== actor.identityId) throw new ApplicationError("SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH",403,"The reauthentication challenge does not match the System session.");
       await auth.reauthenticate({identityId:authenticated.session.identity.id,username:authenticated.session.identity.username,password});
+    },
+  });
+  registerAdminAppRoutes({
+    app,
+    adminApps,
+    requireActor: async (request, csrf) =>
+      (await requireActor(request, auth, authorization, config, csrf)).actor,
+    reauthenticate: async (request, actor, password) => {
+      const authenticated = await requireSession(request, auth, config, false);
+      if (authenticated.session.identity.id !== actor.identityId) {
+        throw new ApplicationError(
+          "SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH",
+          403,
+          "The reauthentication challenge does not match the System session.",
+        );
+      }
+      await auth.reauthenticate({
+        identityId: authenticated.session.identity.id,
+        username: authenticated.session.identity.username,
+        password,
+      });
     },
   });
   registerOperationsRoutes({
@@ -2255,6 +2343,7 @@ async function requireSession(
 }
 
 function assertAllowedOrigin(request: FastifyRequest, config: ServerConfig): void {
+  if (config.disableAdminOrigins) return;
   assertAllowedRequestOrigin(request, config.adminOrigins);
 }
 
