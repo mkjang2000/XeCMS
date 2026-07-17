@@ -75,20 +75,23 @@ test("M3 역할, 그룹, Scope, 조건부 판정과 Audit을 Admin UI에서 완�
     const editor = page.getByRole("region", { name: "역할 편집기" });
     await expect(editor).toBeVisible();
     await editor.getByLabel("역할 이름").fill("E2E 제한 작성자");
-    await editor.getByLabel("설명").fill("M3 브라우저 검증 역할");
-    await editor.getByLabel("content.list 사용").check();
-    await editor.getByLabel("content.read 사용").check();
-    await editor.getByLabel("content.update 사용").check();
+    await editor.getByLabel("역할 설명").fill("M3 브라우저 검증 역할");
+    await editor.getByRole("radiogroup", { name: "콘텐츠 목록 보기 권한 수준" })
+      .getByRole("radio", { name: "사용", exact: true }).check();
+    await editor.getByRole("radiogroup", { name: "콘텐츠 보기 권한 수준" })
+      .getByRole("radio", { name: "사용", exact: true }).check();
+    await editor.getByRole("radiogroup", { name: "콘텐츠 수정 권한 수준" })
+      .getByRole("radio", { name: "사용", exact: true }).check();
 
-    const scope = editor.getByRole("group", { name: "필드 접근 Scope" });
+    const scope = editor.getByRole("group", { name: "제한할 콘텐츠 범위" });
     await scope.getByRole("button", {
       name: `${scopeResourceLabel}, Document`,
     }).click();
     await expect(scope.getByRole("button", {
       name: `${scopeResourceLabel}, Document, 선택됨`,
     })).toBeVisible();
-    await editor.getByLabel("읽기 허용 필드").fill("title");
-    await editor.getByLabel("쓰기 허용 필드").fill("title");
+    await editor.getByLabel("볼 수 있는 필드").fill("title");
+    await editor.getByLabel("수정할 수 있는 필드").fill("title");
     await editor.getByRole("button", { name: "저장", exact: true }).click();
 
     await expect(page.getByText("E2E 제한 작성자", { exact: true })).toBeVisible();
@@ -97,11 +100,11 @@ test("M3 역할, 그룹, Scope, 조건부 판정과 Audit을 Admin UI에서 완�
 
   await test.step("사용자와 중첩 그룹을 만들고 조건부 Scope Binding을 연결한다", async () => {
     await page.goto("/admin/access/bindings");
-    await expect(page.getByRole("heading", { name: "주체와 역할 바인딩" })).toBeVisible();
-    await page.getByRole("button", { name: "권한 주체 추가" }).click();
+    await expect(page.getByRole("heading", { name: "역할 배정", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "사용자·그룹 등록" }).click();
 
     const subjectPanel = page.locator("section").filter({
-      has: page.getByRole("heading", { name: "권한 주체 추가" }),
+      has: page.getByRole("heading", { name: "사용자·그룹 등록" }),
     });
     await subjectPanel.getByLabel("표시 이름").fill("E2E Writer");
     await subjectPanel.getByRole("button", { name: "추가", exact: true }).click();
@@ -125,62 +128,64 @@ test("M3 역할, 그룹, Scope, 조건부 판정과 Audit을 Admin UI에서 완�
     await groupPanel.getByRole("button", { name: "그룹에 추가" }).click();
     await expect(groupPanel.getByText("E2E Writer → E2E Editorial", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "새 바인딩" }).click();
-    const binding = page.getByRole("region", { name: "역할 바인딩 편집기" });
-    await selectOptionByLabel(binding.getByLabel("Subject"), "E2E Editorial · group");
-    await selectOptionByLabel(binding.getByLabel("Role"), "E2E 제한 작성자");
-    const bindingScope = binding.getByRole("group", { name: "Resource Scope" });
+    await page.getByRole("button", { name: "역할 배정하기" }).click();
+    const binding = page.getByRole("region", { name: "역할 배정 편집기" });
+    await selectOptionByLabel(binding.getByLabel("사용자 또는 그룹"), "E2E Editorial · 그룹");
+    await selectOptionByLabel(binding.getByLabel("부여할 역할"), "E2E 제한 작성자 · Editors 레벨 40");
+    const bindingScope = binding.getByRole("group", { name: "적용할 영역" });
     await bindingScope.getByRole("button", {
       name: `${scopeResourceLabel}, Document`,
     }).click();
-    await bindingScope.getByRole("radio", { name: /현재 및 모든 하위/ }).check();
-    await selectOptionByLabel(binding.getByLabel("소유자 조건"), "E2E Writer");
-    await binding.getByLabel("상태 조건").fill("draft");
-    await binding.getByRole("button", { name: "저장", exact: true }).click();
+    await bindingScope.getByRole("radio", { name: /현재 \+ 모든 하위/ }).check();
+    await binding.getByText("추가 조건", { exact: true }).click();
+    await selectOptionByLabel(binding.getByLabel("특정 소유자의 콘텐츠만"), "E2E Writer");
+    await binding.getByLabel("특정 상태만").fill("draft");
+    await binding.getByRole("button", { name: "역할 배정", exact: true }).click();
 
     const row = page.getByRole("row").filter({ hasText: "E2E Editorial" });
     await expect(row).toContainText("E2E 제한 작성자");
-    await expect(row).toContainText("현재 및 모든 하위");
-    await expect(row).toContainText("조건부");
+    await expect(row).toContainText("현재 + 모든 하위");
+    await expect(row).toContainText("조건 있음");
 
-    await page.getByRole("button", { name: "새 바인딩" }).click();
-    const moveBinding = page.getByRole("region", { name: "역할 바인딩 편집기" });
-    await selectOptionByLabel(moveBinding.getByLabel("Subject"), "E2E Move Observer · user");
-    await selectOptionByLabel(moveBinding.getByLabel("Role"), "E2E 제한 작성자");
-    const moveBindingScope = moveBinding.getByRole("group", { name: "Resource Scope" });
+    await page.getByRole("button", { name: "역할 배정하기" }).click();
+    const moveBinding = page.getByRole("region", { name: "역할 배정 편집기" });
+    await selectOptionByLabel(moveBinding.getByLabel("사용자 또는 그룹"), "E2E Move Observer · 사용자");
+    await selectOptionByLabel(moveBinding.getByLabel("부여할 역할"), "E2E 제한 작성자 · Editors 레벨 40");
+    const moveBindingScope = moveBinding.getByRole("group", { name: "적용할 영역" });
     await moveBindingScope.getByRole("button", {
       name: `${scopeResourceLabel}, Document`,
     }).click();
-    await moveBindingScope.getByRole("radio", { name: /현재 및 모든 하위/ }).check();
-    await moveBinding.getByRole("button", { name: "저장", exact: true }).click();
+    await moveBindingScope.getByRole("radio", { name: /현재 \+ 모든 하위/ }).check();
+    await moveBinding.getByRole("button", { name: "역할 배정", exact: true }).click();
     const moveObserverRow = page.getByRole("row").filter({ hasText: "E2E Move Observer" });
     await expect(moveObserverRow).toContainText("E2E 제한 작성자");
-    await expect(moveObserverRow).toContainText("현재 및 모든 하위");
+    await expect(moveObserverRow).toContainText("현재 + 모든 하위");
   });
 
   await test.step("실제 판정기로 Group provenance와 조건 불일치를 설명한다", async () => {
     await page.goto("/admin/access/simulator");
-    await selectOptionByLabel(page.getByLabel("Subject"), "E2E Writer · user");
-    await page.getByLabel("Action").selectOption("content.read");
-    const simulatorScope = page.getByRole("group", { name: "Resource" });
+    await selectOptionByLabel(page.getByLabel("확인할 사용자·그룹"), "E2E Writer · 사용자");
+    const simulatorScope = page.getByRole("group", { name: "확인할 영역" });
     await simulatorScope.getByRole("button", {
       name: `${scopeResourceLabel}, Document`,
     }).click();
     await expect(simulatorScope.getByRole("button", {
       name: `${scopeResourceLabel}, Document, 선택됨`,
     })).toBeVisible();
-    await selectOptionByLabel(page.getByLabel("소유자 Context"), "E2E Writer");
-    await page.getByLabel("상태 Context").fill("draft");
-    await page.getByRole("button", { name: "권한 판정" }).click();
+    await page.getByText("특정 권한 상세 진단", { exact: true }).click();
+    await page.getByLabel("확인할 권한").selectOption("content.read");
+    await selectOptionByLabel(page.getByLabel("콘텐츠 소유자 조건"), "E2E Writer");
+    await page.getByLabel("콘텐츠 상태 조건").fill("draft");
+    await page.getByRole("button", { name: "선택한 권한 진단" }).click();
 
-    await expect(page.getByText("Allowed", { exact: true })).toBeVisible();
+    await expect(page.getByText("허용됨", { exact: true })).toBeVisible();
     await expect(page.getByText(/그룹 경로:.*E2E Writer.*E2E Editorial/)).toBeVisible();
-    await expect(page.getByText(/Policy r\d+/)).toBeVisible();
+    await expect(page.getByText(/정책 Revision \d+/)).toBeVisible();
 
-    await page.getByLabel("상태 Context").fill("published");
-    await page.getByRole("button", { name: "권한 판정" }).click();
-    await expect(page.getByText("Denied", { exact: true })).toBeVisible();
-    await expect(page.getByText("CONSTRAINT_NOT_SATISFIED", { exact: true })).toBeVisible();
+    await page.getByLabel("콘텐츠 상태 조건").fill("published");
+    await page.getByRole("button", { name: "선택한 권한 진단" }).click();
+    await expect(page.getByText("허용되지 않음", { exact: true })).toBeVisible();
+    await expect(page.getByText("배정된 역할의 기간·소유자·상태 조건과 일치하지 않습니다.", { exact: true })).toBeVisible();
   });
 
   await test.step("Tree 이동 전에 권한 경로와 실질 권한 변화를 확인하고 승인한다", async () => {

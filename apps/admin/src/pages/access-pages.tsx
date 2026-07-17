@@ -54,9 +54,9 @@ function useAuthorizationWorkspace(): {
 function PolicySummary({ policy }: { readonly policy: AuthorizationPolicy }) {
   const items = [
     ["정책 Revision", policy.revision],
-    ["권한 주체", policy.subjects.length],
+    ["사용자·그룹", policy.subjects.length],
     ["역할", policy.roles.length],
-    ["활성 바인딩", policy.bindings.length],
+    ["역할 배정", policy.bindings.length],
   ] as const;
   return (
     <div className={styles.summaryGrid}>
@@ -89,6 +89,105 @@ function dateTimeValue(value?: string): string {
 
 function optionalInstant(value: string): string | undefined {
   return value === "" ? undefined : new Date(value).toISOString();
+}
+
+const permissionCategoryNames: Readonly<Record<string, string>> = {
+  authorization: "권한 정책",
+  content: "콘텐츠",
+  schema: "스키마",
+  identity: "사용자",
+  "service-account": "서비스 계정",
+  group: "그룹",
+  role: "역할",
+  "authority-level": "권한 레벨",
+  media: "미디어",
+  plugin: "플러그인",
+  job: "백그라운드 작업",
+  audit: "감사 로그",
+  retention: "데이터 보존",
+  "api-key": "API 키",
+  system: "시스템 설정",
+  site: "사이트",
+  "admin-app": "Admin App",
+};
+
+const permissionObjectNames: Readonly<Record<string, string>> = {
+  authorization: "권한 정책",
+  content: "콘텐츠",
+  revision: "버전",
+  schema: "스키마",
+  identity: "사용자",
+  credentials: "인증 정보",
+  session: "세션",
+  owner: "소유자",
+  "system-membership": "시스템 계정 연결",
+  "service-account": "서비스 계정",
+  group: "그룹",
+  member: "구성원",
+  role: "역할",
+  "authority-level": "권한 레벨",
+  media: "미디어",
+  plugin: "플러그인",
+  job: "백그라운드 작업",
+  audit: "감사 로그",
+  retention: "데이터 보존 정책",
+  consistency: "무결성 검사",
+  "api-key": "API 키",
+  system: "시스템",
+  settings: "설정",
+  site: "사이트",
+  collection: "컬렉션",
+  "admin-app": "Admin App",
+};
+
+const permissionVerbNames: Readonly<Record<string, string>> = {
+  list: "목록 보기",
+  read: "보기",
+  create: "만들기",
+  update: "수정",
+  delete: "삭제",
+  purge: "영구 삭제",
+  publish: "게시",
+  unpublish: "게시 취소",
+  archive: "보관",
+  restore: "복원",
+  reset: "재설정",
+  revoke: "폐기",
+  transfer: "이전",
+  install: "설치",
+  configure: "설정",
+  enable: "활성화",
+  disable: "비활성화",
+  uninstall: "제거",
+  retry: "재시도",
+  export: "내보내기",
+  preview: "미리보기",
+  apply: "적용",
+  upload: "업로드",
+  bind: "연결",
+  assign: "배정",
+  reorder: "순서 변경",
+  manage: "관리",
+  access: "접근",
+};
+
+function permissionCategoryName(category: string): string {
+  return permissionCategoryNames[category] ?? category;
+}
+
+function permissionTaskName(key: string): string {
+  const parts = key.split(".");
+  const operation = parts.pop() ?? key;
+  const object = parts.map((part) => permissionObjectNames[part] ?? part).join(" · ");
+  return `${object} ${permissionVerbNames[operation] ?? operation}`;
+}
+
+function subjectTypeName(type: AuthorizationPolicy["subjects"][number]["type"]): string {
+  switch (type) {
+    case "user": return "사용자";
+    case "group": return "그룹";
+    case "service-account": return "서비스 계정";
+  }
 }
 
 export function AccessRolesPage() {
@@ -160,10 +259,14 @@ export function AccessRolesPage() {
       <PageHeader
         eyebrow={realmId ? "Content Realm authorization" : "System authorization"}
         title="레벨과 역할"
-        description="레벨은 관리 서열을, 같은 레벨의 역할은 서로 다른 책임 영역을 표현합니다."
+        description="위쪽 레벨이 아래쪽 역할을 관리합니다. 같은 레벨에서는 책임만 나누고 서로를 관리하지 않습니다."
         actions={<Button onPress={() => selectLevel(null)}>새 레벨</Button>}
       />
       <AccessWorkspaceNav />
+      <div className={styles.guideBanner}>
+        <span className={styles.guideNumber}>1</span>
+        <div><strong>먼저 관리 서열을 정하고, 같은 높이에 필요한 역할을 나누세요.</strong><p>역할을 선택하면 오른쪽에서 실제 업무와 위임 범위를 설정할 수 있습니다.</p></div>
+      </div>
       <PolicySummary policy={policy.data} />
       <div className={`${styles.layout} ${styles.rolesLayout}`}>
         <div className={styles.levels}>
@@ -176,7 +279,7 @@ export function AccessRolesPage() {
                     <span className={styles.rank}>L{level.rank}</span>
                     <div>
                       <h2>{level.name}</h2>
-                      <span className={styles.hint}>동일 레벨 역할 {roles.length}개</span>
+                      <span className={styles.hint}>권한 레벨 {level.rank} · 같은 높이의 역할 {roles.length}개</span>
                     </div>
                   </div>
                   <div className={styles.levelActions}>
@@ -290,6 +393,7 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending }: {
   const [readableFields, setReadableFields] = useState("");
   const [writableFields, setWritableFields] = useState("");
   const [permissionQuery, setPermissionQuery] = useState("");
+  const [technicalPermissions, setTechnicalPermissions] = useState(false);
   useEffect(() => {
     setName(role?.name ?? "");
     setDescription(role?.description ?? "");
@@ -300,6 +404,7 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending }: {
     setReadableFields(role?.fieldAccess[0]?.readableFields.join(", ") ?? "");
     setWritableFields(role?.fieldAccess[0]?.writableFields.join(", ") ?? "");
     setPermissionQuery("");
+    setTechnicalPermissions(false);
   }, [policy.levels, role]);
   const togglePermission = (key: string, selected: boolean) => {
     setPermissions((current) => selected ? [...new Set([...current, key])] : current.filter((item) => item !== key));
@@ -321,6 +426,7 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending }: {
     ? availablePermissions
     : availablePermissions.filter((permission) =>
       `${permission.key} ${permission.label} ${permission.category}`.toLocaleLowerCase().includes(normalizedQuery));
+  const selectedLevel = policy.levels.find((level) => level.id === levelId);
   return (
     <section className={styles.panel} aria-label="역할 편집기">
       <SectionHeader
@@ -330,41 +436,33 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending }: {
       />
       {readOnly ? <Callout tone="info">이 역할은 시스템 동작에 필요하므로 이름, 레벨, 권한 구성이 보호됩니다.</Callout> : null}
       <div className={styles.form}>
-        <label className={styles.field}><span>역할 이름</span><input value={name} disabled={readOnly} onChange={(event) => setName(event.target.value)} /></label>
-        <label className={styles.field}><span>설명</span><textarea value={description} disabled={readOnly} onChange={(event) => setDescription(event.target.value)} /></label>
-        <label className={styles.field}><span>Authority Level</span><select value={levelId} disabled={readOnly} onChange={(event) => setLevelId(event.target.value)}>{[...policy.levels].sort((a, b) => b.rank - a.rank).map((level) => <option key={level.id} value={level.id}>{level.name} · L{level.rank}</option>)}</select></label>
-        <div>
-          <div className={styles.permissionToolbar}>
-            <div>
-              <h3>Permission Matrix</h3>
-              <span className={styles.hint}>
-                {readOnly
-                  ? `사용 ${permissions.length}개 · 위임 ${delegations.length}개`
-                  : `위임 가능한 권한 ${availablePermissions.length}개만 표시`}
-              </span>
-            </div>
-            <label className={styles.permissionSearch}>
-              <span className={styles.visuallyHidden}>권한 검색</span>
-              <input value={permissionQuery} onChange={(event) => setPermissionQuery(event.target.value)} placeholder="권한 검색" />
-            </label>
-          </div>
-          <div className={styles.permissionMatrix}>
-            <div className={styles.permissionHeader}><span>권한</span><span>사용</span><span>위임</span></div>
-            {visiblePermissions.map((permission) => (
-              <div className={styles.permissionRow} key={permission.key}>
-                <span className={styles.permissionName}><code>{permission.key}</code><span>{permission.label} · {permission.category}</span></span>
-                <label className={styles.checkboxCell}><input aria-label={`${permission.key} 사용`} type="checkbox" checked={permissions.includes(permission.key)} disabled={readOnly} onChange={(event) => togglePermission(permission.key, event.target.checked)} /></label>
-                <label className={styles.checkboxCell}><input aria-label={`${permission.key} 위임`} type="checkbox" checked={delegations.includes(permission.key)} disabled={readOnly || !permissions.includes(permission.key) || !permission.delegatable || permission.protected} onChange={(event) => toggleDelegation(permission.key, event.target.checked)} /></label>
-              </div>
-            ))}
-            {visiblePermissions.length === 0 ? <div className={styles.permissionEmpty}>검색 조건에 맞는 권한이 없습니다.</div> : null}
-          </div>
+        <div className={styles.editorSection}>
+          <div className={styles.editorSectionHeader}><span>1</span><div><h3>역할의 이름과 위치</h3><p>같은 레벨의 역할은 서열이 같고 담당 업무만 다릅니다.</p></div></div>
+          <label className={styles.field}><span>역할 이름</span><input value={name} disabled={readOnly} onChange={(event) => setName(event.target.value)} /></label>
+          <label className={styles.field}><span>역할 설명</span><textarea value={description} disabled={readOnly} onChange={(event) => setDescription(event.target.value)} placeholder="예: 게시물을 검토하고 발행하는 담당자" /></label>
+          <label className={styles.field}><span>권한 레벨</span><select value={levelId} disabled={readOnly} onChange={(event) => setLevelId(event.target.value)}>{[...policy.levels].sort((a, b) => b.rank - a.rank).map((level) => <option key={level.id} value={level.id}>{level.name} · 레벨 {level.rank}</option>)}</select></label>
+          {selectedLevel ? <div className={styles.levelExplanation}><strong>{selectedLevel.name} · 레벨 {selectedLevel.rank}</strong><span>이 역할보다 낮은 레벨의 역할만 관리할 수 있습니다. 같은 레벨끼리는 서로 독립적입니다.</span></div> : null}
         </div>
-        <div className={styles.stack}>
-          <div className={styles.panelHeader}><h3>필드 접근 제한</h3><span className={styles.hint}>비워 두면 해당 리소스의 모든 필드를 허용합니다.</span></div>
+        <div className={styles.editorSection}>
+          <div className={styles.editorSectionHeader}><span>2</span><div><h3>할 수 있는 일과 위임 범위</h3><p>업무별로 사용 여부와 다른 하위 역할에 넘겨줄 수 있는 범위를 선택하세요.</p></div></div>
+          <PermissionEditor
+            permissions={visiblePermissions}
+            selected={permissions}
+            delegated={delegations}
+            query={permissionQuery}
+            technical={technicalPermissions}
+            readOnly={readOnly}
+            onQueryChange={setPermissionQuery}
+            onTechnicalChange={setTechnicalPermissions}
+            onPermissionChange={togglePermission}
+            onDelegationChange={toggleDelegation}
+          />
+        </div>
+        <div className={`${styles.stack} ${styles.editorSection}`}>
+          <div className={styles.editorSectionHeader}><span>3</span><div><h3>필드 접근 제한 <em>선택 사항</em></h3><p>특정 콘텐츠에서 읽거나 수정할 수 있는 필드만 제한할 때 사용합니다.</p></div></div>
           <ScopeTreeSelector
-            label="필드 접근 Scope"
-            description="Collection 또는 개별 Document를 선택하세요. 상위 영역은 위치를 설명하기 위해 함께 표시됩니다."
+            label="제한할 콘텐츠 범위"
+            description="제한이 필요한 Collection 또는 개별 Document를 선택하세요. 선택하지 않으면 별도 필드 제한을 두지 않습니다."
             resources={policy.resources}
             value={fieldResourceId}
             onChange={setFieldResourceId}
@@ -373,8 +471,8 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending }: {
             isSelectable={({ type }) => type === "collection" || type === "document"}
           />
           {fieldResourceId ? <div className={styles.fieldRow}>
-            <label className={styles.field}><span>읽기 허용 필드</span><input value={readableFields} disabled={readOnly} onChange={(event) => setReadableFields(event.target.value)} placeholder="title, summary" /></label>
-            <label className={styles.field}><span>쓰기 허용 필드</span><input value={writableFields} disabled={readOnly} onChange={(event) => setWritableFields(event.target.value)} placeholder="title" /></label>
+            <label className={styles.field}><span>볼 수 있는 필드</span><input value={readableFields} disabled={readOnly} onChange={(event) => setReadableFields(event.target.value)} placeholder="title, summary" /></label>
+            <label className={styles.field}><span>수정할 수 있는 필드</span><input value={writableFields} disabled={readOnly} onChange={(event) => setWritableFields(event.target.value)} placeholder="title" /></label>
           </div> : null}
         </div>
         <div className={styles.formActions}>
@@ -388,6 +486,124 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending }: {
         </div>
       </div>
     </section>
+  );
+}
+
+type PermissionMode = "none" | "use" | "delegate";
+
+function PermissionEditor({
+  permissions,
+  selected,
+  delegated,
+  query,
+  technical,
+  readOnly,
+  onQueryChange,
+  onTechnicalChange,
+  onPermissionChange,
+  onDelegationChange,
+}: {
+  readonly permissions: AuthorizationPolicy["permissions"];
+  readonly selected: readonly string[];
+  readonly delegated: readonly string[];
+  readonly query: string;
+  readonly technical: boolean;
+  readonly readOnly: boolean;
+  readonly onQueryChange: (value: string) => void;
+  readonly onTechnicalChange: (value: boolean) => void;
+  readonly onPermissionChange: (key: string, selected: boolean) => void;
+  readonly onDelegationChange: (key: string, selected: boolean) => void;
+}) {
+  const groups = new Map<string, AuthorizationPolicy["permissions"]>();
+  for (const permission of permissions) {
+    groups.set(permission.category, [...(groups.get(permission.category) ?? []), permission]);
+  }
+  const modeOf = (key: string): PermissionMode => delegated.includes(key)
+    ? "delegate"
+    : selected.includes(key) ? "use" : "none";
+  const setMode = (key: string, mode: PermissionMode) => {
+    onPermissionChange(key, mode !== "none");
+    onDelegationChange(key, mode === "delegate");
+  };
+  return (
+    <div className={styles.permissionEditor}>
+      <div className={styles.permissionToolbar}>
+        <div className={styles.permissionSummary}>
+          <strong>{selected.length}개 업무 허용</strong>
+          <span>{delegated.length}개는 하위 역할에 위임 가능</span>
+        </div>
+        <div className={styles.permissionTools}>
+          <label className={styles.permissionSearch}>
+            <span className={styles.visuallyHidden}>권한 검색</span>
+            <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="업무 또는 권한 검색" />
+          </label>
+          <Button size="small" variant="secondary" onPress={() => onTechnicalChange(!technical)}>
+            {technical ? "업무별 간편 보기" : "권한 코드 보기"}
+          </Button>
+        </div>
+      </div>
+      {technical ? (
+        <div className={styles.permissionMatrix}>
+          <div className={styles.permissionHeader}><span>권한 코드</span><span>사용</span><span>위임</span></div>
+          {permissions.map((permission) => (
+            <div className={styles.permissionRow} key={permission.key}>
+              <span className={styles.permissionName}><code>{permission.key}</code><span>{permissionTaskName(permission.key)} · {permissionCategoryName(permission.category)}</span></span>
+              <label className={styles.checkboxCell}><input aria-label={`${permission.key} 사용`} type="checkbox" checked={selected.includes(permission.key)} disabled={readOnly} onChange={(event) => onPermissionChange(permission.key, event.target.checked)} /></label>
+              <label className={styles.checkboxCell}><input aria-label={`${permission.key} 위임`} type="checkbox" checked={delegated.includes(permission.key)} disabled={readOnly || !selected.includes(permission.key) || !permission.delegatable || permission.protected} onChange={(event) => onDelegationChange(permission.key, event.target.checked)} /></label>
+            </div>
+          ))}
+          {permissions.length === 0 ? <div className={styles.permissionEmpty}>검색 조건에 맞는 권한이 없습니다.</div> : null}
+        </div>
+      ) : (
+        <div className={styles.permissionGroups}>
+          {[...groups.entries()].map(([category, items]) => {
+            const selectedCount = items.filter(({ key }) => selected.includes(key)).length;
+            return (
+              <section className={styles.permissionGroup} key={category}>
+                <div className={styles.permissionGroupHeader}>
+                  <div><strong>{permissionCategoryName(category)}</strong><span>{items.length}개 업무</span></div>
+                  <Badge tone={selectedCount > 0 ? "success" : "neutral"}>{selectedCount}개 허용</Badge>
+                </div>
+                <div className={styles.permissionTaskList}>
+                  {items.map((permission) => {
+                    const mode = modeOf(permission.key);
+                    return (
+                      <article className={styles.permissionTask} key={permission.key} data-enabled={mode !== "none"}>
+                        <div className={styles.permissionTaskIdentity}>
+                          <strong>{permissionTaskName(permission.key)}</strong>
+                          <code>{permission.key}</code>
+                          {permission.hierarchyGuard !== "none" ? <span>대상과의 권한 레벨을 함께 확인합니다.</span> : null}
+                        </div>
+                        <div className={styles.permissionModes} role="radiogroup" aria-label={`${permissionTaskName(permission.key)} 권한 수준`}>
+                          {(["none", "use", "delegate"] as const).map((option) => {
+                            const disabled = readOnly || (option === "delegate" && (!permission.delegatable || permission.protected));
+                            const label = option === "none" ? "허용 안 함" : option === "use" ? "사용" : "사용 + 위임";
+                            return (
+                              <label key={option} data-selected={mode === option} data-disabled={disabled}>
+                                <input
+                                  type="radio"
+                                  name={`permission-${permission.key}`}
+                                  value={option}
+                                  checked={mode === option}
+                                  disabled={disabled}
+                                  onChange={() => setMode(permission.key, option)}
+                                />
+                                <span>{label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+          {permissions.length === 0 ? <div className={styles.permissionEmpty}>검색 조건에 맞는 업무가 없습니다.</div> : null}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -441,17 +657,21 @@ export function AccessBindingsPage() {
     <Page>
       <PageHeader
         eyebrow={realmId ? "Content Realm authorization" : "System authorization"}
-        title="주체와 역할 바인딩"
-        description="누가 어떤 역할을 어느 리소스 범위에서 행사하는지 연결합니다."
-        actions={<><Button variant="secondary" onPress={openSubjectCreator}>권한 주체 추가</Button><Button onPress={() => openBinding(emptyBinding(policy.data))}>새 바인딩</Button></>}
+        title="역할 배정"
+        description="사용자나 그룹에 역할을 연결하고, 어느 영역까지 적용할지 정합니다."
+        actions={<><Button variant="secondary" onPress={openSubjectCreator}>사용자·그룹 등록</Button><Button onPress={() => openBinding(emptyBinding(policy.data))}>역할 배정하기</Button></>}
       />
       <AccessWorkspaceNav />
+      <div className={styles.guideBanner}>
+        <span className={styles.guideNumber}>2</span>
+        <div><strong>누구에게, 어떤 역할을, 어디까지 적용할지만 순서대로 고르세요.</strong><p>기간이나 소유자·상태 조건은 필요한 경우에만 추가할 수 있습니다.</p></div>
+      </div>
       <PolicySummary policy={policy.data} />
       <div className={styles.layout}>
         <div className={styles.stack}>
           <section className={styles.panel}>
-            <SectionHeader title="역할 바인딩" description="기간·소유자·상태 조건은 모든 조건을 만족할 때만 적용됩니다." />
-            {policy.data.bindings.length === 0 ? <EmptyState title="바인딩이 없습니다" description="권한 주체에 역할과 Scope를 연결하세요." /> : <BindingTable policy={policy.data} onEdit={openBinding} />}
+            <SectionHeader title="현재 역할 배정" description="사용자와 그룹이 실제로 행사할 수 있는 역할 범위입니다." />
+            {policy.data.bindings.length === 0 ? <EmptyState title="배정된 역할이 없습니다" description="사용자 또는 그룹에 첫 역할을 배정해 보세요." /> : <BindingTable policy={policy.data} onEdit={openBinding} />}
           </section>
           <section className={styles.panel}>
             <SectionHeader title="중첩 그룹" description="그룹을 통한 권한 상속 경로는 판정 설명에 그대로 기록됩니다." />
@@ -465,10 +685,10 @@ export function AccessBindingsPage() {
         </div>
         {inspectorOpen ? <button className={styles.drawerBackdrop} type="button" aria-label="편집 패널 닫기" onClick={closeInspector} /> : null}
         <div className={styles.detailPane} data-open={inspectorOpen}>
-          {inspectorOpen ? <div className={styles.drawerHeader}><strong>{subjectCreatorOpen ? "권한 주체 추가" : editingBinding?.id ? "바인딩 편집" : "새 바인딩"}</strong><Button size="small" variant="quiet" onPress={closeInspector}>닫기</Button></div> : null}
+          {inspectorOpen ? <div className={styles.drawerHeader}><strong>{subjectCreatorOpen ? "사용자·그룹 등록" : editingBinding?.id ? "역할 배정 수정" : "새 역할 배정"}</strong><Button size="small" variant="quiet" onPress={closeInspector}>닫기</Button></div> : null}
           {subjectCreatorOpen ? (
             <section className={styles.panel}>
-              <SectionHeader title="권한 주체 추가" description="사용자, 그룹, 서비스 계정을 동일한 권한 주체로 관리합니다." />
+              <SectionHeader title="사용자·그룹 등록" description="권한을 받을 사용자, 그룹 또는 서비스 계정을 등록합니다." />
               <div className={styles.form}>
                 <label className={styles.field}><span>유형</span><select value={subjectType} onChange={(event) => setSubjectType(event.target.value as typeof subjectType)}><option value="user">사용자</option><option value="group">그룹</option><option value="service-account">서비스 계정</option></select></label>
                 <label className={styles.field}><span>표시 이름</span><input value={subjectName} onChange={(event) => setSubjectName(event.target.value)} /></label>
@@ -515,7 +735,7 @@ function propagationLabel(propagation: AuthorizationRoleBinding["propagation"]):
 }
 
 function BindingTable({ policy, onEdit }: { readonly policy: AuthorizationPolicy; readonly onEdit: (binding: AuthorizationRoleBinding) => void }) {
-  return <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Subject</th><th>Role</th><th>Scope</th><th>전파</th><th>조건</th><th /></tr></thead><tbody>{policy.bindings.map((binding) => <tr key={binding.id}><td>{subjectNameOf(policy, binding.subjectId)}</td><td>{roleNameOf(policy, binding.roleId)}</td><td title={binding.resourceId}>{resourcePathOf(policy, binding.resourceId)}</td><td>{propagationLabel(binding.propagation)}</td><td>{binding.constraints ? "조건부" : "없음"}</td><td>{binding.protected ? <Badge>보호됨</Badge> : <Button size="small" variant="quiet" onPress={() => onEdit(binding)}>편집</Button>}</td></tr>)}</tbody></table></div>;
+  return <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>사용자·그룹</th><th>부여된 역할</th><th>적용 영역</th><th>하위 적용</th><th>추가 조건</th><th /></tr></thead><tbody>{policy.bindings.map((binding) => <tr key={binding.id}><td><strong>{subjectNameOf(policy, binding.subjectId)}</strong></td><td>{roleNameOf(policy, binding.roleId)}</td><td title={binding.resourceId}>{resourcePathOf(policy, binding.resourceId)}</td><td>{propagationLabel(binding.propagation)}</td><td>{binding.constraints || binding.validFrom || binding.validUntil ? <Badge>조건 있음</Badge> : <span className={styles.muted}>항상 적용</span>}</td><td>{binding.protected ? <Badge>보호됨</Badge> : <Button size="small" variant="quiet" onPress={() => onEdit(binding)}>수정</Button>}</td></tr>)}</tbody></table></div>;
 }
 
 function BindingEditor({ policy, binding, onSave, onDelete, onCancel, isPending }: {
@@ -541,24 +761,42 @@ function BindingEditor({ policy, binding, onSave, onDelete, onCancel, isPending 
     setValidUntil(dateTimeValue(binding?.validUntil)); setOwnerSubjectId(binding?.constraints?.ownerSubjectId ?? "");
     setStatuses(binding?.constraints?.statuses?.join(", ") ?? "");
   }, [binding, policy.resources]);
-  if (binding === null) return <section className={styles.panel}><EmptyState title="바인딩을 선택하세요" description="새 바인딩을 만들거나 기존 항목을 편집할 수 있습니다." /></section>;
+  if (binding === null) return <section className={styles.panel}><EmptyState title="역할 배정을 선택하세요" description="새 역할을 배정하거나 기존 배정 항목을 편집할 수 있습니다." /></section>;
   const statusValues = textList(statuses);
-  return <section className={styles.panel} aria-label="역할 바인딩 편집기"><SectionHeader title={binding.id ? "바인딩 편집" : "새 역할 바인딩"} /><div className={styles.form}>
-    <label className={styles.field}><span>Subject</span><select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}><option value="">선택</option>{policy.subjects.filter(({ protected: itemProtected }) => !itemProtected).map((subject) => <option key={subject.id} value={subject.id}>{subject.name} · {subject.type}</option>)}</select></label>
-    <label className={styles.field}><span>Role</span><select value={roleId} onChange={(event) => setRoleId(event.target.value)}><option value="">선택</option>{policy.roles.filter(({ protected: itemProtected }) => !itemProtected).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
-    <ScopeTreeSelector
-      label="Resource Scope"
-      description="parentId 계층을 따라 Collection과 Document의 실제 위치를 확인한 뒤 범위를 선택하세요."
-      resources={policy.resources}
-      value={resourceId}
-      onChange={setResourceId}
-      propagation={propagation}
-      onPropagationChange={setPropagation}
-    />
-    <div className={styles.fieldRow}><label className={styles.field}><span>유효 시작</span><input type="datetime-local" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} /></label><label className={styles.field}><span>유효 종료</span><input type="datetime-local" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label></div>
-    <label className={styles.field}><span>소유자 조건</span><select value={ownerSubjectId} onChange={(event) => setOwnerSubjectId(event.target.value)}><option value="">제한 없음</option>{policy.subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label>
-    <label className={styles.field}><span>상태 조건</span><input value={statuses} onChange={(event) => setStatuses(event.target.value)} placeholder="draft, rejected" /></label>
-    <div className={styles.formActions}>{onDelete ? <Button variant="danger" onPress={onDelete}>삭제</Button> : null}<Button variant="quiet" onPress={onCancel}>취소</Button><Button onPress={() => onSave({ subjectId, roleId, resourceId, propagation, validFrom: optionalInstant(validFrom), validUntil: optionalInstant(validUntil), constraints: ownerSubjectId || statusValues.length ? { ownerSubjectId: ownerSubjectId || undefined, statuses: statusValues.length ? statusValues : undefined } : undefined })} isDisabled={isPending || !subjectId || !roleId || !resourceId}>저장</Button></div>
+  return <section className={styles.panel} aria-label="역할 배정 편집기"><SectionHeader title={binding.id ? "역할 배정 수정" : "새 역할 배정"} description="아래 세 단계만 선택하면 역할이 적용됩니다." /><div className={styles.form}>
+    <div className={styles.editorSection}>
+      <div className={styles.editorSectionHeader}><span>1</span><div><h3>누구에게 적용할까요?</h3><p>개별 사용자, 그룹 또는 서비스 계정을 선택합니다.</p></div></div>
+      <label className={styles.field}><span>사용자 또는 그룹</span><select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}><option value="">선택해 주세요</option>{policy.subjects.filter(({ protected: itemProtected }) => !itemProtected).map((subject) => <option key={subject.id} value={subject.id}>{subject.name} · {subjectTypeName(subject.type)}</option>)}</select></label>
+    </div>
+    <div className={styles.editorSection}>
+      <div className={styles.editorSectionHeader}><span>2</span><div><h3>어떤 역할을 줄까요?</h3><p>역할에 포함된 업무 권한이 선택한 대상에게 부여됩니다.</p></div></div>
+      <label className={styles.field}><span>부여할 역할</span><select value={roleId} onChange={(event) => setRoleId(event.target.value)}><option value="">선택해 주세요</option>{policy.roles.filter(({ protected: itemProtected }) => !itemProtected).map((role) => { const level = policy.levels.find(({ id }) => id === role.levelId); return <option key={role.id} value={role.id}>{role.name}{level ? ` · ${level.name} 레벨 ${level.rank}` : ""}</option>; })}</select></label>
+    </div>
+    <div className={styles.editorSection}>
+      <div className={styles.editorSectionHeader}><span>3</span><div><h3>어디까지 적용할까요?</h3><p>콘텐츠나 관리 영역을 고르고 하위 항목으로의 적용 방식을 선택합니다.</p></div></div>
+      <ScopeTreeSelector
+        label="적용할 영역"
+        description="트리에서 실제 영역을 선택하세요. 아래 옵션으로 현재 항목과 하위 항목의 포함 여부를 정합니다."
+        resources={policy.resources}
+        value={resourceId}
+        onChange={setResourceId}
+        propagation={propagation}
+        onPropagationChange={setPropagation}
+      />
+    </div>
+    <details className={styles.advancedDetails} open={Boolean(validFrom || validUntil || ownerSubjectId || statuses)}>
+      <summary><span>추가 조건</span><small>기간, 소유자 또는 콘텐츠 상태를 제한할 때만 사용</small></summary>
+      <div className={styles.advancedDetailsBody}>
+        <div className={styles.fieldRow}><label className={styles.field}><span>적용 시작</span><input type="datetime-local" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} /></label><label className={styles.field}><span>적용 종료</span><input type="datetime-local" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label></div>
+        <label className={styles.field}><span>특정 소유자의 콘텐츠만</span><select value={ownerSubjectId} onChange={(event) => setOwnerSubjectId(event.target.value)}><option value="">소유자 제한 없음</option>{policy.subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label>
+        <label className={styles.field}><span>특정 상태만</span><input value={statuses} onChange={(event) => setStatuses(event.target.value)} placeholder="예: draft, rejected" /></label>
+      </div>
+    </details>
+    <div className={styles.bindingPreview}>
+      <strong>배정 요약</strong>
+      <span>{subjectId ? subjectNameOf(policy, subjectId) : "대상 미선택"}에게 {roleId ? roleNameOf(policy, roleId) : "역할 미선택"} 역할을 {resourceId ? resourcePathOf(policy, resourceId) : "영역 미선택"}에서 적용</span>
+    </div>
+    <div className={styles.formActions}>{onDelete ? <Button variant="danger" onPress={onDelete}>배정 삭제</Button> : null}<Button variant="quiet" onPress={onCancel}>취소</Button><Button onPress={() => onSave({ subjectId, roleId, resourceId, propagation, validFrom: optionalInstant(validFrom), validUntil: optionalInstant(validUntil), constraints: ownerSubjectId || statusValues.length ? { ownerSubjectId: ownerSubjectId || undefined, statuses: statusValues.length ? statusValues : undefined } : undefined })} isDisabled={isPending || !subjectId || !roleId || !resourceId}>{binding.id ? "변경 저장" : "역할 배정"}</Button></div>
   </div></section>;
 }
 
@@ -599,30 +837,46 @@ export function AccessSimulatorPage() {
     simulation.reset();
     effectivePermissions.reset();
   };
-  return <Page><PageHeader eyebrow={realmId ? "Content Realm authorization" : "Explainable authorization"} title="권한 시뮬레이터" description="개별 판정과 사용자별 전체 Effective Permission을 실제 API와 같은 정책 snapshot으로 조회합니다." /><AccessWorkspaceNav /><div className={styles.layout}><section className={styles.panel}><SectionHeader title="판정 조건" /><div className={styles.form}>
-    <label className={styles.field}><span>Subject</span><select value={subjectId} onChange={(event) => { setSubjectId(event.target.value); resetResults(); }}><option value="">선택</option>{policy.data.subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name} · {subject.type}</option>)}</select></label>
-    <label className={styles.field}><span>Action</span><select value={action} onChange={(event) => { setAction(event.target.value); resetResults(); }}><option value="">선택</option>{policy.data.permissions.map((permission) => <option key={permission.key} value={permission.key}>{permission.key} · {permission.label}{permission.hierarchyGuard === "none" ? "" : " · 대상 context 필요"}</option>)}</select></label>
-    <ScopeTreeSelector
-      label="Resource"
-      description="판정할 Collection 또는 Document의 실제 계층 위치를 선택하세요."
-      resources={policy.data.resources}
-      value={resourceId}
-      onChange={(next) => { setResourceId(next); resetResults(); }}
-    />
-    <div className={styles.fieldRow}><label className={styles.field}><span>소유자 Context</span><select value={ownerSubjectId} onChange={(event) => { setOwnerSubjectId(event.target.value); resetResults(); }}><option value="">없음</option>{policy.data.subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label><label className={styles.field}><span>상태 Context</span><input value={status} onChange={(event) => { setStatus(event.target.value); resetResults(); }} placeholder="draft" /></label></div>
-    {hierarchyUnsupported ? (
-      <Callout tone="info">
-        <strong>이 Action은 일반 리소스 판정만으로 평가할 수 없습니다.</strong><br />
-        {hierarchyContextDescription(selectedHierarchyGuard)} 역할·바인딩·사용자 관리 화면의
-        실제 작업에서 대상의 권한 레벨과 보호 상태를 함께 판정합니다.
-      </Callout>
-    ) : null}
-    <div className={styles.formActions}>
-      <Button variant="secondary" onPress={() => effectivePermissions.mutate()} isDisabled={!subjectId || !resourceId || effectivePermissions.isPending}>{effectivePermissions.isPending ? "전체 조회 중…" : "전체 유효 권한 조회"}</Button>
-      <Button onPress={() => simulation.mutate()} isDisabled={!subjectId || !action || !resourceId || hierarchyUnsupported || simulation.isPending}>{simulation.isPending ? "판정 중…" : hierarchyUnsupported ? "대상 context 필요" : "선택 권한 판정"}</Button>
+  return <Page>
+    <PageHeader eyebrow={realmId ? "Content Realm authorization" : "Explainable authorization"} title="사용자 권한 확인" description="사용자와 영역을 선택하면 실제로 가능한 업무와 그 이유를 한눈에 확인할 수 있습니다." />
+    <AccessWorkspaceNav />
+    <div className={styles.guideBanner}>
+      <span className={styles.guideNumber}>?</span>
+      <div><strong>설정을 바꾸지 않고 현재 권한만 안전하게 확인합니다.</strong><p>특정 권한의 상세 판정은 아래 고급 진단에서 별도로 실행할 수 있습니다.</p></div>
     </div>
-    <MutationError error={simulation.error ?? effectivePermissions.error} />
-  </div></section><div className={styles.stack}><DecisionExplanation policy={policy.data} decision={simulation.data ?? null} /><EffectivePermissionList policy={policy.data} results={effectivePermissions.data ?? null} /></div></div></Page>;
+    <div className={`${styles.layout} ${styles.simulatorLayout}`}>
+      <section className={styles.panel}>
+        <SectionHeader title="누구의 권한을 어디에서 확인할까요?" description="사용자 또는 그룹과 실제 콘텐츠·관리 영역을 선택하세요." />
+        <div className={styles.form}>
+          <label className={styles.field}><span>확인할 사용자·그룹</span><select value={subjectId} onChange={(event) => { setSubjectId(event.target.value); resetResults(); }}><option value="">선택해 주세요</option>{policy.data.subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name} · {subjectTypeName(subject.type)}</option>)}</select></label>
+          <ScopeTreeSelector
+            label="확인할 영역"
+            description="권한을 확인할 Collection, Document 또는 관리 영역을 선택하세요."
+            resources={policy.data.resources}
+            value={resourceId}
+            onChange={(next) => { setResourceId(next); resetResults(); }}
+          />
+          <Button isFullWidth onPress={() => effectivePermissions.mutate()} isDisabled={!subjectId || !resourceId || effectivePermissions.isPending}>{effectivePermissions.isPending ? "권한 확인 중…" : "이 영역의 전체 권한 확인"}</Button>
+          <details className={styles.advancedDetails}>
+            <summary><span>특정 권한 상세 진단</span><small>Action과 조건을 직접 지정하는 고급 도구</small></summary>
+            <div className={styles.advancedDetailsBody}>
+              <label className={styles.field}><span>확인할 권한</span><select value={action} onChange={(event) => { setAction(event.target.value); resetResults(); }}><option value="">선택해 주세요</option>{policy.data.permissions.map((permission) => <option key={permission.key} value={permission.key}>{permissionTaskName(permission.key)} · {permission.key}{permission.hierarchyGuard === "none" ? "" : " · 대상 정보 필요"}</option>)}</select></label>
+              <div className={styles.fieldRow}><label className={styles.field}><span>콘텐츠 소유자 조건</span><select value={ownerSubjectId} onChange={(event) => { setOwnerSubjectId(event.target.value); resetResults(); }}><option value="">조건 없음</option>{policy.data.subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label><label className={styles.field}><span>콘텐츠 상태 조건</span><input value={status} onChange={(event) => { setStatus(event.target.value); resetResults(); }} placeholder="예: draft" /></label></div>
+              {hierarchyUnsupported ? (
+                <Callout tone="info">
+                  <strong>이 권한은 대상과의 관리 서열도 확인해야 합니다.</strong><br />
+                  {hierarchyContextDescription(selectedHierarchyGuard)} 실제 관리 작업에서 대상의 권한 레벨과 보호 상태를 함께 판정합니다.
+                </Callout>
+              ) : null}
+              <Button variant="secondary" isFullWidth onPress={() => simulation.mutate()} isDisabled={!subjectId || !action || !resourceId || hierarchyUnsupported || simulation.isPending}>{simulation.isPending ? "진단 중…" : hierarchyUnsupported ? "대상 정보 필요" : "선택한 권한 진단"}</Button>
+            </div>
+          </details>
+          <MutationError error={simulation.error ?? effectivePermissions.error} />
+        </div>
+      </section>
+      <div className={styles.stack}><EffectivePermissionList policy={policy.data} results={effectivePermissions.data ?? null} /><DecisionExplanation policy={policy.data} decision={simulation.data ?? null} /></div>
+    </div>
+  </Page>;
 }
 
 function EffectivePermissionList({
@@ -636,7 +890,7 @@ function EffectivePermissionList({
     readonly decision: AuthorizationDecision | null;
   }[] | null;
 }) {
-  if (results === null) return <section className={styles.panel}><EmptyState title="전체 유효 권한" description="Subject와 Resource를 선택한 뒤 전체 유효 권한 조회를 실행하세요." /></section>;
+  if (results === null) return <section className={styles.panel}><EmptyState title="전체 권한 결과" description="사용자·그룹과 영역을 선택한 뒤 전체 권한 확인을 실행하세요." /></section>;
   const sorted = [...results].sort((left, right) =>
     Number(right.decision?.allowed === true) - Number(left.decision?.allowed === true)
     || Number(right.supported) - Number(left.supported));
@@ -647,15 +901,15 @@ function EffectivePermissionList({
   return (
     <section className={styles.panel} aria-label="사용자별 Effective Permission" aria-live="polite">
       <div className={styles.panelHeader}>
-        <div><h2>전체 유효 권한</h2><span className={styles.hint}>{resourcePathOf(policy, firstDecision?.resourceId ?? "")}</span></div>
-        <Badge tone={allowedCount > 0 ? "success" : "neutral"}>{allowedCount}/{supportedCount} 허용{unsupportedCount ? ` · ${unsupportedCount}개 대상 context 필요` : ""}</Badge>
+        <div><h2>이 영역에서 가능한 업무</h2><span className={styles.hint}>{resourcePathOf(policy, firstDecision?.resourceId ?? "")}</span></div>
+        <Badge tone={allowedCount > 0 ? "success" : "neutral"}>{allowedCount}/{supportedCount}개 가능{unsupportedCount ? ` · ${unsupportedCount}개 추가 정보 필요` : ""}</Badge>
       </div>
       <div className={styles.effectiveList}>
         {sorted.map(({ permission, supported, decision }) => (
           <article className={styles.effectiveItem} key={permission.key} data-allowed={decision?.allowed === true}>
-            <div><strong>{permission.label}</strong><code>{permission.key}</code></div>
-            <Badge tone={!supported ? "neutral" : decision?.allowed ? "success" : "danger"}>{!supported ? "Context 필요" : decision?.allowed ? "Allowed" : "Denied"}</Badge>
-            <span>{supported ? decision?.reasonCode : hierarchyContextDescription(permission.hierarchyGuard)}</span>
+            <div><strong>{permissionTaskName(permission.key)}</strong><code>{permission.key}</code></div>
+            <Badge tone={!supported ? "neutral" : decision?.allowed ? "success" : "danger"}>{!supported ? "추가 정보 필요" : decision?.allowed ? "가능" : "불가"}</Badge>
+            <span>{supported ? decisionReasonName(decision?.reasonCode ?? "") : hierarchyContextDescription(permission.hierarchyGuard)}</span>
           </article>
         ))}
       </div>
@@ -674,9 +928,24 @@ function hierarchyContextDescription(
   }
 }
 
+function decisionReasonName(code: string): string {
+  const names: Readonly<Record<string, string>> = {
+    PERMISSION_GRANTED: "필요한 역할과 권한이 적용되어 있습니다.",
+    ALLOW_PERMISSION: "필요한 역할과 권한이 적용되어 있습니다.",
+    ALLOW_REALM_FULL_ACCESS: "이 Realm의 전체 접근 권한이 적용되어 있습니다.",
+    PERMISSION_NOT_GRANTED: "이 업무를 허용하는 역할이 배정되지 않았습니다.",
+    DENY_PERMISSION: "이 업무를 허용하는 역할이 배정되지 않았습니다.",
+    CONSTRAINT_NOT_SATISFIED: "배정된 역할의 기간·소유자·상태 조건과 일치하지 않습니다.",
+    RESOURCE_NOT_IN_SCOPE: "역할이 적용되는 영역 밖에 있습니다.",
+    SUBJECT_DISABLED: "사용자 또는 그룹이 비활성화되어 있습니다.",
+    HIERARCHY_CONTEXT_REQUIRED: "대상과의 권한 레벨 정보가 더 필요합니다.",
+  };
+  return names[code] ?? "현재 정책 조건에 따라 판정되었습니다.";
+}
+
 function DecisionExplanation({ policy, decision }: { readonly policy: AuthorizationPolicy; readonly decision: AuthorizationDecision | null }) {
-  if (decision === null) return <section className={styles.panel}><EmptyState title="판정 조건을 선택하세요" description="허용 여부뿐 아니라 Role, Level, Binding과 그룹 경로를 확인할 수 있습니다." /></section>;
-  return <section className={styles.decisionCard} data-allowed={decision.allowed}><div className={styles.decisionTitle}><Badge tone={decision.allowed ? "success" : "danger"}>{decision.allowed ? "Allowed" : "Denied"}</Badge><strong>{decision.reasonCode}</strong></div><div className={styles.auditMeta}><span>Action {decision.action}</span><span>Policy r{decision.policyRevision}</span>{decision.actorLevel === undefined ? null : <span>Actor L{decision.actorLevel}</span>}</div><div className={styles.grantList}>{decision.matchedGrants.map((grant) => <div className={styles.grant} key={`${grant.sourceBindingId}:${grant.permission}`}><strong>{roleNameOf(policy, grant.sourceRoleId)} · L{grant.sourceRank}</strong><span>{resourceNameOf(policy, grant.sourceResourceId)} · {grant.sourcePropagation}</span><span>Binding {grant.sourceBindingId}</span>{grant.membershipPath.length ? <span>그룹 경로: {grant.membershipPath.map((id) => subjectNameOf(policy, id)).join(" → ")}</span> : <span>직접 부여</span>}</div>)}</div></section>;
+  if (decision === null) return <section className={styles.panel}><EmptyState title="상세 진단 결과" description="특정 권한 상세 진단을 실행하면 적용된 역할과 그룹 경로를 확인할 수 있습니다." /></section>;
+  return <section className={styles.decisionCard} data-allowed={decision.allowed}><div className={styles.decisionTitle}><Badge tone={decision.allowed ? "success" : "danger"}>{decision.allowed ? "허용됨" : "허용되지 않음"}</Badge><strong>{decisionReasonName(decision.reasonCode)}</strong></div><div className={styles.auditMeta}><span>{permissionTaskName(decision.action)}</span><span>정책 Revision {decision.policyRevision}</span>{decision.actorLevel === undefined ? null : <span>사용자 레벨 {decision.actorLevel}</span>}</div><details className={styles.decisionTechnical}><summary>기술 정보 보기</summary><code>{decision.reasonCode}</code><code>{decision.action}</code></details><div className={styles.grantList}>{decision.matchedGrants.map((grant) => <div className={styles.grant} key={`${grant.sourceBindingId}:${grant.permission}`}><strong>{roleNameOf(policy, grant.sourceRoleId)} · 레벨 {grant.sourceRank}</strong><span>{resourceNameOf(policy, grant.sourceResourceId)} · {propagationLabel(grant.sourcePropagation)}</span>{grant.membershipPath.length ? <span>그룹 경로: {grant.membershipPath.map((id) => subjectNameOf(policy, id)).join(" → ")}</span> : <span>직접 배정됨</span>}</div>)}</div></section>;
 }
 
 export function AccessAuditPage() {

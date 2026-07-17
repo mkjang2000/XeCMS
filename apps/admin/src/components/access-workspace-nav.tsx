@@ -4,8 +4,8 @@ import styles from "../authorization.module.css";
 
 const items = [
   { path: "roles", label: "레벨과 역할", minimum: "standard" },
-  { path: "bindings", label: "주체와 바인딩", minimum: "standard" },
-  { path: "simulator", label: "권한 시뮬레이터", minimum: "advanced" },
+  { path: "bindings", label: "역할 배정", minimum: "standard" },
+  { path: "simulator", label: "사용자 권한 확인", minimum: "advanced" },
   { path: "audit", label: "감사 로그", minimum: "advanced" },
 ] as const;
 

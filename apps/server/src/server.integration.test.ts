@@ -1173,6 +1173,7 @@ describe.runIf(RUN)("XeCMS 0003 document lifecycle event upgrade", () => {
         "0011_m2_content_hierarchy",
         "0012_m3_authorization_resource_quarantine",
         "0013_m4_identity_realms",
+        "0020_caa2_admin_app_store",
       ]);
 
       await migrateCore(database.pool, schemaName);

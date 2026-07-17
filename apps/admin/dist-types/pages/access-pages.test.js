@@ -49,15 +49,15 @@ describe("AccessSimulatorPage", () => {
             }], { initialEntries: ["/admin/access/simulator"] });
         const user = userEvent.setup();
         render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
-        await user.selectOptions(await screen.findByLabelText("Subject"), "subject-editor");
+        await user.selectOptions(await screen.findByLabelText("확인할 사용자·그룹"), "subject-editor");
         await user.click(screen.getByRole("button", { name: "Pages, Collection" }));
-        await user.click(screen.getByRole("button", { name: "전체 유효 권한 조회" }));
-        expect(await screen.findByText("1/2 허용")).toBeTruthy();
+        await user.click(screen.getByRole("button", { name: "이 영역의 전체 권한 확인" }));
+        expect(await screen.findByText("1/2개 가능")).toBeTruthy();
         expect(simulate).toHaveBeenCalledTimes(2);
         expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ action: "content.read", resourceId: "collection:pages" }));
         expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ action: "content.update", resourceId: "collection:pages" }));
-        expect(screen.getByText("PERMISSION_GRANTED")).toBeTruthy();
-        expect(screen.getByText("PERMISSION_NOT_GRANTED")).toBeTruthy();
+        expect(screen.getByText("필요한 역할과 권한이 적용되어 있습니다.")).toBeTruthy();
+        expect(screen.getByText("이 업무를 허용하는 역할이 배정되지 않았습니다.")).toBeTruthy();
     });
     it("separates hierarchy actions from ordinary denied permission results", async () => {
         const hierarchyPolicy = {
@@ -97,15 +97,16 @@ describe("AccessSimulatorPage", () => {
             }], { initialEntries: ["/admin/access/simulator"] });
         const user = userEvent.setup();
         render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
-        await user.selectOptions(await screen.findByLabelText("Subject"), "subject-editor");
-        await user.selectOptions(screen.getByLabelText("Action"), "role.update");
+        await user.selectOptions(await screen.findByLabelText("확인할 사용자·그룹"), "subject-editor");
+        await user.click(screen.getByText("특정 권한 상세 진단"));
+        await user.selectOptions(screen.getByLabelText("확인할 권한"), "role.update");
         await user.click(screen.getByRole("button", { name: "Pages, Collection" }));
         expect(screen.getByText(/대상 역할의 Authority Level context가 필요합니다/)).toBeTruthy();
-        expect(screen.getByRole("button", { name: "대상 context 필요" }).disabled)
+        expect(screen.getByRole("button", { name: "대상 정보 필요" }).disabled)
             .toBe(true);
-        await user.click(screen.getByRole("button", { name: "전체 유효 권한 조회" }));
-        expect(await screen.findByText(/1개 대상 context 필요/)).toBeTruthy();
-        expect(screen.getByText("Context 필요")).toBeTruthy();
+        await user.click(screen.getByRole("button", { name: "이 영역의 전체 권한 확인" }));
+        expect(await screen.findByText(/1개 추가 정보 필요/)).toBeTruthy();
+        expect(screen.getByText("추가 정보 필요")).toBeTruthy();
         expect(simulate).toHaveBeenCalledTimes(2);
         expect(simulate).not.toHaveBeenCalledWith(expect.objectContaining({ action: "role.update" }));
     });
@@ -140,12 +141,12 @@ describe("AccessBindingsPage", () => {
             }], { initialEntries: ["/admin/access/bindings"] });
         const user = userEvent.setup();
         render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
-        await user.click(await screen.findByRole("button", { name: "새 바인딩" }));
-        await user.selectOptions(screen.getByLabelText("Subject"), "subject-editor");
-        await user.selectOptions(screen.getByLabelText("Role"), "role-editor");
+        await user.click(await screen.findByRole("button", { name: "역할 배정하기" }));
+        await user.selectOptions(screen.getByLabelText("사용자 또는 그룹"), "subject-editor");
+        await user.selectOptions(screen.getByLabelText("부여할 역할"), "role-editor");
         await user.click(screen.getByRole("button", { name: "Pages, Collection" }));
         await user.click(screen.getByRole("radio", { name: /현재 \+ 모든 하위/ }));
-        await user.click(screen.getByRole("button", { name: "저장" }));
+        await user.click(screen.getByRole("button", { name: "역할 배정" }));
         expect(createBinding).toHaveBeenCalledWith({
             expectedPolicyRevision: bindingPolicy.revision,
             subjectId: "subject-editor",
