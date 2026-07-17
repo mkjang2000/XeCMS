@@ -285,7 +285,16 @@ export function IdentityRealmDetailPage() {
       ) : (
         <>
           {realm.data.status === "provisioning" ? (
-            <Callout tone="info"><strong>Realm을 프로비저닝하고 있습니다.</strong> Profile Collection과 권한 리소스 projection이 완료되면 활성 상태로 전환됩니다.</Callout>
+            <Callout tone="warning">
+              <strong>아직 활성화되지 않았습니다. 한 단계가 더 필요합니다.</strong>
+              <p>이 Realm은 <strong>Auth Collection을 연결하고 스키마를 적용(Apply)</strong>하는 순간 자동으로 활성화됩니다. 기다린다고 저절로 활성화되지는 않습니다.</p>
+              <ol className={styles.provisioningSteps}>
+                <li>스키마 빌더에서 로그인 계정을 담을 Collection을 만들거나 엽니다.</li>
+                <li>그 Collection의 <strong>Auth</strong> 설정에서 Realm Key <code>{realm.data.realmKey}</code>를 지정합니다.</li>
+                <li>스키마를 <strong>Apply</strong>하면 Profile Collection이 연결되고 이 Realm이 활성 상태로 전환됩니다.</li>
+              </ol>
+              <Button onPress={() => navigate("/admin/schema")}>스키마 빌더로 이동</Button>
+            </Callout>
           ) : null}
           {realm.data.status === "disabled" ? (
             <Callout tone="warning"><strong>이 Realm은 비활성 상태입니다.</strong> 신규 세션, Membership provisioning과 Full Access grant가 차단됩니다.</Callout>
@@ -345,6 +354,9 @@ function RealmSettingsForm({ realm }: { readonly realm: IdentityRealm }) {
   return (
     <section className={styles.panel} aria-labelledby="realm-settings-title">
       <SectionHeader id="realm-settings-title" title="Realm 설정" description={`Realm Revision ${realm.revision}을 기준으로 충돌 없이 저장합니다.`} />
+      {editable ? null : (
+        <Callout tone="info">Auth Collection을 연결해 Realm이 활성화되기 전까지는 설정을 변경할 수 없습니다. 위 안내에 따라 스키마를 적용해 주세요.</Callout>
+      )}
       <form className={styles.formStack} onSubmit={(event) => { event.preventDefault(); if (editable) save.mutate(); }}>
         <div className={styles.fieldGrid}>
           <TextInput label="표시 이름" value={name} onChange={setName} isDisabled={!editable} isRequired />
