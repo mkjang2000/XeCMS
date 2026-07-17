@@ -37,9 +37,6 @@ const environment = {
     process.env.XECMS_M2_DB_SCHEMA ??
     `xecms_m2_e2e_${process.pid}_${Date.now()}`,
   XECMS_RUN_POSTGRES_TESTS: "true",
-  XECMS_DEV_SEED: "false",
-  XECMS_DEV_ADMIN_USERNAME: "admin",
-  XECMS_DEV_ADMIN_PASSWORD: "admin",
   XECMS_E2E_OWNER_PASSWORD:
     process.env.XECMS_E2E_OWNER_PASSWORD ?? "Admin-test-only-2026!",
   XECMS_SESSION_SECRET: "m2-e2e-only-session-secret-change-me",
@@ -48,6 +45,7 @@ const environment = {
   ),
   XECMS_SERVER_URL: serverUrl,
   XECMS_E2E_ADMIN_URL: adminUrl,
+  XECMS_E2E_DISPLAY_MODE: "advanced",
   XECMS_MEDIA_STORAGE_ROOT: mediaStorageRoot,
   XECMS_MEDIA_MAX_UPLOAD_BYTES: "1048576",
   XECMS_MEDIA_ALLOWED_MIME_TYPES: "image/png,image/jpeg",

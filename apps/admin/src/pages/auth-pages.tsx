@@ -119,7 +119,7 @@ export function SetupPage() {
               type="password"
               autoComplete="new-password"
               isRequired
-              description="12자 이상 128자 이하로 입력하세요. admin/admin은 개발 seed에서만 사용할 수 있습니다."
+              description="12자 이상 128자 이하의 고유한 비밀번호를 입력하세요."
               errorMessage={fieldState.error?.message}
               {...field}
             />

@@ -28,13 +28,11 @@ const environment = {
     process.env.XECMS_E2E_DB_SCHEMA ??
     `xecms_e2e_${process.pid}_${Date.now()}`,
   XECMS_RUN_POSTGRES_TESTS: "true",
-  XECMS_DEV_SEED: "false",
-  XECMS_DEV_ADMIN_USERNAME: "admin",
-  XECMS_DEV_ADMIN_PASSWORD: "admin",
   XECMS_SESSION_SECRET: "m1-e2e-only-session-secret-change-me",
   XECMS_ADMIN_DIST: fileURLToPath(new URL("apps/admin/dist", rootDirectory)),
   XECMS_SERVER_URL: serverUrl,
   XECMS_E2E_ADMIN_URL: adminUrl,
+  XECMS_E2E_DISPLAY_MODE: "advanced",
 };
 
 function run(command, arguments_, options = {}) {

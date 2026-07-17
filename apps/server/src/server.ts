@@ -51,6 +51,7 @@ import type {
   CollectionListDto,
   DeleteDocumentRequest,
   DocumentListDto,
+  DocumentQueryResultDto,
   DocumentRecordDto,
   DocumentRevisionDetailDto,
   DocumentRevisionListDto,
@@ -119,6 +120,11 @@ import { registerOperationsRoutes } from "./operations-routes.js";
 import { registerPluginRoutes } from "./plugin-routes.js";
 import { LoginRateLimiter } from "./rate-limit.js";
 import { createApplicationRuntime, createSecurityRuntime } from "./security.js";
+import { parseDocumentQueryRequest } from "./document-query-request.js";
+import {
+  parseEvaluateAccessBatchRequest,
+  toEvaluateAccessBatchResponse,
+} from "./access-evaluation-request.js";
 
 const XECMS_VERSION = "0.4.1";
 const SESSION_COOKIE = "xecms_session";
@@ -134,7 +140,6 @@ export interface XeCmsServer {
   readonly app: FastifyInstance;
   readonly database: PostgresDatabase;
   readonly config: ServerConfig;
-  readonly developmentSeeded: boolean;
   close(): Promise<void>;
 }
 
@@ -153,13 +158,6 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   const securityRuntime = createSecurityRuntime(config.sessionSecret);
   const passwordHasher = new ScryptPasswordHasher();
   const auth = new AuthApplicationService(database, passwordHasher, securityRuntime);
-  let developmentSeeded = false;
-  if (config.developmentSeed) {
-    developmentSeeded = await auth.seedDevelopmentOwner({
-      username: config.developmentAdminUsername,
-      password: config.developmentAdminPassword,
-    });
-  }
   const identityRealmStore = new PostgresIdentityRealmStore(database.pool, database.schema);
   const identityAdministrationStore = new PostgresIdentityAdministrationStore(
     database.pool,
@@ -655,6 +653,19 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     },
   });
 
+  app.post("/api/access/evaluate-batch", async (request, reply) => {
+    // This self-profile endpoint is intentionally session-only. Routing it
+    // through a raw Subject while accepting an API key would ignore that key's
+    // narrower scope ceiling and overstate the caller's effective access.
+    const authenticated = await requireSession(request, auth, config, false);
+    const evaluation = await authorization.evaluateBatch(
+      authorizationActor(authenticated.session.identity.id),
+      parseEvaluateAccessBatchRequest(request.body),
+    );
+    reply.header("cache-control", "private, no-store");
+    return toEvaluateAccessBatchResponse(evaluation);
+  });
+
   registerJobRoutes({
     app,
     worker: eventWorker,
@@ -905,6 +916,24 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           ...(pageSize === undefined ? {} : { pageSize }),
           state: "active",
         }),
+      queryDocuments: async ({ actor, collectionId, request }) => {
+        if (request.state !== undefined && request.state !== "active") {
+          throw new ApplicationError(
+            "CONTENT_REALM_DOCUMENT_QUERY_STATE_INVALID",
+            400,
+            "Content Realm document queries only support active documents.",
+          );
+        }
+        const result = await documents.query(actor, collectionId, {
+          ...request,
+          state: "active",
+        });
+        return {
+          items: result.items.map(documentDto),
+          hasNextPage: result.hasNextPage,
+          ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
+      },
       getDocument: ({ actor, collectionId, documentId }) =>
         documents.get(actor, collectionId, documentId),
       createDocument: async ({ actor, collectionId, request }) => {
@@ -1005,7 +1034,6 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
 
   app.get("/api/bootstrap/status", async () => ({
     required: await auth.bootstrapRequired(),
-    ...(config.developmentSeed ? { developmentSeeded: true } : {}),
   }));
 
   const bootstrapHandler = async (
@@ -1615,6 +1643,23 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     },
   );
 
+  app.post<{ Params: { collectionId: string }; Body: unknown }>(
+    "/api/collections/:collectionId/documents/query",
+    async (request): Promise<DocumentQueryResultDto> => {
+      const { actor } = await requireActor(request, auth, authorization, config, false);
+      const result = await documents.query(
+        actor,
+        request.params.collectionId,
+        parseDocumentQueryRequest(request.body),
+      );
+      return {
+        items: result.items.map(documentDto),
+        hasNextPage: result.hasNextPage,
+        ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+      };
+    },
+  );
+
   app.post<{ Params: { collectionId: string } }>(
     "/api/collections/:collectionId/tree/reorder",
     async (request): Promise<DocumentTreeDto> => {
@@ -2037,7 +2082,6 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     app,
     database,
     config,
-    developmentSeeded,
     async close(): Promise<void> {
       if (workerTimer !== undefined) clearInterval(workerTimer);
       await app.close();
@@ -2521,6 +2565,21 @@ function credentials(input: unknown): BootstrapRequest & LoginRequest {
   const username = requiredString(body["username"], "username");
   const password = requiredString(body["password"], "password");
   return { username, password };
+}
+
+function documentDto(document: DocumentRecord): DocumentRecordDto {
+  return {
+    id: document.id,
+    collectionId: document.collectionId,
+    data: document.data,
+    version: document.version,
+    displayState: document.displayState,
+    draftRevisionId: document.draftRevisionId,
+    publication: document.publication,
+    deletion: document.deletion,
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+  };
 }
 
 function objectBody(input: unknown): Record<string, unknown> {

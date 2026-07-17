@@ -47,6 +47,11 @@ import {
   documentHookContext,
   type DocumentLifecycleHookRunner,
 } from "./hooks.js";
+import {
+  normalizeDocumentQuery,
+  type DocumentQueryInput,
+  type NormalizedDocumentQuery,
+} from "./document-query.js";
 
 export interface DocumentRecord {
   readonly id: string;
@@ -81,6 +86,23 @@ export interface DocumentPage {
 }
 
 export type DocumentListState = "active" | "deleted";
+
+export interface DocumentQueryPage {
+  readonly items: readonly DocumentRecord[];
+  readonly hasNextPage: boolean;
+  readonly nextCursor?: string;
+}
+
+export interface DocumentQueryStoreItem {
+  readonly document: DocumentRecord;
+  /** Cursor immediately after this raw candidate in the store ordering. */
+  readonly cursor: string;
+}
+
+export interface DocumentQueryStorePage {
+  readonly items: readonly DocumentQueryStoreItem[];
+  readonly hasNextPage: boolean;
+}
 
 export interface DocumentRevisionSummary {
   readonly id: string;
@@ -156,6 +178,10 @@ export interface DocumentStore {
     collection: CollectionDefinition,
     input: { readonly page: number; readonly pageSize: number; readonly state: DocumentListState },
   ): Promise<DocumentPage>;
+  queryDocuments(
+    collection: CollectionDefinition,
+    input: NormalizedDocumentQuery,
+  ): Promise<DocumentQueryStorePage>;
   listPublishedDocuments(
     collection: CollectionDefinition,
     input: { readonly page: number; readonly pageSize: number },
@@ -280,6 +306,79 @@ export class DocumentApplicationService {
       items,
       ...(items.length === result.items.length ? {} : { total: items.length }),
     };
+  }
+
+  public async query(
+    actor: ActorContext,
+    collectionId: string,
+    input: DocumentQueryInput,
+  ): Promise<DocumentQueryPage> {
+    const { collection } = await this.resolveCollection(collectionId);
+    const resourceId = realmCollectionResourceId(actorRealmId(actor), String(collection.id));
+    await assertCapability(actor, "document:read", {
+      action: "content.list",
+      resourceId,
+    });
+    const query = normalizeDocumentQuery(collection, input);
+    if (query.state === "deleted") {
+      await assertCapability(actor, "document:delete", {
+        action: "content.delete",
+        resourceId,
+      });
+    }
+    await this.assertReadableQueryFields(actor, collection, resourceId, query);
+    const visible: { readonly document: DocumentRecord; readonly cursor: string }[] = [];
+    const batchLimit = Math.min(100, Math.max(25, query.limit + 1));
+    const maximumCandidates = 5_000;
+    let scanned = 0;
+    let current = normalizeDocumentQuery(collection, { ...input, limit: batchLimit });
+    while (true) {
+      const result = await this.documents.queryDocuments(collection, current);
+      for (const candidate of result.items) {
+        scanned += 1;
+        const document = await this.readableDocumentOrNull(
+          actor,
+          authorizationResourceId(actor, collection, candidate.document.id),
+          candidate.document,
+        );
+        if (document !== null) {
+          visible.push({ document, cursor: candidate.cursor });
+          if (visible.length > query.limit) {
+            return {
+              items: visible.slice(0, query.limit).map(({ document: item }) => item),
+              hasNextPage: true,
+              nextCursor: visible[query.limit - 1]!.cursor,
+            };
+          }
+        }
+      }
+      if (!result.hasNextPage) {
+        return {
+          items: visible.map(({ document }) => document),
+          hasNextPage: false,
+        };
+      }
+      if (scanned >= maximumCandidates) {
+        throw new ApplicationError(
+          "DOCUMENT_QUERY_SCAN_LIMIT_EXCEEDED",
+          503,
+          `Document query scanned ${maximumCandidates} candidates without completing one visible page.`,
+        );
+      }
+      const endCursor = result.items.at(-1)?.cursor;
+      if (endCursor === undefined) {
+        throw new ApplicationError(
+          "DOCUMENT_QUERY_CURSOR_INVARIANT_VIOLATION",
+          500,
+          "Document query store reported another page without returning a candidate cursor.",
+        );
+      }
+      current = normalizeDocumentQuery(collection, {
+        ...input,
+        cursor: endCursor,
+        limit: batchLimit,
+      });
+    }
   }
 
   public async get(
@@ -951,6 +1050,45 @@ export class DocumentApplicationService {
       context: recordAuthorizationContext(actor, document),
     });
     return { ...document, data };
+  }
+
+  private async assertReadableQueryFields(
+    actor: ActorContext,
+    collection: CollectionDefinition,
+    resourceId: string,
+    query: NormalizedDocumentQuery,
+  ): Promise<void> {
+    if (actor.authorization === undefined) return;
+    const fieldById = new Map(collection.fields.map((field) => [String(field.id), field]));
+    const fieldNames = new Set<string>();
+    const addReference = (reference: NormalizedDocumentQuery["sort"][number]["field"]): void => {
+      if (reference.kind !== "data") return;
+      fieldNames.add(fieldById.get(reference.fieldId)!.name);
+    };
+    query.sort.forEach(({ field }) => addReference(field));
+    const visit = (filter: NonNullable<NormalizedDocumentQuery["filter"]>): void => {
+      if (filter.type === "condition") {
+        addReference(filter.field);
+        return;
+      }
+      filter.filters.forEach(visit);
+    };
+    if (query.filter !== undefined) visit(query.filter);
+    if (fieldNames.size === 0) return;
+    const probe = Object.fromEntries([...fieldNames].map((field) => [field, true]));
+    const readable = await actor.authorization.filterReadableData({
+      resourceId,
+      data: probe,
+      action: "content.read",
+    });
+    const denied = [...fieldNames].filter((field) => !(field in readable));
+    if (denied.length > 0) {
+      throw new ApplicationError(
+        "DOCUMENT_QUERY_FIELD_FORBIDDEN",
+        403,
+        `Document query cannot filter or sort by unreadable fields: ${denied.join(", ")}.`,
+      );
+    }
   }
 
   private async prepareReadableMutationResponse(

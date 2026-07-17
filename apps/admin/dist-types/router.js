@@ -3,7 +3,7 @@ import { createBrowserRouter, isRouteErrorResponse, Navigate, redirect, useRoute
 import { toAdminApiError } from "@xecms/admin";
 import { Button, LoadingIndicator } from "@xecms/ui";
 import styles from "./app.module.css";
-import { AppShell } from "./pages/app-shell.js";
+import { AdminIndexRedirect, AppShell } from "./pages/app-shell.js";
 import { queryKeys } from "./queries.js";
 function RouteErrorPage() {
     const error = useRouteError();
@@ -93,7 +93,7 @@ export function createAdminRouter(api, queryClient) {
             hydrateFallbackElement: _jsx(RouteLoadingPage, {}),
             errorElement: _jsx(RouteErrorPage, {}),
             children: [
-                { index: true, element: _jsx(Navigate, { to: "schema", replace: true }) },
+                { index: true, element: _jsx(AdminIndexRedirect, {}) },
                 {
                     path: "schema",
                     lazy: async () => ({ Component: (await import("./pages/collection-pages.js")).SchemaListPage }),

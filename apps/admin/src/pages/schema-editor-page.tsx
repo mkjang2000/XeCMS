@@ -19,6 +19,11 @@ import { Button, Callout, CheckboxField, SelectField, TextAreaField, TextInput }
 import styles from "../app.module.css";
 import { ConflictNotice, LoadError, PageLoading } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
+import {
+  DisplayModeGate,
+  displayModeAtLeast,
+  useDisplayMode,
+} from "../display-mode.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
 import { UnsavedChangesGuard } from "../components/unsaved-guard.js";
 import { queryKeys } from "../queries.js";
@@ -365,6 +370,7 @@ function FieldAdvanced({ control, index, collectionOptions }: {
 
 export function SchemaEditorPage() {
   const api = useAdminApi();
+  const { mode } = useDisplayMode();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { collectionId } = useParams();
@@ -460,7 +466,7 @@ export function SchemaEditorPage() {
         eyebrow="Schema builder"
         title={isNew ? "새 콘텐츠 타입" : `${collectionQuery.data?.label || collectionQuery.data?.name} 스키마`}
         description="간단한 필드는 시각 편집기로, 중첩 구조와 재사용 컴포넌트는 canonical manifest에서 완전히 제어할 수 있습니다."
-        actions={<Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button>}
+        actions={<DisplayModeGate minimum="advanced"><Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button></DisplayModeGate>}
       />
       {diagnostics.data && !editable ? (
         <Callout tone="warning">
@@ -469,15 +475,21 @@ export function SchemaEditorPage() {
       ) : null}
       {isVersionConflict ? <ConflictNotice onReload={() => void reloadLatest()} /> : null}
       {mutationError && !isVersionConflict && mutationError.message !== "DUPLICATE_FIELD_NAME" && mutationError.message !== "INVALID_AUTH_CONFIGURATION" ? <LoadError error={mutationError} /> : null}
+      {!displayModeAtLeast(mode, "advanced") && authBlockingMessages.length > 0 ? (
+        <Callout tone="warning">
+          숨겨진 콘텐츠 계정 인증 설정을 검토해야 합니다. 상단 표시 모드를
+          <strong> Advanced</strong>로 전환해 문제를 확인해 주세요.
+        </Callout>
+      ) : null}
       <form className={styles.formStack} onSubmit={handleSubmit((values) => mutation.mutate(values))}>
         <section className={styles.card} aria-labelledby="collection-settings-heading">
           <SectionHeader id="collection-settings-heading" title="콘텐츠 타입 설정" description="API 식별자, 콘텐츠 유형과 계층 동작을 설정합니다." />
-          <div className={styles.settingsGrid}>
+          <div className={styles.collectionIdentityGrid}>
             <Controller control={control} name="name" rules={{ required: "컬렉션 이름을 입력해 주세요.", pattern: { value: SCHEMA_NAME_PATTERN, message: SCHEMA_NAME_ERROR_MESSAGE } }} render={({ field: { ref, ...field }, fieldState }) => <TextInput inputRef={ref} label="이름" description="API와 저장소에서 유지되는 이름입니다." isRequired maxLength={64} errorMessage={fieldState.error?.message} {...field} />} />
             <Controller control={control} name="label" render={({ field: { ref, ...field } }) => <TextInput inputRef={ref} label="표시 이름" {...field} />} />
             <Controller control={control} name="kind" render={({ field }) => <SelectField {...field} label="유형" options={[{ value: "collection", label: "컬렉션 · 여러 문서" }, { value: "singleton", label: "싱글턴 · 문서 하나" }]} />} />
           </div>
-          <div className={styles.hierarchyPanel}>
+          <DisplayModeGate minimum="standard"><div className={styles.hierarchyPanel}>
             <Controller control={control} name="hierarchyEnabled" render={({ field }) => <CheckboxField isSelected={field.value} onChange={field.onChange}>계층형 콘텐츠 사용</CheckboxField>} />
             {hierarchyEnabled ? (
               <div className={styles.settingsGrid}>
@@ -488,10 +500,10 @@ export function SchemaEditorPage() {
                 <Controller control={control} name="permissionInheritance" render={({ field }) => <CheckboxField isSelected={field.value} onChange={field.onChange}>부모 권한 상속</CheckboxField>} />
               </div>
             ) : null}
-          </div>
+          </div></DisplayModeGate>
         </section>
 
-        <section className={styles.card} aria-labelledby="collection-auth-heading">
+        <DisplayModeGate minimum="advanced"><section className={styles.card} aria-labelledby="collection-auth-heading">
           <SectionHeader
             id="collection-auth-heading"
             title="콘텐츠 계정 인증"
@@ -621,7 +633,7 @@ export function SchemaEditorPage() {
               <p className={styles.authHint}>비활성화하면 저장 JSON에서 `auth` 객체 전체를 생략합니다.</p>
             )}
           </div>
-        </section>
+        </section></DisplayModeGate>
 
         <section className={styles.card} aria-labelledby="fields-heading">
           <SectionHeader id="fields-heading" title="필드" description="M2의 모든 필드 유형을 추가할 수 있습니다." actions={<Button type="button" variant="secondary" onPress={() => append(emptyField())}><Icon name="plus" size={16} />필드 추가</Button>} />
@@ -640,16 +652,16 @@ export function SchemaEditorPage() {
               <details className={styles.advanced}>
                 <summary>유형별 설정과 제약 조건</summary>
                 <FieldAdvanced control={control} index={index} collectionOptions={collectionOptions} />
-                <code>Field ID: {field.persistentId ?? "초안 저장 시 서버가 발급"}{field.relationId ? ` · Relation ID: ${field.relationId}` : ""}</code>
+                <DisplayModeGate minimum="advanced"><code>Field ID: {field.persistentId ?? "초안 저장 시 서버가 발급"}{field.relationId ? ` · Relation ID: ${field.relationId}` : ""}</code></DisplayModeGate>
               </details>
             </fieldset>
           ))}
-          {collections.data?.items.length ? (
+          <DisplayModeGate minimum="advanced">{collections.data?.items.length ? (
             <Callout tone="info">관계 대상 ID: {collections.data.items.map((item) => `${item.label || item.name} = ${item.id}`).join(" · ")}</Callout>
-          ) : null}
+          ) : null}</DisplayModeGate>
           {errors.fields?.root?.message ? <Callout tone="error">{errors.fields.root.message}</Callout> : null}
         </section>
-        <div className={styles.formActions}>
+        <div className={styles.schemaFormActions}>
           <Button type="submit" isDisabled={!editable || mutation.isPending || authBlockingMessages.length > 0}>{mutation.isPending ? "초안 저장 중…" : "변경 사항 검토"}</Button>
           <Button type="button" variant="secondary" isDisabled={mutation.isPending} onPress={() => navigate("/admin/schema")}>취소</Button>
         </div>

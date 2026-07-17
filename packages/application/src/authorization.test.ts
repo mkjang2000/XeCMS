@@ -499,6 +499,120 @@ describe("AuthorizationApplicationService", () => {
     })).resolves.toMatchObject({ allowed: true });
   });
 
+  it("evaluates a self access profile against one revision and marks hierarchy checks unsupported", async () => {
+    const store = new MemoryAuthorizationStore();
+    const service = new AuthorizationApplicationService(store, runtime());
+    await service.initialize({
+      realmId: REALM_ID,
+      realmName: "System",
+      rootResourceId: SYSTEM_WORKSPACE_RESOURCE_ID,
+      rootResourceName: "Workspace",
+      ownerSubjectId: OWNER_ID,
+      ownerSubjectName: "Owner",
+    });
+    await service.syncCoreResources(OWNER, {
+      expectedRevision: current(store).revision,
+      collections: [{ id: "posts", name: "Posts" }],
+    });
+    const policyRevision = current(store).revision;
+    const posts = collectionResourceId("posts");
+
+    await expect(service.evaluateBatch(OWNER, {
+      checks: [
+        {
+          id: "posts.read",
+          type: "permission",
+          action: "content.read",
+          resourceId: posts,
+        },
+        {
+          id: "posts.title.read",
+          type: "field",
+          action: "content.read",
+          resourceId: posts,
+          field: "title",
+          access: "read",
+        },
+        {
+          id: "owner.transfer",
+          type: "permission",
+          action: "identity.owner.transfer",
+          resourceId: SYSTEM_WORKSPACE_RESOURCE_ID,
+        },
+        {
+          id: "plugin.missing",
+          type: "permission",
+          action: "plugin.missing",
+          resourceId: SYSTEM_WORKSPACE_RESOURCE_ID,
+        },
+      ],
+    })).resolves.toEqual({
+      policyRevision,
+      items: [
+        expect.objectContaining({
+          id: "posts.read",
+          type: "permission",
+          supported: true,
+          decision: expect.objectContaining({ allowed: true, action: "content.read" }),
+        }),
+        expect.objectContaining({
+          id: "posts.title.read",
+          type: "field",
+          action: "content.read",
+          supported: true,
+          decision: expect.objectContaining({
+            allowed: true,
+            access: "read",
+            field: "title",
+          }),
+        }),
+        expect.objectContaining({
+          id: "owner.transfer",
+          type: "permission",
+          supported: false,
+          decision: expect.objectContaining({
+            allowed: false,
+            reasonCode: "HIERARCHY_CONTEXT_REQUIRED",
+          }),
+        }),
+        expect.objectContaining({
+          id: "plugin.missing",
+          type: "permission",
+          supported: false,
+          decision: expect.objectContaining({ allowed: false, reasonCode: "UNKNOWN_PERMISSION" }),
+        }),
+      ],
+    });
+  });
+
+  it("rejects invalid access profile batch boundaries", async () => {
+    const store = new MemoryAuthorizationStore();
+    const service = new AuthorizationApplicationService(store, runtime());
+    await service.initialize({
+      realmId: REALM_ID,
+      realmName: "System",
+      rootResourceId: SYSTEM_WORKSPACE_RESOURCE_ID,
+      rootResourceName: "Workspace",
+      ownerSubjectId: OWNER_ID,
+      ownerSubjectName: "Owner",
+    });
+    const duplicate = {
+      id: "same",
+      type: "permission" as const,
+      action: "content.read",
+      resourceId: SYSTEM_CONTENT_RESOURCE_ID,
+    };
+
+    await expect(service.evaluateBatch(OWNER, { checks: [] })).rejects.toMatchObject({
+      code: "ACCESS_BATCH_SIZE_INVALID",
+      status: 422,
+    });
+    await expect(service.evaluateBatch(OWNER, { checks: [duplicate, duplicate] })).rejects.toMatchObject({
+      code: "ACCESS_BATCH_DUPLICATE_ID",
+      status: 422,
+    });
+  });
+
   it("keeps arbitrary Global Identity linkage out of ordinary Subject mutations", async () => {
     const { store, service } = await setup();
     const revision = current(store).revision;

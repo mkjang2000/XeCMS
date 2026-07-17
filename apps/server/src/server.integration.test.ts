@@ -9,6 +9,11 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { LightMyRequestResponse } from "fastify";
 import { loadServerConfig } from "./config.js";
+import {
+  bootstrapTestOwner,
+  TEST_OWNER_PASSWORD,
+  TEST_OWNER_USERNAME,
+} from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -317,6 +322,115 @@ describe.runIf(RUN)("XeCMS M1 PostgreSQL vertical slice", () => {
     expect(listed.json().items[0].data).toMatchObject({ title: "First post", featured: true });
     expect(listed.json().items[0].data.publishedAt).toBe(document.data.publishedAt);
 
+    const activeSchema = await server.app.inject({
+      method: "GET",
+      url: "/api/schema",
+      headers: { cookie },
+    });
+    const fields = activeSchema.json().schema.collections[0].fields as {
+      readonly id: string;
+      readonly name: string;
+    }[];
+    const titleFieldId = fields.find(({ name }) => name === "title")!.id;
+    const viewsFieldId = fields.find(({ name }) => name === "views")!.id;
+    const second = await mutate("POST", `/api/collections/${collectionId}/documents`, {
+      data: { title: "Another article", views: 10, featured: false },
+    });
+    expect(second.statusCode).toBe(201);
+
+    const firstQuery = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/documents/query`,
+      headers: { cookie },
+      payload: {
+        limit: 1,
+        fields: [titleFieldId],
+        sort: [
+          { field: { kind: "data", fieldId: viewsFieldId }, direction: "desc" },
+        ],
+      },
+    });
+    expect(firstQuery.statusCode, firstQuery.body).toBe(200);
+    expect(firstQuery.json()).toMatchObject({
+      hasNextPage: true,
+      items: [{ id: second.json().id, data: { title: "Another article" } }],
+    });
+    expect(firstQuery.json().items[0].data).not.toHaveProperty("views");
+    expect(firstQuery.json().nextCursor).toBeTypeOf("string");
+
+    const secondQuery = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/documents/query`,
+      headers: { cookie },
+      payload: {
+        limit: 1,
+        cursor: firstQuery.json().nextCursor,
+        fields: [titleFieldId],
+        sort: [
+          { field: { kind: "data", fieldId: viewsFieldId }, direction: "desc" },
+        ],
+      },
+    });
+    expect(secondQuery.statusCode, secondQuery.body).toBe(200);
+    expect(secondQuery.json()).toMatchObject({
+      hasNextPage: false,
+      items: [{ id: document.id, data: { title: "First post" } }],
+    });
+
+    const filtered = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/documents/query`,
+      headers: { cookie },
+      payload: {
+        filter: {
+          type: "condition",
+          field: { kind: "data", fieldId: titleFieldId },
+          operator: "contains",
+          value: "post",
+        },
+      },
+    });
+    expect(filtered.statusCode, filtered.body).toBe(200);
+    expect(filtered.json().items.map(({ id }: { readonly id: string }) => id)).toEqual([document.id]);
+
+    const included = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/documents/query`,
+      headers: { cookie },
+      payload: {
+        filter: {
+          type: "condition",
+          field: { kind: "data", fieldId: titleFieldId },
+          operator: "in",
+          value: ["First post", "Missing"],
+        },
+      },
+    });
+    expect(included.statusCode, included.body).toBe(200);
+    expect(included.json().items.map(({ id }: { readonly id: string }) => id)).toEqual([document.id]);
+
+    const invalidQuery = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/documents/query`,
+      headers: { cookie },
+      payload: { fields: ["fld_missing"] },
+    });
+    expect(invalidQuery.statusCode).toBe(422);
+    expect(invalidQuery.json().code).toBe("DOCUMENT_QUERY_FIELD_UNKNOWN");
+
+    const deletedSecond = await mutate(
+      "DELETE",
+      `/api/collections/${collectionId}/documents/${second.json().id}`,
+      { expectedVersion: 1 },
+    );
+    expect(deletedSecond.statusCode).toBe(204);
+    const purgedSecond = await mutate(
+      "DELETE",
+      `/api/collections/${collectionId}/documents/${second.json().id}/purge`,
+      { expectedVersion: 2 },
+    );
+    expect(purgedSecond.statusCode).toBe(204);
+
     const updated = await mutate(
       "PATCH",
       `/api/collections/${collectionId}/documents/${document.id}`,
@@ -407,8 +521,8 @@ describe.runIf(RUN)("XeCMS M1 PostgreSQL vertical slice", () => {
   }
 });
 
-describe.runIf(RUN)("development owner seed", () => {
-  it("creates and authenticates admin/admin only through the development seed path", async () => {
+describe.runIf(RUN)("development bootstrap boundary", () => {
+  it("does not create an owner automatically in development", async () => {
     const schemaName = `xecms_test_seed_${randomUUID().replaceAll("-", "_")}`;
     const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema: schemaName });
     const server = await buildServer({
@@ -419,23 +533,30 @@ describe.runIf(RUN)("development owner seed", () => {
         DATABASE_URL,
         XECMS_DB_SCHEMA: schemaName,
         XECMS_SESSION_SECRET: "0123456789abcdef0123456789abcdef",
-        XECMS_DEV_SEED: "true",
-        XECMS_DEV_ADMIN_USERNAME: "admin",
-        XECMS_DEV_ADMIN_PASSWORD: "admin",
         XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
       }),
     });
     try {
-      expect(server.developmentSeeded).toBe(true);
       const status = await server.app.inject({ method: "GET", url: "/api/bootstrap/status" });
-      expect(status.json()).toEqual({ required: false, developmentSeeded: true });
+      expect(status.json()).toEqual({ required: true });
       const login = await server.app.inject({
         method: "POST",
         url: "/api/auth/login",
         payload: { username: "admin", password: "admin" },
       });
-      expect(login.statusCode).toBe(200);
-      expect(login.json().user.username).toBe("admin");
+      expect(login.statusCode).toBe(401);
+
+      await bootstrapTestOwner(server);
+      const authenticated = await server.app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: {
+          username: TEST_OWNER_USERNAME,
+          password: TEST_OWNER_PASSWORD,
+        },
+      });
+      expect(authenticated.statusCode).toBe(200);
+      expect(authenticated.json().user.username).toBe(TEST_OWNER_USERNAME);
     } finally {
       await server.app.close();
       await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`);
@@ -1027,7 +1148,8 @@ describe.runIf(RUN)("XeCMS 0003 document lifecycle event upgrade", () => {
             '0015_m4c1_users_credentials',
             '0016_m4c2_sites_settings',
             '0017_m4c3_audit_retention',
-            '0018_m4c4_plugin_platform'
+            '0018_m4c4_plugin_platform',
+            '0019_owner_delegation_reconciliation'
           )
       `);
       await database.pool.query(
@@ -1150,17 +1272,18 @@ describe.runIf(RUN)("XeCMS M3 authorization HTTP vertical slice", () => {
         DATABASE_URL,
         XECMS_DB_SCHEMA: schemaName,
         XECMS_SESSION_SECRET: "m3-authorization-secret-0123456789abcdef",
-        XECMS_DEV_SEED: "true",
-        XECMS_DEV_ADMIN_USERNAME: "admin",
-        XECMS_DEV_ADMIN_PASSWORD: "admin",
         XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
       }),
     });
     try {
+      await bootstrapTestOwner(server);
       const login = await server.app.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { username: "admin", password: "admin" },
+        payload: {
+          username: TEST_OWNER_USERNAME,
+          password: TEST_OWNER_PASSWORD,
+        },
       });
       expect(login.statusCode).toBe(200);
       const cookie = String(login.headers["set-cookie"]).split(";", 1)[0] ?? "";
@@ -1191,6 +1314,82 @@ describe.runIf(RUN)("XeCMS M3 authorization HTTP vertical slice", () => {
         ({ name }: { readonly name: string }) => name === "Security Administrator",
       );
       expect(contentAdministrator.levelId).toBe(securityAdministrator.levelId);
+
+      const accessProfile = await server.app.inject({
+        method: "POST",
+        url: "/api/access/evaluate-batch",
+        headers: { cookie },
+        payload: {
+          checks: [
+            {
+              id: "content.open",
+              type: "permission",
+              action: "content.read",
+              resourceId: "resource:content",
+            },
+            {
+              id: "content.title.write",
+              type: "field",
+              action: "content.update",
+              resourceId: "resource:content",
+              field: "title",
+              access: "write",
+            },
+            {
+              id: "owner.transfer",
+              type: "permission",
+              action: "identity.owner.transfer",
+              resourceId: "resource:workspace",
+            },
+          ],
+        },
+      });
+      expect(accessProfile.statusCode, accessProfile.body).toBe(200);
+      expect(accessProfile.headers["cache-control"]).toBe("private, no-store");
+      expect(accessProfile.json()).toMatchObject({
+        policyRevision: 1,
+        items: [
+          {
+            id: "content.open",
+            type: "permission",
+            supported: true,
+            decision: { allowed: true, policyRevision: 1 },
+          },
+          {
+            id: "content.title.write",
+            type: "field",
+            supported: true,
+            decision: { allowed: true, policyRevision: 1 },
+          },
+          {
+            id: "owner.transfer",
+            type: "permission",
+            supported: false,
+            decision: {
+              allowed: false,
+              reasonCode: "HIERARCHY_CONTEXT_REQUIRED",
+              policyRevision: 1,
+            },
+          },
+        ],
+      });
+
+      const proxyAttempt = await server.app.inject({
+        method: "POST",
+        url: "/api/access/evaluate-batch",
+        headers: { cookie },
+        payload: {
+          checks: [{
+            id: "proxy",
+            type: "permission",
+            subjectId: "subject:other",
+            action: "content.read",
+            resourceId: "resource:content",
+          }],
+        },
+      });
+      expect(proxyAttempt.statusCode).toBe(400);
+      expect(proxyAttempt.json()).toMatchObject({ code: "ACCESS_BATCH_INVALID" });
 
       let policy = (await mutate("POST", "/api/authorization/subjects", {
         expectedPolicyRevision: 1,

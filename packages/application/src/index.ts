@@ -1,6 +1,7 @@
 export * from "./auth.js";
 export * from "./authorization.js";
 export * from "./documents.js";
+export * from "./document-query.js";
 export * from "./errors.js";
 export * from "./event-worker.js";
 export * from "./hierarchy.js";

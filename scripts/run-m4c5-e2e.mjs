@@ -42,14 +42,13 @@ const baseEnvironment = {
   XECMS_TEST_DATABASE_URL: databaseUrl,
   XECMS_E2E_DATABASE_URL: databaseUrl,
   XECMS_RUN_POSTGRES_TESTS: "true",
-  XECMS_DEV_ADMIN_USERNAME: "admin",
-  XECMS_DEV_ADMIN_PASSWORD: "admin",
   XECMS_SESSION_SECRET: "m4c5-e2e-only-session-secret-change-me",
   XECMS_ADMIN_DIST: fileURLToPath(
     new URL("apps/admin/dist", rootDirectory),
   ),
   XECMS_SERVER_URL: serverUrl,
   XECMS_E2E_ADMIN_URL: serverUrl,
+  XECMS_E2E_DISPLAY_MODE: "advanced",
   XECMS_WORKER_ENABLED: "false",
   XECMS_MEDIA_MAX_UPLOAD_BYTES: "1048576",
   XECMS_MEDIA_ALLOWED_MIME_TYPES: "image/png,image/jpeg",
@@ -82,7 +81,7 @@ async function runBrowserJourney({
   name,
   specs,
   seeded = true,
-  ownerPassword = seeded ? "admin" : "Admin-test-only-2026!",
+  ownerPassword = "Admin-test-only-2026!",
   environment = {},
 }) {
   const journeyMediaRoot = join(mediaRoot, name);
@@ -92,7 +91,7 @@ async function runBrowserJourney({
     ...baseEnvironment,
     XECMS_DB_SCHEMA: `xecms_m4c5_${name}_${runId}`,
     XECMS_MEDIA_STORAGE_ROOT: journeyMediaRoot,
-    XECMS_DEV_SEED: String(seeded),
+    XECMS_E2E_AUTO_BOOTSTRAP: String(seeded),
     XECMS_E2E_OWNER_PASSWORD: ownerPassword,
     ...environment,
   });
@@ -140,6 +139,7 @@ const browserJourneys = [
   {
     name: "m4c5",
     specs: ["tests/e2e/m4c5-productization.spec.ts"],
+    environment: { XECMS_E2E_DISPLAY_MODE: "" },
   },
 ];
 

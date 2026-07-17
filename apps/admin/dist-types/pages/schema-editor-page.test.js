@@ -6,6 +6,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DisplayModeProvider } from "../display-mode.js";
 import { SchemaEditorPage } from "./schema-editor-page.js";
 const contentRealm = {
     realmId: "rlm_community",
@@ -94,7 +95,7 @@ function renderEditor(input) {
         { path: "/admin/schema/:collectionId", element: _jsx(SchemaEditorPage, {}) },
         { path: "/admin/schema/:collectionId/changes", element: _jsx("h1", { children: "Schema review" }) },
     ], { initialEntries: [`/admin/schema/${collection.id}`] });
-    render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
+    render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(RouterProvider, { router: router }) }) }) }));
     return { router, updateDraft, user: userEvent.setup() };
 }
 afterEach(cleanup);

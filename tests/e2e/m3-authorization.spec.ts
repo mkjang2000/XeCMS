@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./fixtures.js";
 
 const serverUrl = process.env.XECMS_SERVER_URL ?? "http://127.0.0.1:3100";
 const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "Admin-test-only-2026!";
@@ -98,6 +98,7 @@ test("M3 역할, 그룹, Scope, 조건부 판정과 Audit을 Admin UI에서 완�
   await test.step("사용자와 중첩 그룹을 만들고 조건부 Scope Binding을 연결한다", async () => {
     await page.goto("/admin/access/bindings");
     await expect(page.getByRole("heading", { name: "주체와 역할 바인딩" })).toBeVisible();
+    await page.getByRole("button", { name: "권한 주체 추가" }).click();
 
     const subjectPanel = page.locator("section").filter({
       has: page.getByRole("heading", { name: "권한 주체 추가" }),

@@ -90,14 +90,16 @@ function ResourceNode({
   value,
   onChange,
   isSelectable,
+  isDisabled,
 }: {
   readonly node: ResourceTreeNode;
   readonly value: string;
   readonly onChange: (resourceId: string) => void;
   readonly isSelectable: (resource: AuthorizationResource) => boolean;
+  readonly isDisabled: boolean;
 }) {
   const selected = value === node.resource.id;
-  const selectable = isSelectable(node.resource);
+  const selectable = !isDisabled && isSelectable(node.resource);
   return (
     <li
       className={styles.scopeTreeItem}
@@ -127,6 +129,7 @@ function ResourceNode({
               value={value}
               onChange={onChange}
               isSelectable={isSelectable}
+              isDisabled={isDisabled}
             />
           ))}
         </ul>
@@ -141,8 +144,16 @@ const propagationOptions: readonly {
   readonly description: string;
 }[] = [
   { value: "self", label: "현재 리소스", description: "선택한 리소스에만 적용" },
-  { value: "children", label: "모든 하위", description: "현재 리소스를 제외한 모든 후손에 적용" },
-  { value: "self-and-children", label: "현재 및 모든 하위", description: "선택한 리소스와 모든 후손에 적용" },
+  {
+    value: "children",
+    label: "하위만 (현재 제외)",
+    description: "선택한 리소스 자체에는 적용하지 않고 모든 깊이의 후손에만 적용",
+  },
+  {
+    value: "self-and-children",
+    label: "현재 + 모든 하위",
+    description: "선택한 리소스 자체와 모든 깊이의 후손에 함께 적용",
+  },
 ];
 
 export function ScopeTreeSelector({
@@ -156,6 +167,7 @@ export function ScopeTreeSelector({
   isSelectable = () => true,
   propagation,
   onPropagationChange,
+  isDisabled = false,
 }: {
   readonly label: string;
   readonly description?: string;
@@ -167,6 +179,7 @@ export function ScopeTreeSelector({
   readonly isSelectable?: (resource: AuthorizationResource) => boolean;
   readonly propagation?: AuthorizationScopePropagation;
   readonly onPropagationChange?: (propagation: AuthorizationScopePropagation) => void;
+  readonly isDisabled?: boolean;
 }) {
   const forest = buildResourceTree(resources);
   const selectedPath = value === "" ? [] : resourcePath(resources, value);
@@ -181,6 +194,7 @@ export function ScopeTreeSelector({
             type="button"
             data-selected={value === ""}
             aria-pressed={value === ""}
+            disabled={isDisabled}
             onClick={() => onChange("")}
           >
             <span>{emptyLabel}</span>
@@ -216,6 +230,7 @@ export function ScopeTreeSelector({
               value={value}
               onChange={onChange}
               isSelectable={isSelectable}
+              isDisabled={isDisabled}
             />
           ))}
         </ul>
@@ -227,20 +242,29 @@ export function ScopeTreeSelector({
         </div>
       ) : null}
       {propagation !== undefined && onPropagationChange !== undefined ? (
-        <div className={styles.propagationGroup} role="radiogroup" aria-label="Scope 전파 방식">
-          {propagationOptions.map((option) => (
-            <label key={option.value} data-selected={propagation === option.value}>
-              <input
-                type="radio"
-                name={`${label}-propagation`}
-                value={option.value}
-                checked={propagation === option.value}
-                onChange={() => onPropagationChange(option.value)}
-              />
-              <span><strong>{option.label}</strong><small>{option.description}</small></span>
-            </label>
-          ))}
-        </div>
+        <>
+          <div className={styles.propagationGroup} role="radiogroup" aria-label="Scope 전파 방식">
+            {propagationOptions.map((option) => (
+              <label key={option.value} data-selected={propagation === option.value}>
+                <input
+                  type="radio"
+                  name={`${label}-propagation`}
+                  value={option.value}
+                  checked={propagation === option.value}
+                  disabled={isDisabled}
+                  onChange={() => onPropagationChange(option.value)}
+                />
+                <span><strong>{option.label}</strong><small>{option.description}</small></span>
+              </label>
+            ))}
+          </div>
+          {propagation === "children" ? (
+            <p className={styles.scopeDescription} role="note">
+              주의: 현재 선택한 리소스에서는 이 역할이 적용되지 않습니다. 현재 리소스도
+              포함하려면 ‘현재 + 모든 하위’를 선택하세요.
+            </p>
+          ) : null}
+        </>
       ) : null}
     </fieldset>
   );

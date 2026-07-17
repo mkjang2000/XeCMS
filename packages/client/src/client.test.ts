@@ -152,6 +152,76 @@ describe("createXeCmsClient", () => {
     expect(purgeRequest?.body).toBe(JSON.stringify({ expectedVersion: 6 }));
   });
 
+  it("sends typed document queries as read-only POST bodies", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(async () => jsonResponse({ items: [], hasNextPage: false }));
+    const client = createXeCmsClient({ fetch });
+    const query = {
+      limit: 20,
+      fields: ["fld_title"],
+      filter: {
+        type: "condition" as const,
+        field: { kind: "data" as const, fieldId: "fld_title" },
+        operator: "contains" as const,
+        value: "XeCMS",
+      },
+      sort: [{
+        field: { kind: "system" as const, field: "updatedAt" as const },
+        direction: "desc" as const,
+      }],
+    };
+
+    await client.documents.query("articles / featured", query);
+    await client.contentRealms.forRealm("community / beta")
+      .queryDocuments("articles / featured", query);
+
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      "/api/collections/articles%20%2F%20featured/documents/query",
+    );
+    expect(fetch.mock.calls[1]?.[0]).toBe(
+      "/api/content-realms/community%20%2F%20beta/collections/articles%20%2F%20featured/documents/query",
+    );
+    for (const [, request] of fetch.mock.calls) {
+      expect(request?.method).toBe("POST");
+      expect(request?.body).toBe(JSON.stringify(query));
+      expect(new Headers(request?.headers).get("x-csrf-token")).toBeNull();
+    }
+  });
+
+  it("sends self access profile checks as a read-only typed POST", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      jsonResponse({ policyRevision: 3, items: [] }),
+    );
+    const client = createXeCmsClient({ fetch });
+    const input = {
+      checks: [
+        {
+          id: "navigation.content",
+          type: "permission" as const,
+          action: "content.read",
+          resourceId: "resource:content",
+        },
+        {
+          id: "field.title.write",
+          type: "field" as const,
+          action: "content.update",
+          resourceId: "resource:collection:posts",
+          field: "field_title",
+          access: "write" as const,
+        },
+      ],
+    };
+
+    await client.access.evaluateBatch(input);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("/api/access/evaluate-batch");
+    expect(fetch.mock.calls[0]?.[1]?.method).toBe("POST");
+    expect(fetch.mock.calls[0]?.[1]?.body).toBe(JSON.stringify(input));
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("x-csrf-token")).toBeNull();
+  });
+
   it("maps the typed Identity Realm administration surface to encoded Admin routes", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

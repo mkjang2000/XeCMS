@@ -1,12 +1,27 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, Callout, ConfirmDialog, EmptyState } from "@xecms/ui";
-import { toAdminApiError, useAdminApi, type MediaRecord } from "@xecms/admin";
+import {
+  accessAllowed,
+  toAdminApiError,
+  useAdminApi,
+  type MediaRecord,
+} from "@xecms/admin";
+import {
+  permissionCheck,
+  systemResources,
+  useAccessProfile,
+} from "../access-profile.js";
 import styles from "../app.module.css";
 import { LoadError, PageLoading } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader } from "../components/page.js";
 import { queryKeys } from "../queries.js";
+
+const mediaActionChecks = [
+  permissionCheck("media.action.upload", "media.upload", systemResources.workspace),
+  permissionCheck("media.action.delete", "media.delete", systemResources.workspace),
+] as const;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -21,6 +36,9 @@ export function MediaPage() {
   const [selectedFile, setSelectedFile] = useState<File>();
   const [deleteTarget, setDeleteTarget] = useState<MediaRecord>();
   const list = useQuery({ queryKey: queryKeys.media, queryFn: () => api.media.list() });
+  const accessProfile = useAccessProfile("media-actions", mediaActionChecks);
+  const canUpload = accessAllowed(accessProfile.data, "media.action.upload");
+  const canDelete = accessAllowed(accessProfile.data, "media.action.delete");
   const consistency = useMutation({ mutationFn: () => api.media.checkConsistency() });
   const upload = useMutation({
     mutationFn: (file: File) => api.media.upload(file),
@@ -49,14 +67,14 @@ export function MediaPage() {
         description="로컬 스토리지에 파일을 스트리밍 업로드하고 콘텐츠의 upload 필드에서 stable ID로 연결합니다."
         actions={<Button variant="secondary" onPress={() => consistency.mutate()} isDisabled={consistency.isPending}>{consistency.isPending ? "검사 중…" : "일관성 검사"}</Button>}
       />
-      <section className={styles.mediaUploadCard} aria-label="미디어 업로드">
+      {canUpload ? <section className={styles.mediaUploadCard} aria-label="미디어 업로드">
         <label className={styles.filePicker}>
           <span className={styles.mediaUploadIcon}><Icon name="media" size={22} /></span>
           <span><strong>{selectedFile?.name ?? "업로드할 파일 선택"}</strong><small>{selectedFile ? `${selectedFile.type || "application/octet-stream"} · ${formatBytes(selectedFile.size)}` : "크기와 MIME 정책은 서버에서 다시 검증합니다."}</small></span>
           <input ref={inputRef} type="file" onChange={(event) => setSelectedFile(event.target.files?.[0])} />
         </label>
         <Button onPress={() => selectedFile && upload.mutate(selectedFile)} isDisabled={!selectedFile || upload.isPending}>{upload.isPending ? "업로드 중…" : "파일 업로드"}</Button>
-      </section>
+      </section> : null}
       {uploadError ? <LoadError error={uploadError} /> : null}
       {removeError ? <LoadError error={removeError} /> : null}
       {consistency.isError ? <LoadError error={consistency.error} /> : null}
@@ -87,7 +105,7 @@ export function MediaPage() {
               </div>
               <div className={styles.mediaActions}>
                 <a href={item.contentUrl} target="_blank" rel="noreferrer">원본 열기</a>
-                <Button variant="quiet" size="small" onPress={() => setDeleteTarget(item)}>삭제</Button>
+                {canDelete ? <Button variant="quiet" size="small" onPress={() => setDeleteTarget(item)}>삭제</Button> : null}
               </div>
             </article>
           ))}

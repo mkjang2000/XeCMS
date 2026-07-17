@@ -385,6 +385,20 @@ describe("registerIdentityRealmRoutes", () => {
       url: "/api/content-realms/community/collections/col_articles/documents?page=2&pageSize=10",
       headers,
     });
+    const queried = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/collections/col_articles/documents/query",
+      headers,
+      payload: {
+        limit: 10,
+        filter: {
+          type: "condition",
+          field: { kind: "data", fieldId: "fld_title" },
+          operator: "contains",
+          value: "Article",
+        },
+      },
+    });
     const fetched = await harness.app.inject({
       method: "GET",
       url: "/api/content-realms/community/collections/col_articles/documents/doc_article",
@@ -405,6 +419,7 @@ describe("registerIdentityRealmRoutes", () => {
 
     expect(collections.statusCode).toBe(200);
     expect(listed.json()).toMatchObject({ page: 1, total: 1 });
+    expect(queried.json()).toMatchObject({ hasNextPage: false });
     expect(fetched.json()).toMatchObject({ id: "doc_article" });
     expect(created.statusCode).toBe(201);
     expect(updated.json()).toMatchObject({ version: 2, data: { title: "Updated" } });
@@ -412,6 +427,18 @@ describe("registerIdentityRealmRoutes", () => {
       collectionId: "col_articles",
       page: 2,
       pageSize: 10,
+      actor: expect.objectContaining({
+        identityId: identity.id,
+        realmId: realm.id,
+        subjectId: membership.subjectId,
+      }),
+    }));
+    expect(harness.documents.queryDocuments).toHaveBeenCalledWith(expect.objectContaining({
+      collectionId: "col_articles",
+      request: expect.objectContaining({
+        limit: 10,
+        filter: expect.objectContaining({ operator: "contains", value: "Article" }),
+      }),
       actor: expect.objectContaining({
         identityId: identity.id,
         realmId: realm.id,
@@ -660,6 +687,9 @@ async function createHarness(): Promise<{
     })),
     listDocuments: vi.fn<ContentRealmDocumentRouteAdapter["listDocuments"]>(async () => ({
       items: [document], page: 1, pageSize: 25, total: 1,
+    })),
+    queryDocuments: vi.fn<ContentRealmDocumentRouteAdapter["queryDocuments"]>(async () => ({
+      items: [document], hasNextPage: false,
     })),
     getDocument: vi.fn<ContentRealmDocumentRouteAdapter["getDocument"]>(async () => document),
     createDocument: vi.fn<ContentRealmDocumentRouteAdapter["createDocument"]>(async () => document),

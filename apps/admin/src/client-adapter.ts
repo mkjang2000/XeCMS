@@ -392,6 +392,9 @@ function createAuthorizationAdminApi(client: AuthorizationClient): Authorization
 
 export function createAdminApi(client: XeCmsClient = createXeCmsClient()): AdminApi {
   return {
+    access: {
+      evaluateBatch: (input) => call(() => client.access.evaluateBatch(input)),
+    },
     auth: {
       getBootstrapStatus: () => call(() => client.auth.getBootstrapStatus()),
       bootstrap: (credentials) => call(async () => {
@@ -580,6 +583,14 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
           page: result.page,
           pageSize: result.pageSize,
           total: result.total,
+        };
+      }),
+      query: (collectionId, input) => call(async () => {
+        const result = await client.documents.query(collectionId, input);
+        return {
+          items: result.items.map(mapDocument),
+          hasNextPage: result.hasNextPage,
+          ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
         };
       }),
       get: (collectionId, documentId) => call(async () => mapDocument(

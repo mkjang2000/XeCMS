@@ -1,6 +1,7 @@
 export const queryKeys = {
     bootstrap: ["bootstrap"],
     session: ["session"],
+    accessProfile: (scope, checkIds) => ["access-profile", scope, ...checkIds],
     diagnostics: ["settings", "diagnostics"],
     workspaceSettings: ["settings", "workspace"],
     sites: ["settings", "sites"],

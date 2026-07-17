@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures.js";
 
-const ownerPassword=process.env.XECMS_E2E_OWNER_PASSWORD??"admin";
+const ownerPassword=process.env.XECMS_E2E_OWNER_PASSWORD??"Admin-test-only-2026!";
 async function login(page:Page){await page.goto("/admin/login");const form=page.getByRole("form",{name:"로그인"});await form.getByLabel("사용자 이름").fill("admin");await form.getByLabel("비밀번호").fill(ownerPassword);await form.getByRole("button",{name:"로그인"}).click();await expect(page).toHaveURL(/\/admin\/schema\/?$/)}
 
 test("M4-C4 trusted Plugin을 Admin UI에서 설치하고 활성화한다",async({page})=>{

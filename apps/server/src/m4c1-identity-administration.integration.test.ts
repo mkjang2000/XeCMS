@@ -5,6 +5,11 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 
 import { loadServerConfig } from "./config.js";
+import {
+  bootstrapTestOwner,
+  TEST_OWNER_PASSWORD,
+  TEST_OWNER_USERNAME,
+} from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -33,18 +38,16 @@ describe.runIf(RUN)("M4-C1 Identity administration HTTP acceptance", () => {
       DATABASE_URL,
       XECMS_DB_SCHEMA: schema,
       XECMS_SESSION_SECRET: "m4c1-integration-session-secret-0123456789",
-      XECMS_DEV_SEED: "true",
-      XECMS_DEV_ADMIN_USERNAME: "admin",
-      XECMS_DEV_ADMIN_PASSWORD: "admin",
       XECMS_ADMIN_ORIGINS: ORIGIN,
       XECMS_ADMIN_DIST: "/not-used-in-http-test",
     });
     let server: XeCmsServer | undefined;
     try {
       server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
       const anonymous = await server.app.inject({ method: "GET", url: "/api/identities" });
       expect(anonymous.statusCode).toBe(401);
-      const owner = await login(server, "admin", "admin");
+      const owner = await login(server, TEST_OWNER_USERNAME, TEST_OWNER_PASSWORD);
 
       const missingCsrf = await server.app.inject({
         method: "POST",
@@ -119,7 +122,7 @@ describe.runIf(RUN)("M4-C1 Identity administration HTTP acceptance", () => {
 
       const invitationResponse = await adminRequest(server, owner, "POST", `/api/identities/${identity.identityId}/invitations`, {
         expectedRevision: identity.revision,
-        currentPassword: "admin",
+        currentPassword: TEST_OWNER_PASSWORD,
       });
       expect(invitationResponse.statusCode, invitationResponse.body).toBe(201);
       const invitation = invitationResponse.json() as { secret: string; expiresAt: string };
@@ -162,7 +165,7 @@ describe.runIf(RUN)("M4-C1 Identity administration HTTP acceptance", () => {
 
       const resetTokenResponse = await adminRequest(server, owner, "POST", `/api/identities/${identity.identityId}/credentials/reset-token`, {
         expectedRevision: 6,
-        currentPassword: "admin",
+        currentPassword: TEST_OWNER_PASSWORD,
       });
       expect(resetTokenResponse.statusCode, resetTokenResponse.body).toBe(201);
       const resetToken = resetTokenResponse.json() as { secret: string };
@@ -181,7 +184,7 @@ describe.runIf(RUN)("M4-C1 Identity administration HTTP acceptance", () => {
       const reset = await adminRequest(server, owner, "POST", `/api/identities/${identity.identityId}/credentials/reset`, {
         expectedRevision: 8,
         temporaryPassword: "Temporary-after-reset-2026!",
-        currentPassword: "admin",
+        currentPassword: TEST_OWNER_PASSWORD,
         revokeApiKeys: true,
       });
       expect(reset.statusCode, reset.body).toBe(200);
@@ -232,7 +235,7 @@ describe.runIf(RUN)("M4-C1 Identity administration HTTP acceptance", () => {
       const ownerTransfer = await adminRequest(server, owner, "POST", "/api/owner/transfer", {
         targetIdentityId: identity.identityId,
         reason: "Acceptance test ownership handover",
-        currentPassword: "admin",
+        currentPassword: TEST_OWNER_PASSWORD,
       });
       expect(ownerTransfer.statusCode, ownerTransfer.body).toBe(200);
       expect(ownerTransfer.json()).toMatchObject({ identityId: identity.identityId, isOwner: true });

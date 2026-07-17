@@ -10,7 +10,7 @@ export interface ResourceTreeNode {
  */
 export declare function buildResourceTree(resources: readonly AuthorizationResource[]): readonly ResourceTreeNode[];
 export declare function resourcePath(resources: readonly AuthorizationResource[], resourceId: string): readonly AuthorizationResource[];
-export declare function ScopeTreeSelector({ label, description, resources, value, onChange, allowEmpty, emptyLabel, isSelectable, propagation, onPropagationChange, }: {
+export declare function ScopeTreeSelector({ label, description, resources, value, onChange, allowEmpty, emptyLabel, isSelectable, propagation, onPropagationChange, isDisabled, }: {
     readonly label: string;
     readonly description?: string;
     readonly resources: readonly AuthorizationResource[];
@@ -21,5 +21,6 @@ export declare function ScopeTreeSelector({ label, description, resources, value
     readonly isSelectable?: (resource: AuthorizationResource) => boolean;
     readonly propagation?: AuthorizationScopePropagation;
     readonly onPropagationChange?: (propagation: AuthorizationScopePropagation) => void;
+    readonly isDisabled?: boolean;
 }): import("react").JSX.Element;
 //# sourceMappingURL=resource-scope-tree.d.ts.map

@@ -1,7 +1,7 @@
-import { expect, test, type APIResponse, type Page } from "@playwright/test";
+import { expect, test, type APIResponse, type Page } from "./fixtures.js";
 
 const serverUrl = process.env.XECMS_SERVER_URL ?? "http://127.0.0.1:3120";
-const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "admin";
+const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "Admin-test-only-2026!";
 
 interface AdminSession { readonly csrfToken: string }
 interface Realm {

@@ -325,6 +325,50 @@ export interface AuthorizationFieldDecisionRecord {
   readonly matchedGrants: readonly AuthorizationFieldGrantRecord[];
 }
 
+export type AuthorizationBatchCheck =
+  | {
+      readonly id: string;
+      readonly type: "permission";
+      readonly action: string;
+      readonly resourceId: string;
+      readonly context?: AuthorizationEvaluationContext;
+    }
+  | {
+      readonly id: string;
+      readonly type: "field";
+      readonly action: string;
+      readonly resourceId: string;
+      readonly field: string;
+      readonly access: FieldAccessMode;
+      readonly context?: AuthorizationEvaluationContext;
+    };
+
+export type AuthorizationBatchResultItem =
+  | {
+      readonly id: string;
+      readonly type: "permission";
+      readonly resourceId: string;
+      /**
+       * False means the generic access-profile endpoint cannot safely model
+       * this permission (unknown key or a hierarchy-aware management guard).
+       */
+      readonly supported: boolean;
+      readonly decision: AuthorizationDecisionRecord;
+    }
+  | {
+      readonly id: string;
+      readonly type: "field";
+      readonly action: string;
+      readonly supported: boolean;
+      readonly decision: AuthorizationFieldDecisionRecord;
+    };
+
+export interface AuthorizationBatchEvaluation {
+  /** Every item was evaluated against this exact immutable policy revision. */
+  readonly policyRevision: number;
+  readonly items: readonly AuthorizationBatchResultItem[];
+}
+
 export interface AuthorizationMutationResult<TValue> {
   readonly revision: number;
   readonly value: TValue;
@@ -967,7 +1011,97 @@ export class AuthorizationApplicationService {
     await this.assertProjectionAvailable(actor.realmId, input.resourceId);
     if (input.action !== undefined) assertCanonicalPermission(input.action);
     const entry = await this.load(actor.realmId);
+    return this.evaluateFieldAt(actor, input, entry, this.runtime.now());
+  }
+
+  /**
+   * Evaluates the authenticated Subject's UI access profile in one immutable
+   * policy snapshot. It intentionally cannot proxy evaluation for another
+   * Subject; administrators already have the separately authorized simulator.
+   */
+  public async evaluateBatch(
+    actor: AuthorizationActor,
+    input: { readonly checks: readonly AuthorizationBatchCheck[] },
+  ): Promise<AuthorizationBatchEvaluation> {
+    if (!Array.isArray(input.checks) || input.checks.length < 1 || input.checks.length > 100) {
+      throw new ApplicationError(
+        "ACCESS_BATCH_SIZE_INVALID",
+        422,
+        "Access evaluation batches must contain 1-100 checks.",
+      );
+    }
+    const checkIds = new Set<string>();
+    for (const check of input.checks) {
+      validateIdentifier(check.id, "accessBatch.check.id");
+      if (checkIds.has(check.id)) {
+        throw new ApplicationError(
+          "ACCESS_BATCH_DUPLICATE_ID",
+          422,
+          `Access evaluation batch contains duplicate check ID '${check.id}'.`,
+        );
+      }
+      checkIds.add(check.id);
+      if (check.type !== "permission" && check.type !== "field") {
+        throw new ApplicationError(
+          "ACCESS_BATCH_CHECK_INVALID",
+          422,
+          `Access evaluation check '${check.id}' has an unsupported type.`,
+        );
+      }
+      assertCanonicalPermission(check.action);
+      validateIdentifier(check.resourceId, `accessBatch.checks.${check.id}.resourceId`);
+      if (check.type === "field") {
+        validateFieldName(check.field);
+        if (check.access !== "read" && check.access !== "write") {
+          throw new ApplicationError(
+            "ACCESS_BATCH_FIELD_MODE_INVALID",
+            422,
+            `Access evaluation check '${check.id}' must use read or write field access.`,
+          );
+        }
+      }
+    }
+
+    const entry = await this.load(actor.realmId);
     const now = this.runtime.now();
+    const items: AuthorizationBatchResultItem[] = [];
+    for (const check of input.checks) {
+      await this.assertProjectionAvailable(actor.realmId, check.resourceId);
+      const permission = entry.state.permissions.find(({ key }) => key === check.action);
+      const supported = permission !== undefined && permission.hierarchyGuard === "none";
+      if (check.type === "permission") {
+        items.push({
+          id: check.id,
+          type: "permission",
+          resourceId: check.resourceId,
+          supported,
+          decision: await this.authorizeAt(actor, check, now, "authorize", entry),
+        });
+        continue;
+      }
+      items.push({
+        id: check.id,
+        type: "field",
+        action: check.action,
+        supported,
+        decision: await this.evaluateFieldAt(actor, check, entry, now),
+      });
+    }
+    return { policyRevision: entry.state.revision, items };
+  }
+
+  private async evaluateFieldAt(
+    actor: AuthorizationActor,
+    input: {
+      readonly resourceId: string;
+      readonly field: string;
+      readonly access: FieldAccessMode;
+      readonly action?: string;
+      readonly context?: AuthorizationEvaluationContext;
+    },
+    entry: PolicyCacheEntry,
+    now: string,
+  ): Promise<AuthorizationFieldDecisionRecord> {
     const decision = evaluateFieldAccess(entry.snapshot, {
       actorSubjectId: asSubjectId(actor.subjectId),
       resourceId: asResourceId(input.resourceId),
@@ -2258,10 +2392,11 @@ export class AuthorizationApplicationService {
     },
     now: string,
     operation: "authorize" | "simulate" = "authorize",
+    entryOverride?: PolicyCacheEntry,
   ): Promise<AuthorizationDecisionRecord> {
     assertCanonicalPermission(input.action);
     await this.assertProjectionAvailable(actor.realmId, input.resourceId);
-    const entry = await this.load(actor.realmId);
+    const entry = entryOverride ?? await this.load(actor.realmId);
     const decision = evaluateAccess(entry.snapshot, {
       actorSubjectId: asSubjectId(actor.subjectId),
       action: asPermissionKey(input.action),

@@ -9,6 +9,11 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 
 import { loadServerConfig } from "./config.js";
+import {
+  bootstrapTestOwner,
+  TEST_OWNER_PASSWORD,
+  TEST_OWNER_USERNAME,
+} from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -127,16 +132,14 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
       DATABASE_URL,
       XECMS_DB_SCHEMA: schemaName,
       XECMS_SESSION_SECRET: "m3-acceptance-session-secret-0123456789",
-      XECMS_DEV_SEED: "true",
-      XECMS_DEV_ADMIN_USERNAME: "admin",
-      XECMS_DEV_ADMIN_PASSWORD: "admin",
       XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
     });
     let server: XeCmsServer | undefined;
 
     try {
       server = await buildServer({ database, logger: false, config });
-      const owner = await login(server, "admin", "admin");
+      await bootstrapTestOwner(server);
+      const owner = await login(server, TEST_OWNER_USERNAME, TEST_OWNER_PASSWORD);
 
       await applyHierarchySchema(server, owner);
 
@@ -186,7 +189,7 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
           propagation: "self",
         });
       }
-      const boundaryMoverSession = await login(server, "m3boundarymover", "admin");
+      const boundaryMoverSession = await login(server, "m3boundarymover", TEST_OWNER_PASSWORD);
       const boundaryChildDecision = await simulate(server, owner, {
         subjectId: boundaryMover.id,
         action: "content.update",
@@ -270,7 +273,7 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
         propagation: "self",
       });
 
-      const writerSession = await login(server, "m3writer", "admin");
+      const writerSession = await login(server, "m3writer", TEST_OWNER_PASSWORD);
       const readableChild = await server.app.inject({
         method: "GET",
         url: `/api/collections/col_m3_pages/documents/${child.id}`,
@@ -292,6 +295,32 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
       expect(listed.json().items.every(
         ({ data }: { readonly data: Readonly<Record<string, unknown>> }) => !("secret" in data),
       )).toBe(true);
+
+      const firstScopedQuery = await server.app.inject({
+        method: "POST",
+        url: "/api/collections/col_m3_pages/documents/query",
+        headers: { cookie: writerSession.cookie },
+        payload: { limit: 1 },
+      });
+      expect(firstScopedQuery.statusCode, firstScopedQuery.body).toBe(200);
+      expect(firstScopedQuery.json()).toMatchObject({
+        hasNextPage: true,
+        items: [{ id: child.id, data: { title: "Child" } }],
+      });
+      const secondScopedQuery = await server.app.inject({
+        method: "POST",
+        url: "/api/collections/col_m3_pages/documents/query",
+        headers: { cookie: writerSession.cookie },
+        payload: {
+          limit: 1,
+          cursor: firstScopedQuery.json().nextCursor,
+        },
+      });
+      expect(secondScopedQuery.statusCode, secondScopedQuery.body).toBe(200);
+      expect(secondScopedQuery.json()).toMatchObject({
+        hasNextPage: false,
+        items: [{ id: rootA.id, data: { title: "Root A" } }],
+      });
 
       const deniedRootB = await server.app.inject({
         method: "GET",
@@ -380,7 +409,7 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
           propagation: "self-and-children",
         });
       }
-      const writeOnlySession = await login(server, "m3writeonly", "admin");
+      const writeOnlySession = await login(server, "m3writeonly", TEST_OWNER_PASSWORD);
       const createTreeBefore = await getTree(server, owner);
       const writeOnlyDocumentCountBefore = await documentCountCreatedBy(database, schemaName, writeOnly.id);
       const writeOnlyCreatedResponse = await mutate(server, writeOnlySession, "POST",
@@ -494,7 +523,7 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
           propagation,
         });
       }
-      const traversalSession = await login(server, "m3traversalreader", "admin");
+      const traversalSession = await login(server, "m3traversalreader", TEST_OWNER_PASSWORD);
       const childSubtree = await server.app.inject({
         method: "GET",
         url: `/api/collections/col_m3_pages/documents/${child.id}/subtree`,
@@ -557,7 +586,7 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
           propagation: "self-and-children",
         });
       }
-      const fieldImpactSession = await login(server, "m3fieldimpact", "admin");
+      const fieldImpactSession = await login(server, "m3fieldimpact", TEST_OWNER_PASSWORD);
       expect((await getDocument(server, fieldImpactSession, fieldImpactChild.id)).data).toEqual({
         title: "Field impact child",
       });
@@ -834,15 +863,13 @@ describe.runIf(RUN)("M3 authorization acceptance with document hierarchy", () =>
       DATABASE_URL,
       XECMS_DB_SCHEMA: schemaName,
       XECMS_SESSION_SECRET: "m3-schema-guard-session-secret-0123456789",
-      XECMS_DEV_SEED: "true",
-      XECMS_DEV_ADMIN_USERNAME: "admin",
-      XECMS_DEV_ADMIN_PASSWORD: "admin",
       XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
     });
     let server: XeCmsServer | undefined;
     try {
       server = await buildServer({ database, logger: false, config });
-      const owner = await login(server, "admin", "admin");
+      await bootstrapTestOwner(server);
+      const owner = await login(server, TEST_OWNER_USERNAME, TEST_OWNER_PASSWORD);
       await applyHierarchySchema(server, owner, false);
 
       const policyBeforeQueueTest = await getPolicy(server, owner);
@@ -1195,7 +1222,7 @@ async function assertSameLevelPeerCannotMutate(
     resourceId: "resource:workspace",
     propagation: "self-and-children",
   });
-  const peerSession = await login(server, "m3contentadmin", "admin");
+  const peerSession = await login(server, "m3contentadmin", TEST_OWNER_PASSWORD);
   const peerPolicy = await getPolicy(server, peerSession);
   const denied = await mutate(server, peerSession, "PATCH",
     `/api/authorization/roles/${securityAdmin.id}`, {

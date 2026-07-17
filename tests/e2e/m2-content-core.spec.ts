@@ -6,7 +6,7 @@ import {
   type APIResponse,
   type Locator,
   type Page,
-} from "@playwright/test";
+} from "./fixtures.js";
 
 const serverUrl = process.env.XECMS_SERVER_URL ?? "http://127.0.0.1:3110";
 const ownerPassword =

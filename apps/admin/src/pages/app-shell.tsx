@@ -1,16 +1,106 @@
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@xecms/ui";
-import { useAdminApi } from "@xecms/admin";
-import { Icon } from "../components/icon.js";
+import { Button, EmptyState, LoadingIndicator } from "@xecms/ui";
+import {
+  allAccessAllowed,
+  anyAccessAllowed,
+  useAdminApi,
+  type AccessEvaluationProfile,
+} from "@xecms/admin";
+import {
+  permissionCheck,
+  systemResources,
+  useAccessProfile,
+} from "../access-profile.js";
+import { Icon, type IconName } from "../components/icon.js";
+import {
+  DisplayModeSelector,
+  displayModeAtLeast,
+  useDisplayMode,
+  type DisplayMode,
+} from "../display-mode.js";
 import styles from "../app-shell.module.css";
 import { queryKeys } from "../queries.js";
+
+export const navigationAccessChecks = [
+  permissionCheck("nav.content.list", "content.list", systemResources.content),
+  permissionCheck("nav.content.schema", "schema.read", systemResources.schema),
+  permissionCheck("nav.schema", "schema.read", systemResources.schema),
+  permissionCheck("nav.media", "media.read", systemResources.workspace),
+  permissionCheck("nav.users", "identity.read", systemResources.authorization),
+  permissionCheck("nav.realms", "identity.read", systemResources.authorization),
+  permissionCheck("nav.access", "authorization.read", systemResources.authorization),
+  permissionCheck("nav.jobs", "job.read", systemResources.workspace),
+  permissionCheck("nav.operations.audit", "audit.read", systemResources.workspace),
+  permissionCheck("nav.operations.retention", "retention.read", systemResources.workspace),
+  permissionCheck("nav.operations.media", "media.consistency.read", systemResources.workspace),
+  permissionCheck("nav.plugins", "plugin.read", systemResources.workspace),
+  permissionCheck("nav.settings.system", "system.settings.read", systemResources.workspace),
+  permissionCheck("nav.settings.sites", "site.read", systemResources.workspace),
+] as const;
+
+export const navigationItems: readonly {
+  readonly to: string;
+  readonly icon: IconName;
+  readonly label: string;
+  readonly minimum: DisplayMode;
+  readonly access: readonly string[];
+  readonly requireAll?: boolean;
+}[] = [
+  { to: "/admin/content", icon: "content", label: "콘텐츠", minimum: "basic", access: ["nav.content.list", "nav.content.schema"], requireAll: true },
+  { to: "/admin/schema", icon: "schema", label: "스키마", minimum: "basic", access: ["nav.schema"] },
+  { to: "/admin/media", icon: "media", label: "미디어", minimum: "basic", access: ["nav.media"] },
+  { to: "/admin/users", icon: "identity", label: "사용자", minimum: "basic", access: ["nav.users"] },
+  { to: "/admin/realms", icon: "identity", label: "Identity Realms", minimum: "standard", access: ["nav.realms"] },
+  { to: "/admin/access", icon: "shield", label: "권한", minimum: "standard", access: ["nav.access"] },
+  { to: "/admin/jobs", icon: "events", label: "이벤트 작업", minimum: "advanced", access: ["nav.jobs"] },
+  { to: "/admin/operations", icon: "shield", label: "운영 및 감사", minimum: "advanced", access: ["nav.operations.audit", "nav.operations.retention", "nav.operations.media"] },
+  { to: "/admin/plugins", icon: "schema", label: "Plugins", minimum: "advanced", access: ["nav.plugins"] },
+  { to: "/admin/settings", icon: "workspace", label: "설정 및 사이트", minimum: "basic", access: ["nav.settings.system", "nav.settings.sites"] },
+];
+
+export function visibleNavigationItems(
+  mode: DisplayMode,
+  profile: AccessEvaluationProfile | undefined,
+) {
+  return navigationItems.filter((item) =>
+    displayModeAtLeast(mode, item.minimum)
+    && (item.requireAll
+      ? allAccessAllowed(profile, item.access)
+      : anyAccessAllowed(profile, item.access)));
+}
+
+export function AdminIndexRedirect() {
+  const { mode } = useDisplayMode();
+  const accessProfile = useAccessProfile("admin-navigation", navigationAccessChecks);
+  if (accessProfile.isPending) {
+    return <LoadingIndicator label="접근 가능한 첫 화면을 찾는 중" />;
+  }
+  if (accessProfile.isError) {
+    return (
+      <EmptyState
+        title="메뉴 권한을 확인할 수 없습니다"
+        description="잠시 후 새로고침하거나 서버 상태를 확인해 주세요."
+      />
+    );
+  }
+  const first = visibleNavigationItems(mode, accessProfile.data)[0];
+  if (first !== undefined) return <Navigate to={first.to} replace />;
+  return (
+    <EmptyState
+      title="현재 표시할 수 있는 관리 화면이 없습니다"
+      description="상단 표시 단계를 높이거나 관리자에게 필요한 권한을 요청하세요."
+    />
+  );
+}
 
 export function AppShell() {
   const api = useAdminApi();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { mode } = useDisplayMode();
   const session = useQuery({ queryKey: queryKeys.session, queryFn: () => api.auth.getSession() });
+  const accessProfile = useAccessProfile("admin-navigation", navigationAccessChecks);
   const logout = useMutation({
     mutationFn: () => api.auth.logout(),
     onSuccess: () => {
@@ -20,6 +110,7 @@ export function AppShell() {
   });
   const username = session.data?.user?.username ?? "사용자";
   const initials = username.slice(0, 2);
+  const visibleItems = visibleNavigationItems(mode, accessProfile.data);
 
   return (
     <div className={styles.shell}>
@@ -41,53 +132,29 @@ export function AppShell() {
         </div>
         <nav className={styles.nav} aria-label="Admin 주 메뉴">
           <span className={styles.navLabel}>Workspace</span>
-          <NavLink to="/admin/content">
-            <Icon name="content" size={18} />
-            <span>콘텐츠</span>
-          </NavLink>
-          <NavLink to="/admin/schema">
-            <Icon name="schema" size={18} />
-            <span>스키마</span>
-          </NavLink>
-          <NavLink to="/admin/media">
-            <Icon name="media" size={18} />
-            <span>미디어</span>
-          </NavLink>
-          <NavLink to="/admin/realms">
-            <Icon name="identity" size={18} />
-            <span>Identity Realms</span>
-          </NavLink>
-          <NavLink to="/admin/users">
-            <Icon name="identity" size={18} />
-            <span>사용자</span>
-          </NavLink>
-          <NavLink to="/admin/access">
-            <Icon name="shield" size={18} />
-            <span>권한</span>
-          </NavLink>
-          <NavLink to="/admin/jobs">
-            <Icon name="events" size={18} />
-            <span>이벤트 작업</span>
-          </NavLink>
-          <NavLink to="/admin/operations">
-            <Icon name="shield" size={18} />
-            <span>운영 및 감사</span>
-          </NavLink>
-          <NavLink to="/admin/plugins">
-            <Icon name="schema" size={18} />
-            <span>Plugins</span>
-          </NavLink>
-          <NavLink to="/admin/settings">
-            <Icon name="workspace" size={18} />
-            <span>설정 및 사이트</span>
-          </NavLink>
+          {accessProfile.isPending ? (
+            <span className={styles.navMessage}>접근 가능한 메뉴 확인 중…</span>
+          ) : accessProfile.isError ? (
+            <span className={styles.navMessage}>메뉴 권한을 확인할 수 없습니다.</span>
+          ) : visibleItems.length === 0 ? (
+            <span className={styles.navMessage}>표시 가능한 관리 메뉴가 없습니다.</span>
+          ) : visibleItems.map((item) => (
+              <NavLink key={item.to} to={item.to}>
+                <Icon name={item.icon} size={18} />
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
         </nav>
         <div className={styles.sidebarFooter}>
           <div className={styles.account}>
             <span className={styles.avatar} aria-hidden="true">{initials}</span>
             <span className={styles.accountCopy}>
               <strong>{username}</strong>
-              <span>System administrator</span>
+              <span>
+                {accessProfile.data
+                  ? `System Realm · Policy r${accessProfile.data.policyRevision}`
+                  : "System Realm 계정"}
+              </span>
             </span>
           </div>
           <Button
@@ -109,7 +176,10 @@ export function AppShell() {
             <span className={styles.topbarDivider} aria-hidden="true" />
             <span>Default Workspace</span>
           </div>
-          <span className={styles.environment}>Development</span>
+          <div className={styles.topbarActions}>
+            <DisplayModeSelector compact />
+            <span className={styles.environment}>Development</span>
+          </div>
         </header>
         <main id="main-content" className={styles.main} tabIndex={-1}>
           <Outlet />

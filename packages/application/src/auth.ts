@@ -102,15 +102,8 @@ export class AuthApplicationService {
     readonly username: string;
     readonly password: string;
   }): Promise<IdentityRecord> {
-    return this.createInitialOwner(input, false);
-  }
-
-  private async createInitialOwner(
-    input: { readonly username: string; readonly password: string },
-    allowWeakDevelopmentPassword: boolean,
-  ): Promise<IdentityRecord> {
     const username = normalizeSystemIdentityIdentifier(input.username);
-    validateIdentityPassword(input.password, username, allowWeakDevelopmentPassword);
+    validateIdentityPassword(input.password, username);
     const now = this.runtime.now();
     const identity = await this.store.createInitialOwner({
       id: this.runtime.newIdentityId(),
@@ -125,19 +118,6 @@ export class AuthApplicationService {
       occurredAt: now,
     });
     return identity;
-  }
-
-  public async seedDevelopmentOwner(
-    credentials: { readonly username: string; readonly password: string } = {
-      username: "admin",
-      password: "admin",
-    },
-  ): Promise<boolean> {
-    if (!(await this.store.bootstrapRequired())) {
-      return false;
-    }
-    await this.createInitialOwner(credentials, true);
-    return true;
   }
 
   public async login(input: {
@@ -282,15 +262,9 @@ export function normalizeSystemIdentityIdentifier(value: string): string {
   return username;
 }
 
-export function validateIdentityPassword(password: string, username: string, allowWeak = false): void {
+export function validateIdentityPassword(password: string, username: string): void {
   if (typeof password !== "string" || password.length > 128 || password.includes("\u0000")) {
     throw new ApplicationError("PASSWORD_INVALID", 422, "Password is not valid.");
-  }
-  if (allowWeak) {
-    if (password.length < 5) {
-      throw new ApplicationError("PASSWORD_TOO_SHORT", 422, "Password must contain at least 5 characters.");
-    }
-    return;
   }
   if (password.length < 12) {
     throw new ApplicationError(

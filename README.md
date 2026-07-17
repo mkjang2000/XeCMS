@@ -53,13 +53,14 @@ pnpm dev:m1
 
 | 용도 | 주소 |
 | --- | --- |
-| Admin Studio | <http://127.0.0.1:5173/admin/login> |
+| Admin Studio | <http://127.0.0.1:5173/admin/setup> |
 | REST API | <http://127.0.0.1:3100/api> |
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
 
-로컬 개발 계정은 `admin/admin`이다. 이 계정은 `NODE_ENV=development`의 개발 seed에서만
-사용할 수 있으며, 공유 환경이나 운영 환경에서는 반드시 비활성화해야 한다.
+빈 데이터베이스의 첫 접근은 `/admin/setup`으로 이동한다. 여기서 12자 이상의 비밀번호로
+최초 Owner 계정을 생성한다. 실행 환경과 관계없이 초기 계정은 자동 생성되지 않으며,
+자동화 테스트도 동일한 Bootstrap API를 사용한다.
 
 ## 콘텐츠와 권한 모델
 
@@ -77,6 +78,10 @@ XeCMS Instance
 Role들은 우선순위가 같은 수평 관계이므로, Content Administrator와 Security Administrator처럼
 서로 다른 책임을 갖되 상대 Role을 임의로 관리하지 못하게 구성할 수 있다. 실제 콘텐츠
 접근은 이 서열과 별도로 Realm, Role Binding, Resource Scope와 Constraint를 모두 통과해야 한다.
+
+Admin Studio는 `Basic / Standard / Advanced` 표시 모드를 제공한다. 이 선택은 개인
+브라우저에서 메뉴와 기술 정보의 표시량만 바꾸며 실제 권한이나 직접 URL 접근에는 영향을
+주지 않는다.
 
 CMS 운영 계정이라는 이유만으로 Content Realm 권한이 자동 부여되지는 않는다. 운영 계정이
 콘텐츠 서비스에 로그인하려면 해당 Realm의 Membership과 Role Binding을 별도로 받아야 하며,
@@ -144,13 +149,10 @@ Release gate에서는 이 전체 회귀와 Chromium 누적 11개 여정을 함�
 
 ## 문서
 
-- [시스템 사양서](./docs/system-specification.md)
-- [MVP 사양서](./docs/mvp-specification.md)
-- [Admin Studio 사양](./docs/admin-ui-specification.md)
-- [Schema IR 사양](./docs/schema-ir-specification.md)
-- [Document와 Revision 사양](./docs/document-revision-specification.md)
-- [Authorization Evaluation 사양](./docs/authorization-evaluation-specification.md)
-- [M4-C5 Operations & Distribution](./docs/m4c5-operations-distribution.md)
-- [XeCMS 0.4 운영 Runbook](./docs/operations-runbook.md)
-
-Milestone별 구현과 검증 기록은 [`docs`](./docs/) 디렉터리에 보존한다.
+- [문서 인덱스와 관리 원칙](./docs/README.md)
+- [시스템 사양](./docs/system-specification.md)
+- [개발 가이드](./docs/development-guide.md)
+- [운영 Runbook](./docs/operations-runbook.md)
+- [릴리스 및 구현 이력](./docs/release-history.md)
+- [Custom Admin Apps 사양](./docs/custom-admin-apps-specification.md)
+- [Custom Admin Apps 개발 순서](./docs/custom-admin-apps-roadmap.md)

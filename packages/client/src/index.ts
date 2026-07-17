@@ -4,6 +4,8 @@ import {
   type AuthorizationAuditListDto,
   type AuthorizationDecisionDto,
   type AuthorizationPolicyDto,
+  type EvaluateAccessBatchRequest,
+  type EvaluateAccessBatchResponse,
   type AuthenticatedSessionDto,
   type BootstrapRequest,
   type BootstrapStatusDto,
@@ -26,6 +28,8 @@ import {
   type DeleteAuthorizationObjectRequest,
   type DocumentListState,
   type DocumentListDto,
+  type DocumentQueryRequest,
+  type DocumentQueryResultDto,
   type DocumentRecordDto,
   type DocumentRevisionDetailDto,
   type DocumentRevisionListDto,
@@ -177,6 +181,10 @@ export interface ContentRealmClient {
     collectionId: string,
     options?: Omit<ListDocumentsOptions, "state">,
   ): Promise<DocumentListDto>;
+  queryDocuments(
+    collectionId: string,
+    input: DocumentQueryRequest,
+  ): Promise<DocumentQueryResultDto>;
   getDocument(collectionId: string, documentId: string): Promise<DocumentRecordDto>;
   createDocument(collectionId: string, input: CreateDocumentRequest): Promise<DocumentRecordDto>;
   updateDocument(
@@ -211,6 +219,9 @@ export interface AuthorizationClient {
 export interface XeCmsClient {
   readonly health: {
     get(): Promise<HealthResponse>;
+  };
+  readonly access: {
+    evaluateBatch(input: EvaluateAccessBatchRequest): Promise<EvaluateAccessBatchResponse>;
   };
   readonly auth: {
     getBootstrapStatus(): Promise<BootstrapStatusDto>;
@@ -279,6 +290,7 @@ export interface XeCmsClient {
   };
   readonly documents: {
     list(collectionId: string, options?: ListDocumentsOptions): Promise<DocumentListDto>;
+    query(collectionId: string, input: DocumentQueryRequest): Promise<DocumentQueryResultDto>;
     get(collectionId: string, documentId: string): Promise<DocumentRecordDto>;
     create(collectionId: string, input: CreateDocumentRequest): Promise<DocumentRecordDto>;
     update(
@@ -568,6 +580,18 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
         { contentRealmKey: realmKey },
       );
     },
+    queryDocuments: (collectionId, input) =>
+      request<DocumentQueryResultDto>(
+        contentRealmPath(
+          realmKey,
+          `/collections/${encodeURIComponent(collectionId)}/documents/query`,
+        ),
+        {
+          method: "POST",
+          body: json(input),
+          contentRealmKey: realmKey,
+        },
+      ),
     getDocument: (collectionId, documentId) =>
       request<DocumentRecordDto>(contentRealmPath(
         realmKey,
@@ -646,6 +670,12 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
   return {
     health: {
       get: () => request<HealthResponse>("/health"),
+    },
+    access: {
+      evaluateBatch: (input) => request<EvaluateAccessBatchResponse>("/access/evaluate-batch", {
+        method: "POST",
+        body: json(input),
+      }),
     },
     auth: {
       getBootstrapStatus: () => request<BootstrapStatusDto>("/bootstrap/status"),
@@ -778,6 +808,11 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
         const query = search.size === 0 ? "" : `?${search.toString()}`;
         return request<DocumentListDto>(`${documentPath(collectionId)}${query}`);
       },
+      query: (collectionId, input) =>
+        request<DocumentQueryResultDto>(`${documentPath(collectionId)}/query`, {
+          method: "POST",
+          body: json(input),
+        }),
       get: (collectionId, documentId) =>
         request<DocumentRecordDto>(documentPath(collectionId, documentId)),
       create: (collectionId, input) =>

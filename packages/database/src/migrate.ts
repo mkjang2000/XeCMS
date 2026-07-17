@@ -23,6 +23,10 @@ import { USER_IDENTITY_MIGRATION_ID, applyUserIdentityMigration } from "./user-i
 import { SITE_SETTINGS_MIGRATION_ID, applySiteSettingsMigration } from "./site-settings-migration.js";
 import { AUDIT_RETENTION_MIGRATION_ID, applyAuditRetentionMigration } from "./audit-retention-migration.js";
 import { PLUGIN_PLATFORM_MIGRATION_ID, applyPluginPlatformMigration } from "./plugin-migration.js";
+import {
+  OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
+  applyOwnerDelegationReconciliationMigration,
+} from "./owner-delegation-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -35,6 +39,7 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   CONTENT_HIERARCHY_MIGRATION_ID,"0012_m3_authorization_resource_quarantine",
   IDENTITY_REALM_MIGRATION_ID,EVENT_WORKER_MIGRATION_ID,USER_IDENTITY_MIGRATION_ID,
   SITE_SETTINGS_MIGRATION_ID,AUDIT_RETENTION_MIGRATION_ID,PLUGIN_PLATFORM_MIGRATION_ID,
+  OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
 ] as const);
 
 export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> {
@@ -250,6 +255,16 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyPluginPlatformMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         PLUGIN_PLATFORM_MIGRATION_ID,
+      ]);
+    }
+    const ownerDelegationReconciliation = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID],
+    );
+    if (ownerDelegationReconciliation.rowCount === 0) {
+      await applyOwnerDelegationReconciliationMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

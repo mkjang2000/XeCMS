@@ -10,6 +10,40 @@ const emptySchema: SchemaIrV1 = {
 };
 
 describe("createAdminApi", () => {
+  it("exposes the typed self access profile through the Admin adapter", async () => {
+    const evaluateBatch = vi.fn().mockResolvedValue({
+      policyRevision: 6,
+      items: [{
+        id: "navigation.schema",
+        type: "permission",
+        supported: true,
+        decision: {
+          allowed: true,
+          action: "schema.read",
+          reasonCode: "ALLOW_PERMISSION",
+          resourceId: "resource:schema",
+          policyRevision: 6,
+          matchedGrants: [],
+        },
+      }],
+    });
+    const client = { access: { evaluateBatch } } as unknown as XeCmsClient;
+    const input = {
+      checks: [{
+        id: "navigation.schema",
+        type: "permission" as const,
+        action: "schema.read",
+        resourceId: "resource:schema",
+      }],
+    };
+
+    await expect(createAdminApi(client).access.evaluateBatch(input)).resolves.toMatchObject({
+      policyRevision: 6,
+      items: [{ id: "navigation.schema", supported: true }],
+    });
+    expect(evaluateBatch).toHaveBeenCalledWith(input);
+  });
+
   it("round-trips the exact Collection auth contract through schema drafts", async () => {
     const saveDraft = vi.fn().mockImplementation(async ({ schema }: { readonly schema: SchemaIrV1 }) => ({
       baseRevisionId: null,

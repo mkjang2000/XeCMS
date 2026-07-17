@@ -65,20 +65,6 @@ describe("loadServerConfig", () => {
       .toThrow("XECMS_WORKER_MAX_ATTEMPTS");
   });
 
-  it.each(["test", "production"] as const)(
-    "rejects development seed outside development (%s)",
-    (nodeEnv) => {
-      expect(() =>
-        loadServerConfig({
-          NODE_ENV: nodeEnv,
-          XECMS_DEV_SEED: "true",
-          DATABASE_URL: "postgresql://unused",
-          XECMS_SESSION_SECRET: "0123456789abcdef0123456789abcdef",
-        }),
-      ).toThrow("only allowed when NODE_ENV=development");
-    },
-  );
-
   it("requires a production session secret of at least 32 bytes", () => {
     expect(() =>
       loadServerConfig({

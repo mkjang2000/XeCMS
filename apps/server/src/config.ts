@@ -14,9 +14,6 @@ export interface ServerConfig {
   readonly adminDist: string;
   readonly sessionSecret: string;
   readonly secureCookies: boolean;
-  readonly developmentSeed: boolean;
-  readonly developmentAdminUsername: string;
-  readonly developmentAdminPassword: string;
   readonly mediaStorageRoot: string;
   readonly mediaMaxUploadBytes: number;
   readonly mediaAllowedMimeTypes: readonly string[];
@@ -35,11 +32,6 @@ export function loadServerConfig(
   if (rawNodeEnv !== "development" && rawNodeEnv !== "test" && rawNodeEnv !== "production") {
     throw new Error("NODE_ENV must be development, test, or production.");
   }
-  const developmentSeed = parseBoolean(env["XECMS_DEV_SEED"] ?? "false", "XECMS_DEV_SEED");
-  if (rawNodeEnv !== "development" && developmentSeed) {
-    throw new Error("XECMS_DEV_SEED is only allowed when NODE_ENV=development.");
-  }
-
   const sessionSecret =
     env["XECMS_SESSION_SECRET"] ??
     (rawNodeEnv === "production" ? "" : "xecms-local-development-secret-change-before-production");
@@ -101,9 +93,6 @@ export function loadServerConfig(
         : resolve(env["XECMS_ADMIN_DIST"]),
     sessionSecret,
     secureCookies: rawNodeEnv === "production",
-    developmentSeed,
-    developmentAdminUsername: env["XECMS_DEV_ADMIN_USERNAME"] ?? "admin",
-    developmentAdminPassword: env["XECMS_DEV_ADMIN_PASSWORD"] ?? "admin",
     mediaStorageRoot: resolve(env["XECMS_MEDIA_STORAGE_ROOT"] ?? ".xecms/media"),
     mediaMaxUploadBytes,
     mediaAllowedMimeTypes: Object.freeze(mediaAllowedMimeTypes),

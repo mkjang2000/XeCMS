@@ -16,12 +16,18 @@ import {
   DocumentApplicationService,
   type DocumentListState,
   type DocumentPage,
+  type DocumentQueryStorePage,
   type DocumentRecord,
   type DocumentStore,
   type PersistedDocumentEvent,
   type PublishedDocumentPage,
   type PublishedDocumentRecord,
 } from "./documents.js";
+import {
+  encodeDocumentQueryCursor,
+  type DocumentQueryScalar,
+  type NormalizedDocumentQuery,
+} from "./document-query.js";
 import {
   ApplicationError,
   type ActorContext,
@@ -409,6 +415,81 @@ describe("DocumentApplicationService lifecycle", () => {
       { status: "draft" },
     ]);
   });
+
+  it("rejects filtering or sorting by fields hidden from the actor", async () => {
+    const schemaFixture = mutableSchema(baseCollection);
+    const store = new MemoryDocumentStore();
+    const service = new DocumentApplicationService(schemaFixture.store, store, runtime());
+    const restricted: ActorContext = {
+      ...actor,
+      authorization: {
+        require: async () => undefined,
+        filterReadableData: async ({ data }) => "title" in data ? {} : data,
+        assertWritableData: async () => undefined,
+      },
+    };
+
+    await expect(service.query(restricted, "posts", {
+      filter: {
+        type: "condition",
+        field: { kind: "data", fieldId: "fld_title" },
+        operator: "contains",
+        value: "secret",
+      },
+    })).rejects.toMatchObject({
+      code: "DOCUMENT_QUERY_FIELD_FORBIDDEN",
+      status: 403,
+    });
+  });
+
+  it("fills cursor pages from visible documents instead of returning authorization holes", async () => {
+    const schemaFixture = mutableSchema({
+      ...baseCollection,
+      hierarchy: { enabled: true, permissionInheritance: true },
+    });
+    const store = new MemoryDocumentStore();
+    const service = new DocumentApplicationService(schemaFixture.store, store, runtime());
+    for (let index = 1; index <= 5; index += 1) {
+      await service.create(actor, "posts", { title: `Post ${index}` }, {
+        parentId: null,
+        position: index - 1,
+        expectedVersion: index - 1,
+      });
+    }
+    const restricted: ActorContext = {
+      ...actor,
+      subjectId: "subject_restricted",
+      authorization: {
+        require: async () => undefined,
+        filterReadableData: async ({ resourceId, data }) => {
+          if (resourceId.endsWith(":doc_5") || resourceId.endsWith(":doc_3")) {
+            throw new ApplicationError("ACCESS_DENIED", 403, "hidden");
+          }
+          return data;
+        },
+        assertWritableData: async () => undefined,
+      },
+    };
+
+    const first = await service.query(restricted, "posts", { limit: 2 });
+    expect(first).toMatchObject({
+      hasNextPage: true,
+      items: [
+        { id: "doc_4", data: { title: "Post 4" } },
+        { id: "doc_2", data: { title: "Post 2" } },
+      ],
+    });
+    expect(first.nextCursor).toBeTypeOf("string");
+
+    const second = await service.query(restricted, "posts", {
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    expect(second).toMatchObject({
+      hasNextPage: false,
+      items: [{ id: "doc_1", data: { title: "Post 1" } }],
+    });
+  });
 });
 
 class MemoryDocumentStore implements DocumentStore {
@@ -460,6 +541,35 @@ class MemoryDocumentStore implements DocumentStore {
       page: input.page,
       pageSize: input.pageSize,
       total: matching.length,
+    };
+  }
+
+  async queryDocuments(
+    collection: CollectionDefinition,
+    input: NormalizedDocumentQuery,
+  ): Promise<DocumentQueryStorePage> {
+    const matching = [...this.aggregates.values()]
+      .filter((aggregate) =>
+        String(aggregate.identity.collectionId) === String(collection.id) &&
+        (input.state === "deleted"
+          ? aggregate.identity.deletion !== null
+          : aggregate.identity.deletion === null))
+      .map(adminRecord)
+      .sort((left, right) => compareQueryRecords(left, right, collection, input));
+    const afterCursor = input.cursorValues === undefined
+      ? matching
+      : matching.filter((record) =>
+        compareRecordToCursor(record, collection, input, input.cursorValues!) > 0);
+    const selected = afterCursor.slice(0, input.limit);
+    return {
+      items: selected.map((document) => ({
+        document,
+        cursor: encodeDocumentQueryCursor(
+          input.fingerprint,
+          input.sort.map(({ field }) => queryRecordValue(document, collection, field)),
+        ),
+      })),
+      hasNextPage: afterCursor.length > input.limit,
     };
   }
 
@@ -531,6 +641,78 @@ function adminRecord(aggregate: DocumentAggregate): DocumentRecord {
     publication: aggregate.identity.publication,
     deletion: aggregate.identity.deletion,
   };
+}
+
+function compareQueryRecords(
+  left: DocumentRecord,
+  right: DocumentRecord,
+  collection: CollectionDefinition,
+  query: NormalizedDocumentQuery,
+): number {
+  for (const sort of query.sort) {
+    const comparison = compareQueryScalars(
+      queryRecordValue(left, collection, sort.field),
+      queryRecordValue(right, collection, sort.field),
+      sort.direction,
+    );
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
+function compareRecordToCursor(
+  record: DocumentRecord,
+  collection: CollectionDefinition,
+  query: NormalizedDocumentQuery,
+  cursorValues: readonly DocumentQueryScalar[],
+): number {
+  for (const [index, sort] of query.sort.entries()) {
+    const comparison = compareQueryScalars(
+      queryRecordValue(record, collection, sort.field),
+      cursorValues[index]!,
+      sort.direction,
+    );
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
+function queryRecordValue(
+  record: DocumentRecord,
+  collection: CollectionDefinition,
+  field: NormalizedDocumentQuery["sort"][number]["field"],
+): DocumentQueryScalar {
+  if (field.kind === "system") {
+    switch (field.field) {
+      case "id": return record.id;
+      case "createdAt": return record.createdAt;
+      case "updatedAt": return record.updatedAt;
+      case "version": return record.version;
+    }
+  }
+  const name = collection.fields.find(({ id }) => String(id) === field.fieldId)!.name;
+  const value = record.data[name];
+  return value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+    ? value
+    : null;
+}
+
+function compareQueryScalars(
+  left: DocumentQueryScalar,
+  right: DocumentQueryScalar,
+  direction: "asc" | "desc",
+): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  let comparison: number;
+  if (typeof left === "number" && typeof right === "number") comparison = left - right;
+  else if (typeof left === "boolean" && typeof right === "boolean") comparison = Number(left) - Number(right);
+  else comparison = String(left).localeCompare(String(right));
+  return direction === "asc" ? comparison : -comparison;
 }
 
 function publicRecord(aggregate: DocumentAggregate): PublishedDocumentRecord | null {

@@ -31,11 +31,6 @@ const environment = {
   DATABASE_URL:
     process.env.DATABASE_URL ??
     "postgresql://xecms:xecms@127.0.0.1:54320/xecms",
-  XECMS_DEV_SEED: process.env.XECMS_DEV_SEED ?? "true",
-  XECMS_DEV_ADMIN_USERNAME:
-    process.env.XECMS_DEV_ADMIN_USERNAME ?? "admin",
-  XECMS_DEV_ADMIN_PASSWORD:
-    process.env.XECMS_DEV_ADMIN_PASSWORD ?? "admin",
   XECMS_SESSION_SECRET:
     process.env.XECMS_SESSION_SECRET ?? "local-development-only-change-me",
 };

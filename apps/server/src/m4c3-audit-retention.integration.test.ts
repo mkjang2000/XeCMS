@@ -3,6 +3,7 @@ import { PostgresDatabase, qualifiedName, quoteIdentifier } from "@xecms/databas
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { loadServerConfig } from "./config.js";
+import { bootstrapTestOwner, TEST_OWNER_PASSWORD, TEST_OWNER_USERNAME } from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN=process.env["XECMS_RUN_POSTGRES_TESTS"]==="true";
@@ -16,7 +17,8 @@ describe.runIf(RUN)("M4-C3 Audit and retention HTTP acceptance",()=>{
     const database=new PostgresDatabase({connectionString:DATABASE_URL,schema,maxConnections:5});
     let server:XeCmsServer|undefined;
     try{
-      server=await buildServer({database,logger:false,config:loadServerConfig({NODE_ENV:"development",DATABASE_URL,XECMS_DB_SCHEMA:schema,XECMS_SESSION_SECRET:"m4c3-integration-session-secret-0123456789",XECMS_DEV_SEED:"true",XECMS_DEV_ADMIN_USERNAME:"admin",XECMS_DEV_ADMIN_PASSWORD:"admin",XECMS_ADMIN_ORIGINS:ORIGIN,XECMS_ADMIN_DIST:"/not-used-in-http-test"})});
+      server=await buildServer({database,logger:false,config:loadServerConfig({NODE_ENV:"development",DATABASE_URL,XECMS_DB_SCHEMA:schema,XECMS_SESSION_SECRET:"m4c3-integration-session-secret-0123456789",XECMS_ADMIN_ORIGINS:ORIGIN,XECMS_ADMIN_DIST:"/not-used-in-http-test"})});
+      await bootstrapTestOwner(server);
       const session=await login(server);
       const owner=await database.findOwnerIdentity();
       await database.pool.query(
@@ -43,7 +45,7 @@ describe.runIf(RUN)("M4-C3 Audit and retention HTTP acceptance",()=>{
       const policy=policyResponse.json();
       const wrong=await mutate(server,session,"PATCH","/api/retention/policy",policyInput(policy.revision,"wrong"));
       expect(wrong.statusCode).toBe(401);
-      const updated=await mutate(server,session,"PATCH","/api/retention/policy",policyInput(policy.revision,"admin"));
+      const updated=await mutate(server,session,"PATCH","/api/retention/policy",policyInput(policy.revision,TEST_OWNER_PASSWORD));
       expect(updated.statusCode,updated.body).toBe(200);
       expect(updated.json()).toMatchObject({revision:policy.revision+1,auditDays:90});
       const noCsrf=await server.app.inject({method:"POST",url:"/api/retention/preview",headers:{cookie:session.cookie,origin:ORIGIN},payload:{expectedPolicyRevision:updated.json().revision}});
@@ -53,10 +55,10 @@ describe.runIf(RUN)("M4-C3 Audit and retention HTTP acceptance",()=>{
       expect(preview.json()).toMatchObject({status:"previewed",policyRevision:updated.json().revision});
       const wrongApply=await mutate(server,session,"POST",`/api/retention/plans/${preview.json().id}/apply`,{expectedPolicyRevision:updated.json().revision,currentPassword:"wrong"});
       expect(wrongApply.statusCode).toBe(401);
-      const applied=await mutate(server,session,"POST",`/api/retention/plans/${preview.json().id}/apply`,{expectedPolicyRevision:updated.json().revision,currentPassword:"admin"});
+      const applied=await mutate(server,session,"POST",`/api/retention/plans/${preview.json().id}/apply`,{expectedPolicyRevision:updated.json().revision,currentPassword:TEST_OWNER_PASSWORD});
       expect(applied.statusCode,applied.body).toBe(200);
       expect(applied.json().status).toBe("applied");
-      const idempotent=await mutate(server,session,"POST",`/api/retention/plans/${preview.json().id}/apply`,{expectedPolicyRevision:updated.json().revision,currentPassword:"admin"});
+      const idempotent=await mutate(server,session,"POST",`/api/retention/plans/${preview.json().id}/apply`,{expectedPolicyRevision:updated.json().revision,currentPassword:TEST_OWNER_PASSWORD});
       expect(idempotent.statusCode,idempotent.body).toBe(200);
       expect((await get(server,session,"/api/media/consistency")).statusCode).toBe(200);
     }finally{
@@ -68,6 +70,6 @@ describe.runIf(RUN)("M4-C3 Audit and retention HTTP acceptance",()=>{
 });
 
 function policyInput(revision:number,currentPassword:string){return{expectedRevision:revision,auditDays:90,dispatchedOutboxDays:7,succeededDeliveryDays:7,deadDeliveryDays:30,expiredSessionDays:1,softDeletedDocumentDays:1,currentPassword}}
-async function login(server:XeCmsServer):Promise<Session>{const response=await server.app.inject({method:"POST",url:"/api/auth/login",headers:{origin:ORIGIN},payload:{username:"admin",password:"admin"}});expect(response.statusCode,response.body).toBe(200);return{cookie:String(response.headers["set-cookie"]).split(";",1)[0]!,csrfToken:response.json().csrfToken as string}}
+async function login(server:XeCmsServer):Promise<Session>{const response=await server.app.inject({method:"POST",url:"/api/auth/login",headers:{origin:ORIGIN},payload:{username:TEST_OWNER_USERNAME,password:TEST_OWNER_PASSWORD}});expect(response.statusCode,response.body).toBe(200);return{cookie:String(response.headers["set-cookie"]).split(";",1)[0]!,csrfToken:response.json().csrfToken as string}}
 function get(server:XeCmsServer,session:Session,url:string):Promise<LightMyRequestResponse>{return server.app.inject({method:"GET",url,headers:{cookie:session.cookie,origin:ORIGIN}})}
 function mutate(server:XeCmsServer,session:Session,method:"POST"|"PATCH",url:string,payload:Readonly<Record<string,unknown>>):Promise<LightMyRequestResponse>{return server.app.inject({method,url,headers:{cookie:session.cookie,"x-csrf-token":session.csrfToken,origin:ORIGIN},payload})}

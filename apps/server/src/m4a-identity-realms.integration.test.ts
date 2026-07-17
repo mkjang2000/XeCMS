@@ -5,6 +5,11 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 
 import { loadServerConfig } from "./config.js";
+import {
+  bootstrapTestOwner,
+  TEST_OWNER_PASSWORD,
+  TEST_OWNER_USERNAME,
+} from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -50,9 +55,6 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
       DATABASE_URL,
       XECMS_DB_SCHEMA: schema,
       XECMS_SESSION_SECRET: "m4a-integration-session-secret-0123456789",
-      XECMS_DEV_SEED: "true",
-      XECMS_DEV_ADMIN_USERNAME: "admin",
-      XECMS_DEV_ADMIN_PASSWORD: "admin",
       XECMS_ADMIN_ORIGINS: ORIGIN,
       XECMS_CONTENT_ORIGINS: ORIGIN,
       XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
@@ -60,6 +62,7 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
     let server: XeCmsServer | undefined;
     try {
       server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
       const owner = await loginAdmin(server);
       const createdRealm = await adminJson<Realm>(server, owner, "POST", "/api/identity-realms", {
         key: "community",
@@ -83,7 +86,7 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
         owner,
         "POST",
         `/api/identity-realms/${realm.realmId}/memberships`,
-        { globalIdentityId: adminIdentity!.globalIdentityId, profile: { displayName: "Realm Admin" }, password: "admin" },
+        { globalIdentityId: adminIdentity!.globalIdentityId, profile: { displayName: "Realm Admin" }, password: TEST_OWNER_PASSWORD },
         201,
       );
       expect(adminMembership.status).toBe("active");
@@ -137,7 +140,7 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
       const fullAccess = await adminJson<{ readonly bindingId: string }>(server, owner, "POST", `/api/identity-realms/${realm.realmId}/full-access`, {
         subjectId: signup.body.subjectId,
         reason: "M4-A recovery acceptance",
-        password: "admin",
+        password: TEST_OWNER_PASSWORD,
       }, 201);
       const allowedByFullAccess = await contentRequest(server, member, "GET", "/api/content-realms/community/collections/col_articles/documents");
       expect(allowedByFullAccess.statusCode).toBe(200);
@@ -165,17 +168,17 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
       expect(suspendedSession.statusCode).toBe(200);
       expect(suspendedSession.json().authenticated).toBe(false);
 
-      await adminJson(server, owner, "DELETE", `/api/identity-realms/${realm.realmId}/full-access/${fullAccess.bindingId}`, { password: "admin" }, 200);
+      await adminJson(server, owner, "DELETE", `/api/identity-realms/${realm.realmId}/full-access/${fullAccess.bindingId}`, { password: TEST_OWNER_PASSWORD }, 200);
     } finally {
       await server?.close();
       await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(() => undefined);
       await database.close();
     }
-  });
+  }, 30_000);
 });
 
 async function loginAdmin(server: XeCmsServer): Promise<Session> {
-  const response = await server.app.inject({ method: "POST", url: "/api/auth/login", headers: { origin: ORIGIN }, payload: { username: "admin", password: "admin" } });
+  const response = await server.app.inject({ method: "POST", url: "/api/auth/login", headers: { origin: ORIGIN }, payload: { username: TEST_OWNER_USERNAME, password: TEST_OWNER_PASSWORD } });
   expect(response.statusCode, response.body).toBe(200);
   return { cookie: String(response.headers["set-cookie"]).split(";", 1)[0]!, csrfToken: response.json().csrfToken as string };
 }

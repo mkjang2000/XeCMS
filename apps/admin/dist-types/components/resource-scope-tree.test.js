@@ -48,9 +48,13 @@ describe("authorization resource tree", () => {
         await user.keyboard("{ArrowDown}");
         expect(document.activeElement).toBe(screen.getByRole("button", { name: "Home, Document" }));
         await user.click(screen.getByRole("button", { name: "Team, Document" }));
-        await user.click(screen.getByRole("radio", { name: /현재 및 모든 하위/ }));
+        await user.click(screen.getByRole("radio", { name: /현재 \+ 모든 하위/ }));
         expect(onChange).toHaveBeenCalledWith("document:team");
         expect(onPropagationChange).toHaveBeenCalledWith("self-and-children");
+    });
+    it("warns that children propagation excludes the selected resource", () => {
+        render(_jsx(ScopeTreeSelector, { label: "Resource Scope", resources: resources, value: "collection:pages", onChange: vi.fn(), propagation: "children", onPropagationChange: vi.fn() }));
+        expect(screen.getByRole("note").textContent).toContain("현재 선택한 리소스에서는 이 역할이 적용되지 않습니다");
     });
 });
 //# sourceMappingURL=resource-scope-tree.test.js.map

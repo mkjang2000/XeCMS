@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./fixtures.js";
 
 const serverUrl = process.env.XECMS_SERVER_URL ?? "http://127.0.0.1:3100";
 const ownerPassword = "Admin-test-only-2026!";

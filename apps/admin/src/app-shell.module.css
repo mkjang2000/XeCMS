@@ -164,7 +164,10 @@
   position: relative;
   z-index: 1;
   display: grid;
+  min-height: 0;
   gap: 0.32rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .navLabel {
@@ -174,6 +177,13 @@
   font-weight: 720;
   letter-spacing: 0.105em;
   text-transform: uppercase;
+}
+
+.navMessage {
+  padding: 0.65rem;
+  color: var(--xe-color-nav-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .nav a {
@@ -345,6 +355,12 @@
   font-weight: 600;
 }
 
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
 .environment::before {
   width: 0.44rem;
   height: 0.44rem;
@@ -403,6 +419,8 @@
     display: flex;
     justify-content: center;
     gap: 0.3rem;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .nav a {
@@ -479,6 +497,10 @@
 
   .topbarContext span:last-child,
   .topbarDivider {
+    display: none;
+  }
+
+  .environment {
     display: none;
   }
 

@@ -184,7 +184,6 @@ export interface AuthenticatedSessionDto extends SessionDto {
 
 export interface BootstrapStatusDto {
   readonly required: boolean;
-  readonly developmentSeeded?: boolean;
 }
 
 export interface BootstrapRequest {
@@ -428,6 +427,58 @@ export interface DocumentListDto {
 
 export type DocumentListState = "active" | "deleted";
 
+export type DocumentQuerySystemFieldDto = "id" | "createdAt" | "updatedAt" | "version";
+export type DocumentQueryScalarDto = string | number | boolean | null;
+export type DocumentQueryOperatorDto =
+  | "eq"
+  | "ne"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "contains"
+  | "startsWith"
+  | "in"
+  | "isNull"
+  | "isNotNull";
+
+export type DocumentQueryFieldReferenceDto =
+  | { readonly kind: "system"; readonly field: DocumentQuerySystemFieldDto }
+  | { readonly kind: "data"; readonly fieldId: string };
+
+export type DocumentQueryFilterDto =
+  | {
+      readonly type: "condition";
+      readonly field: DocumentQueryFieldReferenceDto;
+      readonly operator: DocumentQueryOperatorDto;
+      readonly value?: DocumentQueryScalarDto | readonly DocumentQueryScalarDto[];
+    }
+  | {
+      readonly type: "group";
+      readonly operator: "and" | "or";
+      readonly filters: readonly DocumentQueryFilterDto[];
+    };
+
+export interface DocumentQuerySortDto {
+  readonly field: DocumentQueryFieldReferenceDto;
+  readonly direction: "asc" | "desc";
+}
+
+export interface DocumentQueryRequest {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly state?: DocumentListState;
+  readonly fields?: readonly string[];
+  readonly filter?: DocumentQueryFilterDto;
+  readonly sort?: readonly DocumentQuerySortDto[];
+}
+
+export interface DocumentQueryResultDto {
+  readonly items: readonly DocumentRecordDto[];
+  readonly hasNextPage: boolean;
+  readonly nextCursor?: string;
+}
+
 export type DocumentRevisionOriginDto =
   | { readonly kind: "create" | "edit" }
   | { readonly kind: "restore"; readonly restoredFromRevisionId: string };
@@ -639,6 +690,70 @@ export interface AuthorizationDecisionDto {
   readonly targetLevel?: number;
   readonly policyRevision: number;
   readonly matchedGrants: readonly AuthorizationMatchedGrantDto[];
+}
+
+export interface AccessEvaluationContextDto {
+  readonly ownerSubjectId?: string;
+  readonly status?: string;
+}
+
+export type AccessEvaluationCheckDto =
+  | {
+      readonly id: string;
+      readonly type: "permission";
+      readonly action: string;
+      readonly resourceId: string;
+      readonly context?: AccessEvaluationContextDto;
+    }
+  | {
+      readonly id: string;
+      readonly type: "field";
+      readonly action: string;
+      readonly resourceId: string;
+      readonly field: string;
+      readonly access: "read" | "write";
+      readonly context?: AccessEvaluationContextDto;
+    };
+
+export interface EvaluateAccessBatchRequest {
+  readonly checks: readonly AccessEvaluationCheckDto[];
+}
+
+export interface AuthorizationFieldMatchedGrantDto {
+  readonly sourceRoleId: string;
+  readonly sourceBindingId: string;
+  readonly sourceResourceId: string;
+  readonly membershipPath: readonly string[];
+}
+
+export interface AuthorizationFieldDecisionDto {
+  readonly allowed: boolean;
+  readonly access: "read" | "write";
+  readonly field: string;
+  readonly resourceId: string;
+  readonly reasonCode: string;
+  readonly policyRevision: number;
+  readonly matchedGrants: readonly AuthorizationFieldMatchedGrantDto[];
+}
+
+export type AccessEvaluationResultItemDto =
+  | {
+      readonly id: string;
+      readonly type: "permission";
+      readonly supported: boolean;
+      readonly decision: AuthorizationDecisionDto;
+    }
+  | {
+      readonly id: string;
+      readonly type: "field";
+      readonly action: string;
+      readonly supported: boolean;
+      readonly decision: AuthorizationFieldDecisionDto;
+    };
+
+export interface EvaluateAccessBatchResponse {
+  readonly policyRevision: number;
+  readonly items: readonly AccessEvaluationResultItemDto[];
 }
 
 export interface AuthorizationAuditEntryDto {

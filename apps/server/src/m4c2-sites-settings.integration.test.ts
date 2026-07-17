@@ -5,6 +5,11 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 
 import { loadServerConfig, type ServerConfig } from "./config.js";
+import {
+  bootstrapTestOwner,
+  TEST_OWNER_PASSWORD,
+  TEST_OWNER_USERNAME,
+} from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -28,9 +33,6 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
       DATABASE_URL,
       XECMS_DB_SCHEMA: schema,
       XECMS_SESSION_SECRET: "m4c2-integration-session-secret-0123456789",
-      XECMS_DEV_SEED: "true",
-      XECMS_DEV_ADMIN_USERNAME: "admin",
-      XECMS_DEV_ADMIN_PASSWORD: "admin",
       XECMS_ADMIN_ORIGINS: ORIGIN,
       XECMS_ADMIN_DIST: "/not-used-in-http-test",
       XECMS_SCHEMA_MODE: "editable",
@@ -38,6 +40,7 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
     let server: XeCmsServer | undefined;
     try {
       server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
       const owner = await login(server);
 
       const diagnostics = await get(server, owner, "/api/system/diagnostics");
@@ -65,7 +68,7 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
         displayName: "C2 Workspace",
         defaultTimezone: "Asia/Seoul",
         adminLocale: "ko-KR",
-        currentPassword: "admin",
+        currentPassword: TEST_OWNER_PASSWORD,
       });
       expect(updatedWorkspace.statusCode, updatedWorkspace.body).toBe(200);
       expect(updatedWorkspace.json()).toMatchObject({ displayName: "C2 Workspace", revision: 2 });
@@ -74,7 +77,7 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
         displayName: "Stale Workspace",
         defaultTimezone: "UTC",
         adminLocale: "en-US",
-        currentPassword: "admin",
+        currentPassword: TEST_OWNER_PASSWORD,
       });
       expect(staleWorkspace.statusCode).toBe(409);
       expect(staleWorkspace.json().code).toBe("WORKSPACE_REVISION_CONFLICT");
@@ -103,7 +106,7 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
         {
           expectedSiteRevision: secondary.revision,
           expectedPolicyRevision: policy.json().revision,
-          currentPassword: "admin",
+          currentPassword: TEST_OWNER_PASSWORD,
         },
       );
       expect(bound.statusCode, bound.body).toBe(200);
@@ -134,7 +137,7 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
         restartedOwner,
         "POST",
         `/api/sites/${secondary.siteId}/archive`,
-        { expectedRevision: secondary.revision, currentPassword: "admin" },
+        { expectedRevision: secondary.revision, currentPassword: TEST_OWNER_PASSWORD },
       );
       expect(archived.statusCode, archived.body).toBe(200);
       expect(archived.json()).toMatchObject({ status: "archived", isDefault: false });
@@ -153,7 +156,7 @@ describe.runIf(RUN)("M4-C2 Sites and settings HTTP acceptance", () => {
         restartedOwner,
         "POST",
         `/api/sites/${primary.siteId}/archive`,
-        { expectedRevision: primary.revision, currentPassword: "admin" },
+        { expectedRevision: primary.revision, currentPassword: TEST_OWNER_PASSWORD },
       );
       expect(defaultArchiveWithoutReplacement.statusCode).toBe(409);
       expect(defaultArchiveWithoutReplacement.json().code).toBe("SITE_DEFAULT_REPLACEMENT_REQUIRED");
@@ -179,7 +182,7 @@ async function login(server: XeCmsServer): Promise<Session> {
     method: "POST",
     url: "/api/auth/login",
     headers: { origin: ORIGIN },
-    payload: { username: "admin", password: "admin" },
+    payload: { username: TEST_OWNER_USERNAME, password: TEST_OWNER_PASSWORD },
   });
   expect(response.statusCode, response.body).toBe(200);
   return {

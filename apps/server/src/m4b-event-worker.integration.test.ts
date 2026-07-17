@@ -5,6 +5,11 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 
 import { loadServerConfig } from "./config.js";
+import {
+  bootstrapTestOwner,
+  TEST_OWNER_PASSWORD,
+  TEST_OWNER_USERNAME,
+} from "./integration-test-support.js";
 import { buildServer, type XeCmsServer } from "./server.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -39,9 +44,6 @@ describe.runIf(RUN)("M4-B event worker acceptance", () => {
       DATABASE_URL,
       XECMS_DB_SCHEMA: schema,
       XECMS_SESSION_SECRET: "m4b-integration-session-secret-0123456789",
-      XECMS_DEV_SEED: "true",
-      XECMS_DEV_ADMIN_USERNAME: "admin",
-      XECMS_DEV_ADMIN_PASSWORD: "admin",
       XECMS_ADMIN_ORIGINS: ORIGIN,
       XECMS_CONTENT_ORIGINS: ORIGIN,
       XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
@@ -51,6 +53,7 @@ describe.runIf(RUN)("M4-B event worker acceptance", () => {
     let server: XeCmsServer | undefined;
     try {
       server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
       const owner = await login(server);
       await applySchema(server, owner);
 
@@ -183,7 +186,7 @@ describe.runIf(RUN)("M4-B event worker acceptance", () => {
 });
 
 async function login(server: XeCmsServer): Promise<Session> {
-  const response = await server.app.inject({ method: "POST", url: "/api/auth/login", headers: { origin: ORIGIN }, payload: { username: "admin", password: "admin" } });
+  const response = await server.app.inject({ method: "POST", url: "/api/auth/login", headers: { origin: ORIGIN }, payload: { username: TEST_OWNER_USERNAME, password: TEST_OWNER_PASSWORD } });
   expect(response.statusCode, response.body).toBe(200);
   return { cookie: String(response.headers["set-cookie"]).split(";", 1)[0]!, csrfToken: response.json().csrfToken as string };
 }

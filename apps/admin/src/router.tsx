@@ -3,7 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { toAdminApiError, type AdminApi } from "@xecms/admin";
 import { Button, LoadingIndicator } from "@xecms/ui";
 import styles from "./app.module.css";
-import { AppShell } from "./pages/app-shell.js";
+import { AdminIndexRedirect, AppShell } from "./pages/app-shell.js";
 import { queryKeys } from "./queries.js";
 
 function RouteErrorPage() {
@@ -115,7 +115,7 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
       hydrateFallbackElement: <RouteLoadingPage />,
       errorElement: <RouteErrorPage />,
       children: [
-        { index: true, element: <Navigate to="schema" replace /> },
+        { index: true, element: <AdminIndexRedirect /> },
         {
           path: "schema",
           lazy: async () => ({ Component: (await import("./pages/collection-pages.js")).SchemaListPage }),

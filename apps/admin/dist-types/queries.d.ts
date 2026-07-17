@@ -1,6 +1,7 @@
 export declare const queryKeys: {
     bootstrap: readonly ["bootstrap"];
     session: readonly ["session"];
+    accessProfile: (scope: string, checkIds: readonly string[]) => readonly ["access-profile", string, ...string[]];
     diagnostics: readonly ["settings", "diagnostics"];
     workspaceSettings: readonly ["settings", "workspace"];
     sites: readonly ["settings", "sites"];

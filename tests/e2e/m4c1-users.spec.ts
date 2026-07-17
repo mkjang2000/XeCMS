@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures.js";
 
-const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "admin";
+const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "Admin-test-only-2026!";
 
 async function login(
   page: Page,

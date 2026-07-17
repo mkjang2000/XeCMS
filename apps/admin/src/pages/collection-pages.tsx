@@ -1,12 +1,23 @@
 import { Link, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Badge, Button, Callout, EmptyState } from "@xecms/ui";
-import { useAdminApi, type CollectionSummary } from "@xecms/admin";
+import { accessAllowed, useAdminApi, type CollectionSummary } from "@xecms/admin";
+import {
+  permissionCheck,
+  systemResources,
+  useAccessProfile,
+} from "../access-profile.js";
 import styles from "../app.module.css";
 import { LoadError, PageLoading } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
+import { DisplayModeGate } from "../display-mode.js";
 import { Page, PageHeader } from "../components/page.js";
 import { queryKeys } from "../queries.js";
+
+const schemaActionChecks = [
+  permissionCheck("schema.action.create", "schema.create", systemResources.schema),
+  permissionCheck("schema.action.export", "schema.export", systemResources.schema),
+] as const;
 
 function Status({ collection }: { readonly collection: CollectionSummary }) {
   const pending = collection.status === "applied" && collection.hasPendingChanges;
@@ -25,14 +36,17 @@ export function SchemaListPage() {
     queryKey: queryKeys.diagnostics,
     queryFn: () => api.settings.diagnostics(),
   });
+  const accessProfile = useAccessProfile("schema-actions", schemaActionChecks);
   const editable = diagnostics.data?.schemaMode === "editable";
+  const canCreate = editable && accessAllowed(accessProfile.data, "schema.action.create");
+  const canUseTools = accessAllowed(accessProfile.data, "schema.action.export");
   return (
     <Page>
       <PageHeader
         eyebrow="Structure"
         title="스키마"
         description="컬렉션과 필드를 정의한 뒤 데이터베이스 변경을 검토합니다."
-        actions={<><Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button><Button isDisabled={!editable} onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button></>}
+        actions={<>{canUseTools ? <DisplayModeGate minimum="advanced"><Button variant="secondary" onPress={() => navigate("/admin/schema/tools")}>Manifest · TypeScript</Button></DisplayModeGate> : null}{canCreate ? <Button onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button> : null}</>}
       />
       {diagnostics.data && !editable ? (
         <Callout tone="warning">
@@ -45,7 +59,7 @@ export function SchemaListPage() {
         <EmptyState
           title="아직 컬렉션이 없습니다"
           description="첫 컬렉션을 만들고 콘텐츠 구조를 정의해 보세요."
-          action={<Button isDisabled={!editable} onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button>}
+          action={canCreate ? <Button onPress={() => navigate("/admin/schema/new")}><Icon name="plus" size={17} />새 콘텐츠 타입</Button> : undefined}
         />
       ) : null}
       {query.data && query.data.items.length > 0 ? (
@@ -58,7 +72,7 @@ export function SchemaListPage() {
               </div>
               <div className={styles.collectionCardBody}>
                 <h2>{collection.label || collection.name}</h2>
-                <div className={styles.collectionMeta}>{collection.name}</div>
+                <DisplayModeGate minimum="standard"><div className={styles.collectionMeta}>{collection.name}</div></DisplayModeGate>
               </div>
               <div className={styles.collectionCardFooter}>
                 <span>필드 {collection.fieldCount}개</span>
@@ -97,7 +111,7 @@ export function ContentCollectionsPage() {
               </div>
               <div className={styles.collectionCardBody}>
                 <h2>{collection.label || collection.name}</h2>
-                <div className={styles.collectionMeta}>{collection.name}</div>
+                <DisplayModeGate minimum="standard"><div className={styles.collectionMeta}>{collection.name}</div></DisplayModeGate>
               </div>
               <div className={styles.collectionCardFooter}>
                 <span>필드 {collection.fieldCount}개 · 문서 관리</span>

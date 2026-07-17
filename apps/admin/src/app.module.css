@@ -157,6 +157,13 @@
   gap: 1rem;
 }
 
+.collectionIdentityGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 1rem;
+}
+
 .collectionGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
@@ -410,6 +417,24 @@
   border: 1px solid var(--xe-color-border);
   border-radius: var(--xe-radius-md);
   background: rgb(255 255 255 / 90%);
+  box-shadow: 0 12px 28px rgb(30 39 59 / 10%);
+  backdrop-filter: blur(12px);
+}
+
+.schemaFormActions {
+  position: sticky;
+  z-index: 5;
+  bottom: 1rem;
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding: 0.65rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: rgb(255 255 255 / 92%);
   box-shadow: 0 12px 28px rgb(30 39 59 / 10%);
   backdrop-filter: blur(12px);
 }
@@ -1168,6 +1193,7 @@
   }
 
   .settingsGrid,
+  .collectionIdentityGrid,
   .fieldGrid,
   .schemaAdvancedGrid,
   .authIdentifierList {
@@ -1185,6 +1211,16 @@
 
   .collectionGrid {
     grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  }
+}
+
+@media (min-width: 801px) and (max-width: 1180px) {
+  .collectionIdentityGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .collectionIdentityGrid > :last-child {
+    grid-column: 1 / -1;
   }
 }
 
@@ -1236,6 +1272,19 @@
   }
 
   .formActions > button {
+    flex: 1;
+  }
+
+  .schemaFormActions {
+    position: static;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .schemaFormActions > button {
     flex: 1;
   }
 

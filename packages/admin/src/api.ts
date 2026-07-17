@@ -493,6 +493,52 @@ export interface DocumentRecord {
   readonly updatedAt: string;
 }
 
+export type DocumentQuerySystemField = "id" | "createdAt" | "updatedAt" | "version";
+export type DocumentQueryScalar = string | number | boolean | null;
+export type DocumentQueryOperator =
+  | "eq"
+  | "ne"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "contains"
+  | "startsWith"
+  | "in"
+  | "isNull"
+  | "isNotNull";
+export type DocumentQueryFieldReference =
+  | { readonly kind: "system"; readonly field: DocumentQuerySystemField }
+  | { readonly kind: "data"; readonly fieldId: string };
+export type DocumentQueryFilter =
+  | {
+      readonly type: "condition";
+      readonly field: DocumentQueryFieldReference;
+      readonly operator: DocumentQueryOperator;
+      readonly value?: DocumentQueryScalar | readonly DocumentQueryScalar[];
+    }
+  | {
+      readonly type: "group";
+      readonly operator: "and" | "or";
+      readonly filters: readonly DocumentQueryFilter[];
+    };
+export interface DocumentQuerySort {
+  readonly field: DocumentQueryFieldReference;
+  readonly direction: "asc" | "desc";
+}
+export interface DocumentQueryInput {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly state?: "active" | "deleted";
+  readonly fields?: readonly string[];
+  readonly filter?: DocumentQueryFilter;
+  readonly sort?: readonly DocumentQuerySort[];
+}
+export interface DocumentQueryResult extends PageResult<DocumentRecord> {
+  readonly hasNextPage: boolean;
+  readonly nextCursor?: string;
+}
+
 export type DocumentRevisionOrigin =
   | { readonly kind: "create" }
   | { readonly kind: "edit" }
@@ -769,6 +815,11 @@ export interface AuthorizationAdminApi {
 }
 
 export interface AdminApi {
+  readonly access: {
+    evaluateBatch(input: {
+      readonly checks: readonly import("./access.js").AccessEvaluationCheck[];
+    }): Promise<import("./access.js").AccessEvaluationProfile>;
+  };
   readonly auth: {
     getBootstrapStatus(): Promise<BootstrapStatus>;
     bootstrap(credentials: AuthCredentials): Promise<{ readonly user: AdminUser }>;
@@ -824,6 +875,7 @@ export interface AdminApi {
         readonly state?: "active" | "deleted";
       },
     ): Promise<PaginatedPageResult<DocumentRecord>>;
+    query(collectionId: string, input: DocumentQueryInput): Promise<DocumentQueryResult>;
     get(collectionId: string, documentId: string): Promise<DocumentRecord>;
     create(collectionId: string, input: {
       readonly data: DocumentData;

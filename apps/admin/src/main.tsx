@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AdminApiProvider, toAdminApiError } from "@xecms/admin";
 import "@xecms/ui/theme.css";
 import { createAdminApi } from "./client-adapter.js";
+import { DisplayModeProvider } from "./display-mode.js";
 import { createAdminRouter } from "./router.js";
 
 const api = createAdminApi();
@@ -28,7 +29,9 @@ createRoot(rootElement).render(
   <StrictMode>
     <AdminApiProvider api={api}>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <DisplayModeProvider>
+          <RouterProvider router={router} />
+        </DisplayModeProvider>
       </QueryClientProvider>
     </AdminApiProvider>
   </StrictMode>,

@@ -23,6 +23,8 @@ import type {
   IdentityRealmDto,
   IdentityRealmListDto,
   DocumentListDto,
+  DocumentQueryRequest,
+  DocumentQueryResultDto,
   DocumentRecordDto,
   RealmFullAccessBindingDto,
   RealmFullAccessListDto,
@@ -35,6 +37,7 @@ import type {
   UpdateRealmMembershipRequest,
 } from "@xecms/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { parseDocumentQueryRequest } from "./document-query-request.js";
 
 export const CONTENT_REALM_SESSION_COOKIE = "xecms_content_session";
 
@@ -166,6 +169,11 @@ export interface ContentRealmDocumentRouteAdapter {
     readonly page?: number;
     readonly pageSize?: number;
   }): Promise<DocumentListDto>;
+  queryDocuments(input: {
+    readonly actor: ActorContext;
+    readonly collectionId: string;
+    readonly request: DocumentQueryRequest;
+  }): Promise<DocumentQueryResultDto>;
   getDocument(input: {
     readonly actor: ActorContext;
     readonly collectionId: string;
@@ -313,6 +321,28 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
       return {
         items: (await administration.listMemberships(actor, realmId)).map(toMembershipDto),
       };
+    },
+  );
+
+  app.post(
+    "/api/content-realms/:realmKey/collections/:collectionId/documents/query",
+    async (request, reply): Promise<DocumentQueryResultDto> => {
+      const { realmKey, collectionId } = pathParams(request.params, ["realmKey", "collectionId"]);
+      const authenticated = await requireContentSession(
+        request,
+        realmKey,
+        false,
+        contentAuthentication,
+        security,
+        cookieName,
+      );
+      const actor = await contentActorContext(authenticated.session, realmKey, actors);
+      noStore(reply);
+      return documents.queryDocuments({
+        actor,
+        collectionId,
+        request: parseDocumentQueryRequest(request.body),
+      });
     },
   );
 

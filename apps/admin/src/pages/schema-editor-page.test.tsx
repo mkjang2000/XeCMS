@@ -11,6 +11,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DisplayModeProvider } from "../display-mode.js";
 import { SchemaEditorPage } from "./schema-editor-page.js";
 
 const contentRealm: IdentityRealm = {
@@ -114,7 +115,9 @@ function renderEditor(input: {
   render(
     <AdminApiProvider api={api}>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <DisplayModeProvider initialMode="advanced">
+          <RouterProvider router={router} />
+        </DisplayModeProvider>
       </QueryClientProvider>
     </AdminApiProvider>,
   );
