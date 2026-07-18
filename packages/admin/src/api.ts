@@ -230,6 +230,12 @@ export interface CreateRealmProfileSchemaInput {
   readonly includeDisplayName: boolean;
 }
 
+export interface CreateRealmProfileFieldInput {
+  readonly name: string;
+  readonly label: string;
+  readonly type: "text" | "textarea";
+}
+
 export interface UpdateIdentityRealmInput {
   readonly expectedRevision: number;
   readonly name: string;
@@ -1031,6 +1037,7 @@ export interface AdminApi {
     get(realmId: string): Promise<IdentityRealm>;
     create(input: CreateIdentityRealmInput): Promise<IdentityRealm>;
     createProfileSchema(realmId: string, input: CreateRealmProfileSchemaInput): Promise<IdentityRealm>;
+    createProfileField(realmId: string, input: CreateRealmProfileFieldInput): Promise<IdentityRealm>;
     update(realmId: string, input: UpdateIdentityRealmInput): Promise<IdentityRealm>;
     listMemberships(realmId: string): Promise<PageResult<RealmMembership>>;
     provisionMembership(

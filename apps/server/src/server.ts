@@ -51,6 +51,7 @@ import type {
   AuthenticatedSessionDto,
   BootstrapRequest,
   CollectionListDto,
+  CreateRealmProfileFieldRequest,
   CreateRealmProfileSchemaRequest,
   DeleteDocumentRequest,
   DocumentListDto,
@@ -662,6 +663,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     actor: ActorContext,
     input: CreateRealmProfileSchemaRequest & { readonly realmId: string },
   ) => {
+    assertSchemaMutationAllowed(config, "editor");
     const realm = (await identityRealms.listRealms(actor)).find(({ id }) => id === input.realmId);
     if (realm === undefined || realm.kind !== "content") {
       throw new ApplicationError("IDENTITY_REALM_NOT_FOUND", 404, "The Content Realm does not exist.");
@@ -815,6 +817,110 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       );
     }
     return activated;
+  };
+  const createDefaultRealmProfileField = async (
+    actor: ActorContext,
+    input: CreateRealmProfileFieldRequest & { readonly realmId: string },
+  ) => {
+    assertSchemaMutationAllowed(config, "editor");
+    const realm = (await identityRealms.listRealms(actor)).find(({ id }) => id === input.realmId);
+    if (realm === undefined || realm.kind !== "content") {
+      throw new ApplicationError("IDENTITY_REALM_NOT_FOUND", 404, "The Content Realm does not exist.");
+    }
+    if (realm.profileCollectionId === undefined) {
+      throw new ApplicationError(
+        "IDENTITY_REALM_CONFIGURATION_INCOMPLETE",
+        409,
+        "Create and apply the Realm Profile Schema before adding Profile fields.",
+      );
+    }
+    if (realm.status !== "active") {
+      throw new ApplicationError(
+        "IDENTITY_REALM_DISABLED",
+        409,
+        "Enable the Content Realm before adding Profile fields.",
+      );
+    }
+
+    const [active, draft] = await Promise.all([schema.getActive(actor), schema.getDraft(actor)]);
+    if (active === null) {
+      throw new ApplicationError("SCHEMA_REVISION_NOT_FOUND", 404, "No active Schema exists.");
+    }
+    if (draft !== null && serializeSchema(draft.schema) !== serializeSchema(active.schema)) {
+      throw new ApplicationError(
+        "SCHEMA_QUICK_SETUP_DRAFT_CONFLICT",
+        409,
+        "Apply or discard the pending Schema changes before adding a Realm Profile field.",
+      );
+    }
+    const profile = active.schema.collections.find(({ id }) => id === realm.profileCollectionId);
+    if (profile === undefined || profile.auth?.realmKey !== realm.key) {
+      throw new ApplicationError(
+        "IDENTITY_REALM_CONFIGURATION_INCOMPLETE",
+        409,
+        "The Realm Profile Collection is not configured as its Auth Collection.",
+      );
+    }
+
+    const normalizedName = input.name.toLocaleLowerCase("en-US");
+    const existingField = profile.fields.find(
+      ({ name }) => name.toLocaleLowerCase("en-US") === normalizedName,
+    );
+    if (existingField !== undefined) {
+      const isIdentifier = profile.auth.identifierFieldIds.includes(existingField.id);
+      if (!isIdentifier
+        && existingField.name === input.name
+        && existingField.label === input.label
+        && existingField.type === input.type
+        && existingField.required !== true) {
+        return realm;
+      }
+      throw new ApplicationError(
+        "PROFILE_FIELD_NAME_CONFLICT",
+        409,
+        `Profile field '${input.name}' already exists with different settings.`,
+      );
+    }
+
+    const [fieldId] = await schema.issueIds(actor, { kind: "field", count: 1 });
+    if (fieldId === undefined) {
+      throw new ApplicationError("SCHEMA_ID_REQUEST_INVALID", 500, "A stable Field ID was not issued.");
+    }
+    const updatedProfile = {
+      ...profile,
+      fields: [...profile.fields, {
+        id: fieldId,
+        name: input.name,
+        label: input.label,
+        type: input.type,
+        required: false,
+        unique: false,
+      }],
+    } as unknown as CollectionDefinition;
+    const workingDraft = await schema.saveDraft(actor, {
+      baseRevisionId: active.revisionId,
+      expectedDraftVersion: draft?.draftVersion ?? null,
+      schema: {
+        ...active.schema,
+        collections: active.schema.collections.map((collection) =>
+          collection.id === profile.id ? updatedProfile : collection),
+      },
+    });
+    const preview = await schema.preview(actor, { expectedDraftVersion: workingDraft.draftVersion });
+    if (preview.requiresDestructiveApproval) {
+      throw new ApplicationError(
+        "SCHEMA_QUICK_SETUP_DESTRUCTIVE",
+        409,
+        "A Realm Profile field quick addition must not require destructive approval.",
+      );
+    }
+    await applySchemaWithProjection(actor, {
+      expectedRevisionId: preview.baseRevisionId,
+      expectedDraftVersion: preview.draftVersion,
+      planId: preview.planId,
+      approveDestructive: false,
+    });
+    return (await identityRealmStore.getRealmById(realm.id)) ?? realm;
   };
   const existingOwner = await database.findOwnerIdentity();
   if (existingOwner !== null) {
@@ -1078,6 +1184,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         return realm;
       },
       createProfileSchema: createDefaultRealmProfileSchema,
+      createProfileField: createDefaultRealmProfileField,
       updateRealm: (actor, input) => identityRealms.updateRealm(actor, input),
       listMemberships: (actor, realmId) => identityRealms.listMemberships(actor, realmId),
       provisionMembership: (actor, input) => identityRealms.provisionMembership(actor, input),

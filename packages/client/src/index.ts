@@ -24,6 +24,7 @@ import {
   type CreateAuthorizationSubjectRequest,
   type CreateDocumentRequest,
   type CreateIdentityRealmRequest,
+  type CreateRealmProfileFieldRequest,
   type CreateRealmProfileSchemaRequest,
   type DeleteDocumentRequest,
   type DeleteAuthorizationObjectRequest,
@@ -399,6 +400,7 @@ export interface XeCmsClient {
     get(realmId: string): Promise<IdentityRealmDto>;
     create(input: CreateIdentityRealmRequest): Promise<IdentityRealmDto>;
     createProfileSchema(realmId: string, input: CreateRealmProfileSchemaRequest): Promise<IdentityRealmDto>;
+    createProfileField(realmId: string, input: CreateRealmProfileFieldRequest): Promise<IdentityRealmDto>;
     update(realmId: string, input: UpdateIdentityRealmRequest): Promise<IdentityRealmDto>;
     listMemberships(realmId: string): Promise<RealmMembershipListDto>;
     provisionMembership(
@@ -1036,6 +1038,10 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
       }),
       createProfileSchema: (realmId, input) => request<IdentityRealmDto>(
         `${identityRealmPath(realmId)}/profile-schema`,
+        { method: "POST", body: json(input), csrf: true },
+      ),
+      createProfileField: (realmId, input) => request<IdentityRealmDto>(
+        `${identityRealmPath(realmId)}/profile-fields`,
         { method: "POST", body: json(input), csrf: true },
       ),
       update: (realmId, input) => request<IdentityRealmDto>(identityRealmPath(realmId), {

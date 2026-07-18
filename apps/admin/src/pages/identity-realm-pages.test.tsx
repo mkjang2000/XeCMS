@@ -5,6 +5,7 @@ import {
   AdminApiProvider,
   AdminApiError,
   type AdminApi,
+  type CollectionDetail,
   type IdentityRealm,
 } from "@xecms/admin";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
@@ -32,6 +33,28 @@ function contentRealm(overrides: Partial<IdentityRealm> = {}): IdentityRealm {
   };
 }
 
+const profileCollection: CollectionDetail = {
+  id: "col_profile",
+  name: "testreAccounts",
+  label: "Test Realm Accounts",
+  status: "applied",
+  hasPendingChanges: false,
+  revisionId: "rev_profile",
+  draftVersion: "rev:rev_profile",
+  auth: {
+    enabled: true,
+    realmKey: "testre",
+    identifierFieldIds: ["fld_login_id"],
+    acceptSystemIdentities: false,
+    provisioning: "explicit",
+    defaultRoleIds: [],
+  },
+  fields: [
+    { id: "fld_login_id", name: "loginId", label: "Login ID", type: "text", required: true, unique: true },
+    { id: "fld_display_name", name: "displayName", label: "Display name", type: "text", required: false },
+  ],
+};
+
 function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = [], mode: DisplayMode = "basic") {
   const registerMembership = vi.fn().mockResolvedValue({});
   const grantRealmAdministrator = vi.fn().mockResolvedValue({});
@@ -40,6 +63,7 @@ function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = []
     status: "active",
     profileCollectionId: "col_profile",
   });
+  const createProfileField = vi.fn().mockResolvedValue(realm);
   const listFullAccess = vi.fn().mockResolvedValue({ items: [], nextCursor: undefined });
   const api = {
     identityRealms: {
@@ -49,8 +73,15 @@ function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = []
       listMemberships: vi.fn().mockResolvedValue({ items: memberships, nextCursor: undefined }),
       listFullAccess,
       createProfileSchema,
+      createProfileField,
       registerMembership,
       grantRealmAdministrator,
+    },
+    collections: {
+      getApplied: vi.fn().mockResolvedValue(profileCollection),
+    },
+    settings: {
+      diagnostics: vi.fn().mockResolvedValue({ schemaMode: "editable" }),
     },
   } as unknown as AdminApi;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -68,7 +99,7 @@ function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = []
       </QueryClientProvider>
     </DisplayModeProvider>,
   );
-  return { createProfileSchema, registerMembership, grantRealmAdministrator, listFullAccess, router, user: userEvent.setup() };
+  return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, listFullAccess, router, user: userEvent.setup() };
 }
 
 afterEach(cleanup);
@@ -101,14 +132,16 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
   it("creates a new user and assigns it to an active Realm", async () => {
     const { registerMembership, user } = renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }));
 
-    await screen.findByRole("heading", { name: "새 사용자 만들어 연결" });
+    await user.click(await screen.findByRole("tab", { name: "사용자" }));
+    await user.click(await screen.findByRole("button", { name: "새 사용자" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "새 사용자 만들어 연결" })).toBeTruthy();
 
-    // These labels are unique to the new-user form, so global queries are safe.
-    await user.type(screen.getByRole("textbox", { name: "로그인 identifier" }), "new.user@example.com");
+    await user.type(within(dialog).getByRole("textbox", { name: "로그인 identifier" }), "new.user@example.com");
     // Required fields render a "*" inside the label, so match on a prefix.
-    await user.type(screen.getByLabelText(/초기 비밀번호/), "new-user-initial-pw");
-    await user.type(screen.getByLabelText(/현재 관리자 비밀번호/), "admin-pw");
-    await user.click(screen.getByRole("button", { name: "새 사용자 생성 후 연결" }));
+    await user.type(within(dialog).getByLabelText(/초기 비밀번호/), "new-user-initial-pw");
+    await user.type(within(dialog).getByLabelText(/현재 관리자 비밀번호/), "admin-pw");
+    await user.click(within(dialog).getByRole("button", { name: "새 사용자 생성 후 연결" }));
 
     await waitFor(() => expect(registerMembership).toHaveBeenCalledTimes(1));
     expect(registerMembership).toHaveBeenCalledWith("rlm_testre", expect.objectContaining({
@@ -117,6 +150,28 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
       reauthPassword: "admin-pw",
       profile: {},
     }));
+  });
+
+  it("shows the protected login field and adds a safe optional Profile field", async () => {
+    const { createProfileField, user } = renderDetail(
+      contentRealm({ status: "active", profileCollectionId: "col_profile" }),
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "프로필 필드" }));
+    expect(await screen.findByRole("heading", { name: "사용자 프로필 필드" })).toBeTruthy();
+    expect(await screen.findByText("로그인 ID · 보호됨")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "프로필 필드 추가" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "필드명" }), "nickname");
+    await user.type(within(dialog).getByRole("textbox", { name: "표시 이름" }), "닉네임");
+    await user.click(within(dialog).getByRole("button", { name: "필드 추가하고 적용" }));
+
+    await waitFor(() => expect(createProfileField).toHaveBeenCalledTimes(1));
+    expect(createProfileField).toHaveBeenCalledWith("rlm_testre", {
+      name: "nickname",
+      label: "닉네임",
+      type: "text",
+    });
   });
 
   it("promotes an active member to Realm administrator via re-authentication", async () => {
@@ -136,6 +191,7 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
       [membership],
     );
 
+    await user.click(await screen.findByRole("tab", { name: "사용자" }));
     const promoteButton = await screen.findByRole("button", { name: "관리자로 지정" });
     await user.click(promoteButton);
 
@@ -170,6 +226,7 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
     expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
     expect(listFullAccess).not.toHaveBeenCalled();
 
+    await user.click(screen.getByRole("tab", { name: "권한" }));
     await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/grades"));
   });
@@ -177,19 +234,26 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
   it("shows profile JSON in standard mode and routes authorization to roles", async () => {
     const { listFullAccess, router, user } = renderDetail(activeRealm, [], "standard");
 
-    expect((await screen.findAllByLabelText("초기 Profile JSON")).length).toBe(2);
+    await user.click(await screen.findByRole("tab", { name: "사용자" }));
+    expect(screen.queryByLabelText("초기 Profile JSON")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "새 사용자" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByText("초기 Profile JSON", { selector: "summary" }));
+    expect(within(dialog).getByLabelText("초기 Profile JSON")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "취소" }));
     expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
     expect(listFullAccess).not.toHaveBeenCalled();
 
+    await user.click(screen.getByRole("tab", { name: "권한" }));
     await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/roles"));
   });
 
   it("loads and shows Full Access only in advanced mode", async () => {
-    const { listFullAccess } = renderDetail(activeRealm, [], "advanced");
+    const { listFullAccess, user } = renderDetail(activeRealm, [], "advanced");
 
+    await user.click(await screen.findByRole("tab", { name: "권한" }));
     expect(await screen.findByRole("heading", { name: "Realm Full Access" })).toBeTruthy();
-    expect(screen.getAllByLabelText("초기 Profile JSON").length).toBe(2);
     expect(listFullAccess).toHaveBeenCalledWith("rlm_testre");
   });
 });

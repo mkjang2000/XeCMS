@@ -1147,6 +1147,12 @@ export interface CreateRealmProfileSchemaRequest {
   readonly includeDisplayName: boolean;
 }
 
+export interface CreateRealmProfileFieldRequest {
+  readonly name: string;
+  readonly label: string;
+  readonly type: "text" | "textarea";
+}
+
 export interface UpdateIdentityRealmRequest {
   readonly expectedRevision: number;
   readonly name: string;

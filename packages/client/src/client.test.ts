@@ -246,6 +246,7 @@ describe("createXeCmsClient", () => {
       .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1" }))
       .mockResolvedValueOnce(jsonResponse({ realmId: "realm-created" }))
       .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", profileCollectionId: "col_profile" }))
+      .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", profileCollectionId: "col_profile" }))
       .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", revision: 2 }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ membershipId: "membership-created", status: "active" }))
@@ -267,6 +268,11 @@ describe("createXeCmsClient", () => {
       collectionLabel: "Community Accounts",
       identifierFieldName: "memberEmail",
       includeDisplayName: true,
+    });
+    await client.identityRealms.createProfileField(realmId, {
+      name: "nickname",
+      label: "Nickname",
+      type: "text",
     });
     await client.identityRealms.update(realmId, {
       expectedRevision: 1,
@@ -314,33 +320,43 @@ describe("createXeCmsClient", () => {
     expect(profileSchemaRequest?.body).toContain('"identifierFieldName":"memberEmail"');
     expect(new Headers(profileSchemaRequest?.headers).get("x-csrf-token")).toBe("csrf-admin");
 
-    const [updateUrl, updateRequest] = fetch.mock.calls[6] ?? [];
+    const [profileFieldUrl, profileFieldRequest] = fetch.mock.calls[6] ?? [];
+    expect(profileFieldUrl).toBe("/api/identity-realms/realm%20%2F%201/profile-fields");
+    expect(profileFieldRequest?.method).toBe("POST");
+    expect(profileFieldRequest?.body).toBe(JSON.stringify({
+      name: "nickname",
+      label: "Nickname",
+      type: "text",
+    }));
+    expect(new Headers(profileFieldRequest?.headers).get("x-csrf-token")).toBe("csrf-admin");
+
+    const [updateUrl, updateRequest] = fetch.mock.calls[7] ?? [];
     expect(updateUrl).toBe("/api/identity-realms/realm%20%2F%201");
     expect(updateRequest?.method).toBe("PATCH");
     expect(updateRequest?.body).toContain('"expectedRevision":1');
 
-    expect(fetch.mock.calls[7]?.[0]).toBe(
+    expect(fetch.mock.calls[8]?.[0]).toBe(
       "/api/identity-realms/realm%20%2F%201/memberships",
     );
-    const [provisionUrl, provisionRequest] = fetch.mock.calls[8] ?? [];
+    const [provisionUrl, provisionRequest] = fetch.mock.calls[9] ?? [];
     expect(provisionUrl).toBe("/api/identity-realms/realm%20%2F%201/memberships");
     expect(provisionRequest?.method).toBe("POST");
     expect(provisionRequest?.body).toContain('"globalIdentityId":"identity_owner"');
-    const [suspendUrl, suspendRequest] = fetch.mock.calls[9] ?? [];
+    const [suspendUrl, suspendRequest] = fetch.mock.calls[10] ?? [];
     expect(suspendUrl).toBe(
       "/api/identity-realms/realm%20%2F%201/memberships/membership%20%2F%201",
     );
     expect(suspendRequest?.body).toBe(JSON.stringify({ expectedRevision: 3, status: "suspended" }));
-    const [, reactivateRequest] = fetch.mock.calls[10] ?? [];
+    const [, reactivateRequest] = fetch.mock.calls[11] ?? [];
     expect(reactivateRequest?.body).toBe(JSON.stringify({ expectedRevision: 4, status: "active" }));
 
-    expect(fetch.mock.calls[11]?.[0]).toBe(
-      "/api/identity-realms/realm%20%2F%201/full-access",
-    );
     expect(fetch.mock.calls[12]?.[0]).toBe(
       "/api/identity-realms/realm%20%2F%201/full-access",
     );
-    const [revokeUrl, revokeRequest] = fetch.mock.calls[13] ?? [];
+    expect(fetch.mock.calls[13]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/full-access",
+    );
+    const [revokeUrl, revokeRequest] = fetch.mock.calls[14] ?? [];
     expect(revokeUrl).toBe(
       "/api/identity-realms/realm%20%2F%201/full-access/binding%20%2F%201",
     );

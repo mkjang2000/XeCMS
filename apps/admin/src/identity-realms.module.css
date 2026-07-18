@@ -140,8 +140,8 @@
 .formCard,
 .panel {
   display: grid;
-  padding: clamp(1.15rem, 2.4vw, 1.6rem);
-  gap: 1.2rem;
+  padding: clamp(0.95rem, 1.8vw, 1.25rem);
+  gap: 0.9rem;
 }
 
 .formCard {
@@ -150,35 +150,9 @@
 }
 
 .formStack,
-.provisionForm,
 .dialogStack {
   display: grid;
-  gap: 1rem;
-}
-
-.provisionForm {
-  padding: 1.1rem;
-  border: 1px solid var(--xe-color-border);
-  border-radius: var(--xe-radius-md);
-  background: var(--xe-color-surface-subtle);
-}
-
-.membershipSubsection {
-  display: grid;
-  gap: 0.6rem;
-  margin-top: 0.4rem;
-}
-
-.membershipSubsection > h3 {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--xe-color-text-strong);
-}
-
-.membershipSubsectionHint {
-  margin: 0;
-  color: var(--xe-color-text-muted);
-  font-size: 0.82rem;
+  gap: 0.85rem;
 }
 
 .fieldGrid {
@@ -186,6 +160,13 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 1rem;
+}
+
+.settingsFieldGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.75rem;
 }
 
 .formActions {
@@ -222,20 +203,24 @@
 .summaryGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-lg);
+  background: var(--xe-color-surface);
+  box-shadow: var(--xe-shadow-card);
 }
 
 .summaryGrid > div {
   display: grid;
   min-width: 0;
-  min-height: 5.4rem;
-  padding: 1rem;
-  align-content: space-between;
-  gap: 0.6rem;
-  border: 1px solid var(--xe-color-border);
-  border-radius: var(--xe-radius-md);
-  background: var(--xe-color-surface);
-  box-shadow: var(--xe-shadow-card);
+  padding: 0.72rem 0.9rem;
+  align-content: center;
+  gap: 0.3rem;
+  border-right: 1px solid var(--xe-color-border);
+}
+
+.summaryGrid > div:last-child {
+  border-right: 0;
 }
 
 .summaryGrid span {
@@ -245,7 +230,53 @@
 
 .summaryGrid strong {
   color: var(--xe-color-text-strong);
-  font-size: 1.25rem;
+  font-size: 0.9rem;
+}
+
+.detailTabs {
+  display: flex;
+  width: 100%;
+  padding: 0.25rem;
+  gap: 0.2rem;
+  overflow-x: auto;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface-subtle);
+}
+
+.detailTabs button {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.85rem;
+  color: var(--xe-color-text-muted);
+  border: 0;
+  border-radius: calc(var(--xe-radius-md) - 3px);
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.detailTabs button:hover:not(:disabled) {
+  color: var(--xe-color-text-strong);
+  background: var(--xe-color-surface);
+}
+
+.detailTabs button[aria-selected="true"] {
+  color: var(--xe-color-primary);
+  background: var(--xe-color-surface);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 10%);
+}
+
+.detailTabs button:focus-visible {
+  outline: 3px solid var(--xe-color-focus-ring);
+  outline-offset: -1px;
+}
+
+.detailTabs button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .provisioningSteps {
@@ -276,7 +307,7 @@
 
 .table th,
 .table td {
-  padding: 0.8rem;
+  padding: 0.65rem 0.7rem;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--xe-color-border);
@@ -318,6 +349,31 @@
   margin-top: 0.3rem;
 }
 
+.membershipTable {
+  min-width: 52rem;
+}
+
+.compactCode {
+  display: inline-block;
+  max-width: 13rem;
+  overflow: hidden;
+  color: var(--xe-color-text-muted);
+  font-family: var(--xe-font-mono);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.compactHint {
+  margin: 0;
+  padding-top: 0.7rem;
+  color: var(--xe-color-text-muted);
+  border-top: 1px solid var(--xe-color-border);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .dialogStack p {
   margin: 0;
   color: var(--xe-color-text-muted);
@@ -325,8 +381,95 @@
   line-height: 1.55;
 }
 
+.dialogFieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.optionalDetails {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface-subtle);
+}
+
+.optionalDetails summary {
+  color: var(--xe-color-text-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.optionalDetails[open] summary {
+  margin-bottom: 0.75rem;
+}
+
+.profileFieldList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 0.65rem;
+  list-style: none;
+}
+
+.profileFieldItem {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(16rem, auto) auto;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+  gap: 0.75rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface-subtle);
+}
+
+.profileFieldIdentity {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.profileFieldIdentity strong {
+  color: var(--xe-color-text-strong);
+  font-size: 0.9rem;
+}
+
+.profileFieldIdentity code,
+.profileFieldStableId {
+  color: var(--xe-color-text-muted);
+  font-family: var(--xe-font-mono);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.profileFieldBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.profileFieldStableId {
+  max-width: 10rem;
+  text-align: right;
+}
+
 @media (max-width: 900px) {
   .summaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summaryGrid > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .summaryGrid > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--xe-color-border);
+  }
+
+  .settingsFieldGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -334,8 +477,24 @@
 @media (max-width: 680px) {
   .realmGrid,
   .fieldGrid,
-  .summaryGrid {
+  .summaryGrid,
+  .settingsFieldGrid,
+  .dialogFieldGrid {
     grid-template-columns: 1fr;
+  }
+
+  .summaryGrid > div,
+  .summaryGrid > div:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--xe-color-border);
+  }
+
+  .summaryGrid > div:last-child {
+    border-bottom: 0;
+  }
+
+  .detailTabs button {
+    flex: 1 0 auto;
   }
 
   .formActions {
@@ -351,5 +510,18 @@
 
   .viewSwitcher > button {
     flex: 1;
+  }
+
+  .profileFieldItem {
+    grid-template-columns: 1fr;
+  }
+
+  .profileFieldBadges {
+    justify-content: flex-start;
+  }
+
+  .profileFieldStableId {
+    max-width: none;
+    text-align: left;
   }
 }

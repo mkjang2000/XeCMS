@@ -118,6 +118,7 @@ test("M4-A Realm Admin과 Community 사용자 흐름을 Chromium에서 완주한
     await page.goto(`/admin/realms/${encodeURIComponent(realm.realmId)}`);
     await expect(page.getByRole("heading", { name: "Community" })).toBeVisible();
     await expect(page.getByText("활성", { exact: true }).first()).toBeVisible();
+    await page.getByRole("tab", { name: "권한" }).click();
     await page.getByRole("button", { name: "Realm 권한 관리" }).click();
     await expect(page).toHaveURL(new RegExp(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/roles`));
     await expect(page.getByRole("heading", { name: "레벨과 역할" })).toBeVisible();

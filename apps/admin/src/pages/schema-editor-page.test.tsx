@@ -98,6 +98,8 @@ function renderEditor(input: {
     ...request.draft,
     draftVersion: "draft-2",
   }));
+  const getCollection = vi.fn().mockImplementation(async (collectionId: string) =>
+    createdCollection?.id === collectionId ? createdCollection : collection);
   const api = {
     collections: {
       list: vi.fn().mockResolvedValue({
@@ -111,8 +113,7 @@ function renderEditor(input: {
           revisionId: collection.revisionId,
         }],
       }),
-      get: vi.fn().mockImplementation(async (collectionId: string) =>
-        createdCollection?.id === collectionId ? createdCollection : collection),
+      get: getCollection,
       create,
       updateDraft,
     },
@@ -143,7 +144,7 @@ function renderEditor(input: {
       </QueryClientProvider>
     </AdminApiProvider>,
   );
-  return { create, router, updateDraft, user: userEvent.setup() };
+  return { create, getCollection, router, updateDraft, user: userEvent.setup() };
 }
 
 afterEach(cleanup);
@@ -238,7 +239,7 @@ describe("SchemaEditorPage Collection auth", () => {
   });
 
   it("moves a newly created draft to its stable URL without an unsaved-changes prompt", async () => {
-    const { create, router, user } = renderEditor({ isNew: true });
+    const { create, getCollection, router, user } = renderEditor({ isNew: true });
     await screen.findByRole("heading", { name: "새 콘텐츠 타입" });
 
     await user.type(screen.getByRole("textbox", { name: "이름" }), "members");
@@ -259,7 +260,8 @@ describe("SchemaEditorPage Collection auth", () => {
     expect(screen.queryByRole("heading", { name: "저장하지 않은 변경 사항" })).toBeNull();
     expect(create).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("checkbox", { name: "loginId · fld_created_1" })).toBeTruthy();
-    expect((screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }) as HTMLInputElement).checked).toBe(true);
+    await waitFor(() => expect(getCollection).toHaveBeenCalledWith("col_created"));
+    await waitFor(() => expect((screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }) as HTMLInputElement).checked).toBe(true));
   });
 
   it("explains and blocks missing Realm and ineligible identifier fields", async () => {

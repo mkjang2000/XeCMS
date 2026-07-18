@@ -102,6 +102,14 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
         200,
       );
       expect(repeatedSetup.profileCollectionId).toBe(realm.profileCollectionId);
+      await adminJson<Realm>(
+        server,
+        owner,
+        "POST",
+        `/api/identity-realms/${createdRealm.realmId}/profile-fields`,
+        { name: "nickname", label: "Nickname", type: "text" },
+        200,
+      );
       await applyArticleSchema(server, owner);
       realm = await getJson<Realm>(server, "/api/identity-realms/" + createdRealm.realmId, owner.cookie);
 
@@ -226,8 +234,14 @@ async function applyArticleSchema(server: XeCmsServer, owner: Session): Promise<
     name: "members",
     fields: expect.arrayContaining([
       expect.objectContaining({ name: "memberEmail", required: true, unique: true }),
+      expect.objectContaining({ name: "nickname", label: "Nickname", type: "text" }),
     ]),
   });
+  const profileFields = profile?.["fields"];
+  expect(Array.isArray(profileFields)).toBe(true);
+  const nickname = (profileFields as readonly Readonly<Record<string, unknown>>[])
+    .find(({ name }) => name === "nickname");
+  expect(nickname).not.toHaveProperty("required");
   const imported = await adminRequest(server, owner, "PUT", "/api/schema/manifest", {
     baseRevisionId: active.revisionId,
     expectedDraftVersion: null,

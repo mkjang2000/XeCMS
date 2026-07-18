@@ -19,6 +19,7 @@ import type {
   ContentSessionDto,
   CreateDocumentRequest,
   CreateIdentityRealmRequest,
+  CreateRealmProfileFieldRequest,
   CreateRealmProfileSchemaRequest,
   GlobalIdentityListDto,
   IdentityRealmDto,
@@ -59,6 +60,10 @@ export interface IdentityRealmAdministrationRouteService {
   createProfileSchema(
     actor: ActorContext,
     input: CreateRealmProfileSchemaRequest & { readonly realmId: string },
+  ): Promise<IdentityRealmRecord>;
+  createProfileField(
+    actor: ActorContext,
+    input: CreateRealmProfileFieldRequest & { readonly realmId: string },
   ): Promise<IdentityRealmRecord>;
   updateRealm(
     actor: ActorContext,
@@ -334,6 +339,16 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
     const realm = await administration.createProfileSchema(actor, {
       realmId,
       ...parseCreateProfileSchema(request.body),
+    });
+    return toRealmDto(realm);
+  });
+
+  app.post("/api/identity-realms/:realmId/profile-fields", async (request): Promise<IdentityRealmDto> => {
+    const actor = await systemActor(request, true);
+    const { realmId } = pathParams(request.params, ["realmId"]);
+    const realm = await administration.createProfileField(actor, {
+      realmId,
+      ...parseCreateProfileField(request.body),
     });
     return toRealmDto(realm);
   });
@@ -902,6 +917,19 @@ function parseCreateProfileSchema(value: unknown): CreateRealmProfileSchemaReque
     collectionLabel: requiredString(body, "collectionLabel"),
     identifierFieldName: requiredString(body, "identifierFieldName"),
     includeDisplayName: requiredBoolean(body, "includeDisplayName"),
+  };
+}
+
+function parseCreateProfileField(value: unknown): CreateRealmProfileFieldRequest {
+  const body = exactObject(value, ["name", "label", "type"], "Realm Profile Field create request");
+  const type = requiredString(body, "type");
+  if (type !== "text" && type !== "textarea") {
+    invalid("type must be 'text' or 'textarea'.");
+  }
+  return {
+    name: requiredString(body, "name"),
+    label: requiredString(body, "label"),
+    type,
   };
 }
 

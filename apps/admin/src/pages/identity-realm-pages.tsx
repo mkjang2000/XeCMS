@@ -1,10 +1,12 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   SCHEMA_NAME_ERROR_MESSAGE,
   SCHEMA_NAME_PATTERN,
   toAdminApiError,
   useAdminApi,
+  type CollectionDetail,
+  type CollectionField,
   type GlobalIdentity,
   type IdentityRealm,
   type PageResult,
@@ -28,7 +30,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { LoadError, PageLoading, RealmAuthorizationError } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
-import { DisplayModeGate, displayModeAtLeast, useDisplayMode } from "../display-mode.js";
+import { DisplayModeGate, displayModeAtLeast, useDisplayMode, type DisplayMode } from "../display-mode.js";
 import { queryKeys } from "../queries.js";
 import styles from "../identity-realms.module.css";
 
@@ -46,6 +48,8 @@ const statusOptions = [
   { value: "active", label: "활성" },
   { value: "disabled", label: "비활성" },
 ] as const;
+
+type RealmDetailTab = "overview" | "members" | "profile" | "access";
 
 function commaValues(value: string): readonly string[] {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
@@ -244,6 +248,7 @@ export function IdentityRealmDetailPage() {
   const queryClient = useQueryClient();
   const { mode } = useDisplayMode();
   const [profileSetupOpen, setProfileSetupOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<RealmDetailTab>("overview");
   const realm = useQuery({
     queryKey: queryKeys.identityRealm(realmId ?? "missing"),
     queryFn: () => api.identityRealms.get(realmId!),
@@ -268,7 +273,7 @@ export function IdentityRealmDetailPage() {
   const fullAccess = useQuery({
     queryKey: queryKeys.realmFullAccess(realmId ?? "missing"),
     queryFn: () => api.identityRealms.listFullAccess(realmId!),
-    enabled: realmId !== undefined && isContent && displayModeAtLeast(mode, "advanced"),
+    enabled: realmId !== undefined && isContent && detailTab === "access" && displayModeAtLeast(mode, "advanced"),
   });
   const createProfileSchema = useMutation({
     mutationFn: (input: {
@@ -301,9 +306,6 @@ export function IdentityRealmDetailPage() {
           : "Global Identity 자격 증명과 이 Realm의 Membership·Subject·Profile 연결을 관리합니다."}
         actions={<>
           <RealmStatusBadge realm={realm.data} />
-          {realm.data.kind === "content" && realm.data.status === "active" ? (
-            <Button onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.data.realmId)}/access/${mode === "basic" ? "grades" : "roles"}`)}>Realm 권한 관리</Button>
-          ) : null}
           <Button variant="secondary" onPress={() => navigate("/admin/realms")}>목록으로</Button>
         </>}
       />
@@ -325,14 +327,29 @@ export function IdentityRealmDetailPage() {
           {realm.data.status === "disabled" ? (
             <Callout tone="warning"><strong>이 Realm은 비활성 상태입니다.</strong> 신규 세션, Membership provisioning과 Full Access grant가 차단됩니다.</Callout>
           ) : null}
-          <RealmSettingsForm realm={realm.data} />
-          <MembershipSection
-            realm={realm.data}
-            memberships={memberships}
-            identities={identities}
-            systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
+          <RealmDetailTabs
+            active={detailTab}
+            hasProfile={realm.data.profileCollectionId !== undefined}
+            onChange={setDetailTab}
           />
-          {displayModeAtLeast(mode, "advanced") ? <FullAccessSection realm={realm.data} memberships={memberships.data?.items ?? []} bindings={fullAccess} identities={identities.data?.items ?? []} /> : null}
+          {detailTab === "overview" ? <RealmSettingsForm realm={realm.data} /> : null}
+          {detailTab === "members" ? (
+            <MembershipSection
+              realm={realm.data}
+              memberships={memberships}
+              identities={identities}
+              systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
+            />
+          ) : null}
+          {detailTab === "profile" && realm.data.profileCollectionId !== undefined ? (
+            <RealmProfileFieldsSection realm={realm.data} />
+          ) : null}
+          {detailTab === "access" ? (
+            <>
+              <RealmAccessOverview realm={realm.data} mode={mode} />
+              {displayModeAtLeast(mode, "advanced") ? <FullAccessSection realm={realm.data} memberships={memberships.data?.items ?? []} bindings={fullAccess} identities={identities.data?.items ?? []} /> : null}
+            </>
+          ) : null}
           {profileSetupOpen ? (
             <ProfileSchemaSetupDialog
               realm={realm.data}
@@ -345,6 +362,52 @@ export function IdentityRealmDetailPage() {
         </>
       )}
     </Page>
+  );
+}
+
+function RealmDetailTabs({ active, hasProfile, onChange }: {
+  readonly active: RealmDetailTab;
+  readonly hasProfile: boolean;
+  readonly onChange: (tab: RealmDetailTab) => void;
+}) {
+  const tabs: readonly { readonly id: RealmDetailTab; readonly label: string; readonly disabled?: boolean }[] = [
+    { id: "overview", label: "개요" },
+    { id: "members", label: "사용자" },
+    { id: "profile", label: "프로필 필드", disabled: !hasProfile },
+    { id: "access", label: "권한" },
+  ];
+  return (
+    <div className={styles.detailTabs} role="tablist" aria-label="Realm 상세 영역">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={active === tab.id}
+          disabled={tab.disabled}
+          onClick={() => onChange(tab.id)}
+        >{tab.label}</button>
+      ))}
+    </div>
+  );
+}
+
+function RealmAccessOverview({ realm, mode }: { readonly realm: IdentityRealm; readonly mode: DisplayMode }) {
+  const navigate = useNavigate();
+  const target = mode === "basic" ? "grades" : "roles";
+  return (
+    <section className={styles.panel} aria-labelledby="realm-access-overview-title">
+      <SectionHeader
+        id="realm-access-overview-title"
+        title="Realm 권한"
+        description="이 Realm 안에서 사용할 등급, 역할과 사용자 배정을 관리합니다."
+        actions={<Button
+          onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/${target}`)}
+          isDisabled={realm.status !== "active"}
+        >Realm 권한 관리</Button>}
+      />
+      <p className={styles.compactHint}>일반 권한은 역할과 Scope로 관리합니다. Full Access는 Advanced 모드에서 복구 목적으로만 제공됩니다.</p>
+    </section>
   );
 }
 
@@ -407,8 +470,170 @@ function ProfileSchemaSetupDialog({ realm, error, isPending, onCancel, onConfirm
           errorMessage={identifierFieldNameError}
           isRequired
         />
-        <CheckboxField isSelected={includeDisplayName} onChange={setIncludeDisplayName}>표시 이름 Profile 필드 추가</CheckboxField>
+        <CheckboxField isSelected={includeDisplayName} onChange={setIncludeDisplayName}>사용자 표시 이름(displayName) 필드 추가</CheckboxField>
         <Callout tone="info">이 작업은 현재 Schema에 다른 미적용 변경이 없을 때만 실행되며, 생성과 적용이 끝나면 Realm이 활성화됩니다.</Callout>
+        {errorMessage ? <Callout tone="error">{errorMessage}</Callout> : null}
+      </div>
+    </ConfirmDialog>
+  );
+}
+
+function RealmProfileFieldsSection({ realm }: { readonly realm: IdentityRealm }) {
+  const api = useAdminApi();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const collectionId = realm.profileCollectionId!;
+  const [adding, setAdding] = useState(false);
+  const profile = useQuery({
+    queryKey: queryKeys.collectionApplied(collectionId),
+    queryFn: () => api.collections.getApplied(collectionId),
+  });
+  const diagnostics = useQuery({
+    queryKey: queryKeys.diagnostics,
+    queryFn: () => api.settings.diagnostics(),
+  });
+  const editable = diagnostics.data?.schemaMode === "editable" && realm.status === "active";
+  const createField = useMutation({
+    mutationFn: (input: { readonly name: string; readonly label: string; readonly type: "text" | "textarea" }) =>
+      api.identityRealms.createProfileField(realm.realmId, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.collectionApplied(collectionId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.collectionDraft(collectionId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+      ]);
+      setAdding(false);
+    },
+  });
+
+  return (
+    <section className={styles.panel} aria-labelledby="realm-profile-fields-title">
+      <SectionHeader
+        id="realm-profile-fields-title"
+        title="사용자 프로필 필드"
+        description="이 Realm 회원의 Profile 문서에 저장되는 기본 정보를 관리합니다."
+        actions={<div className={styles.rowActions}>
+          <Button
+            variant="secondary"
+            onPress={() => navigate(`/admin/schema/${encodeURIComponent(collectionId)}`)}
+          >스키마에서 자세히 편집</Button>
+          <Button
+            isDisabled={!editable}
+            onPress={() => { createField.reset(); setAdding(true); }}
+          >프로필 필드 추가</Button>
+        </div>}
+      />
+      {profile.isPending ? <PageLoading label="사용자 프로필 필드를 불러오는 중" /> : null}
+      {profile.isError ? <LoadError error={profile.error} onRetry={() => void profile.refetch()} /> : null}
+      {profile.data ? <ProfileFieldList collection={profile.data} /> : null}
+      {realm.status === "disabled" ? (
+        <Callout tone="warning">프로필 필드를 추가하려면 먼저 Realm 설정에서 상태를 활성으로 변경해 주세요.</Callout>
+      ) : diagnostics.data && !editable ? (
+        <Callout tone="warning">Schema mode가 <strong>{diagnostics.data.schemaMode}</strong>이므로 이 화면에서 필드를 추가할 수 없습니다.</Callout>
+      ) : null}
+      <p className={styles.compactHint}>
+        여기서는 데이터 손실 위험이 없는 선택형 text 필드만 바로 추가합니다. 삭제, 타입 변경, 필수값 전환, 관계·중첩 필드는 Schema Builder에서 검토합니다.
+      </p>
+      {adding && profile.data ? (
+        <AddProfileFieldDialog
+          collection={profile.data}
+          error={createField.error}
+          isPending={createField.isPending}
+          onCancel={() => { setAdding(false); createField.reset(); }}
+          onConfirm={(input) => createField.mutate(input)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function ProfileFieldList({ collection }: { readonly collection: CollectionDetail }) {
+  const identifierIds = new Set(collection.auth?.identifierFieldIds ?? []);
+  return (
+    <ul className={styles.profileFieldList} aria-label="사용자 프로필 필드 목록">
+      {collection.fields.map((field) => {
+        const identifier = identifierIds.has(field.id);
+        return (
+          <li key={field.id} className={styles.profileFieldItem}>
+            <div className={styles.profileFieldIdentity}>
+              <strong>{field.label || field.name}</strong>
+              <code>{field.name}</code>
+            </div>
+            <div className={styles.profileFieldBadges}>
+              {identifier ? <Badge tone="info">로그인 ID · 보호됨</Badge> : <Badge tone="neutral">프로필</Badge>}
+              <Badge tone="neutral">{profileFieldTypeLabel(field)}</Badge>
+              <Badge tone={field.required ? "warning" : "neutral"}>{field.required ? "필수" : "선택"}</Badge>
+              {field.unique ? <Badge tone="neutral">고유</Badge> : null}
+            </div>
+            <DisplayModeGate minimum="advanced"><code className={styles.profileFieldStableId}>{field.id}</code></DisplayModeGate>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function profileFieldTypeLabel(field: CollectionField): string {
+  switch (field.type) {
+    case "text": return "한 줄 text";
+    case "textarea": return "여러 줄 text";
+    default: return field.type;
+  }
+}
+
+function AddProfileFieldDialog({ collection, error, isPending, onCancel, onConfirm }: {
+  readonly collection: CollectionDetail;
+  readonly error: unknown;
+  readonly isPending: boolean;
+  readonly onCancel: () => void;
+  readonly onConfirm: (input: { readonly name: string; readonly label: string; readonly type: "text" | "textarea" }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState<"text" | "textarea">("text");
+  const trimmedName = name.trim();
+  const duplicate = collection.fields.some(
+    (field) => field.name.toLocaleLowerCase("en-US") === trimmedName.toLocaleLowerCase("en-US"),
+  );
+  const nameError = trimmedName !== "" && !SCHEMA_NAME_PATTERN.test(trimmedName)
+    ? SCHEMA_NAME_ERROR_MESSAGE
+    : duplicate ? "같은 필드명이 이미 있습니다." : undefined;
+  const converted = error === null || error === undefined ? null : toAdminApiError(error);
+  const errorMessage = converted?.code === "SCHEMA_QUICK_SETUP_DRAFT_CONFLICT"
+    ? "적용되지 않은 다른 스키마 변경 사항이 있습니다. 먼저 Schema Builder에서 적용하거나 버려 주세요."
+    : converted?.code === "PROFILE_FIELD_NAME_CONFLICT"
+      ? "같은 필드명이 이미 있습니다. 최신 스키마를 확인해 주세요."
+      : converted?.message;
+  return (
+    <ConfirmDialog
+      title="프로필 필드 추가"
+      confirmLabel="필드 추가하고 적용"
+      isPending={isPending}
+      isConfirmDisabled={trimmedName === "" || label.trim() === "" || nameError !== undefined}
+      onCancel={onCancel}
+      onConfirm={() => onConfirm({ name: trimmedName, label: label.trim(), type })}
+    >
+      <div className={styles.dialogStack}>
+        <TextInput
+          label="필드명"
+          value={name}
+          onChange={setName}
+          description="예: nickname, phone, introduction"
+          maxLength={64}
+          errorMessage={nameError}
+          isRequired
+        />
+        <TextInput label="표시 이름" value={label} onChange={setLabel} isRequired />
+        <SelectField
+          label="입력 형태"
+          value={type}
+          onChange={(value) => setType(value as "text" | "textarea")}
+          options={[
+            { value: "text", label: "한 줄 text" },
+            { value: "textarea", label: "여러 줄 text" },
+          ]}
+        />
+        <Callout tone="info">새 필드는 기존 회원 데이터에 영향을 주지 않도록 선택 입력으로 생성됩니다.</Callout>
         {errorMessage ? <Callout tone="error">{errorMessage}</Callout> : null}
       </div>
     </ConfirmDialog>
@@ -460,7 +685,7 @@ function RealmSettingsForm({ realm }: { readonly realm: IdentityRealm }) {
         <Callout tone="info">Auth Collection을 연결해 Realm이 활성화되기 전까지는 설정을 변경할 수 없습니다. 위 안내에 따라 스키마를 적용해 주세요.</Callout>
       )}
       <form className={styles.formStack} onSubmit={(event) => { event.preventDefault(); if (editable) save.mutate(); }}>
-        <div className={styles.fieldGrid}>
+        <div className={styles.settingsFieldGrid}>
           <TextInput label="표시 이름" value={name} onChange={setName} isDisabled={!editable} isRequired />
           <SelectField label="상태" value={status} options={statusOptions} onChange={(value) => setStatus(value as typeof status)} isDisabled={!editable} />
           <SelectField label="가입 정책" value={registration} options={registrationOptions} onChange={(value) => setRegistration(value as typeof registration)} isDisabled={!editable} />
@@ -512,6 +737,7 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
   const [newProfileSource, setNewProfileSource] = useState("{}");
   const [newReauthPassword, setNewReauthPassword] = useState("");
   const [newProfileError, setNewProfileError] = useState<string | null>(null);
+  const [membershipAction, setMembershipAction] = useState<"register" | "provision" | null>(null);
   const [promoting, setPromoting] = useState<RealmMembership | null>(null);
   const [promoteReauthPassword, setPromoteReauthPassword] = useState("");
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.realmMemberships(realm.realmId) });
@@ -524,6 +750,7 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
     onSuccess: async () => {
       setPassword("");
       setProfileSource("{}");
+      setMembershipAction(null);
       await refresh();
     },
   });
@@ -539,6 +766,7 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
       setNewPassword("");
       setNewReauthPassword("");
       setNewProfileSource("{}");
+      setMembershipAction(null);
       await refresh();
     },
   });
@@ -586,115 +814,66 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
     }
   };
 
-  const submitProvision = (event: FormEvent) => {
-    event.preventDefault();
+  const submitProvision = () => {
     const profile = parseProfile(profileSource, setProfileError);
     if (profile !== null) provision.mutate(profile);
   };
 
-  const submitRegister = (event: FormEvent) => {
-    event.preventDefault();
+  const submitRegister = () => {
     const profile = parseProfile(newProfileSource, setNewProfileError);
     if (profile !== null) register.mutate(profile);
   };
 
   return (
     <section className={styles.panel} aria-labelledby="membership-title">
-      <SectionHeader id="membership-title" title="사용자 할당" description="이 Realm에 사용자를 연결(Membership)합니다. 새 사용자를 직접 만들어 연결하거나, 기존 운영자(System) 계정을 붙일 수 있습니다. 일반 사용자는 스스로 가입하거나 JIT 로그인으로도 자동 연결됩니다." />
+      <SectionHeader
+        id="membership-title"
+        title="사용자 할당"
+        description="이 Realm에 연결된 사용자를 확인하고 필요한 연결 작업을 실행합니다."
+        actions={<div className={styles.rowActions}>
+          <Button
+            onPress={() => { register.reset(); setNewProfileError(null); setMembershipAction("register"); }}
+            isDisabled={!canRegister}
+          >새 사용자</Button>
+          <Button
+            variant="secondary"
+            onPress={() => { provision.reset(); setProfileError(null); setMembershipAction("provision"); }}
+            isDisabled={!canProvision || identities.isPending || candidates.length === 0}
+          >기존 운영자 연결</Button>
+        </div>}
+      />
       {realm.status !== "active" ? (
         <Callout tone="warning">이 Realm이 활성 상태가 되어야 사용자를 연결할 수 있습니다.</Callout>
       ) : null}
       {identities.isError ? <LoadError error={identities.error} onRetry={() => void identities.refetch()} /> : null}
-
-      <div className={styles.membershipSubsection} aria-labelledby="membership-create-title">
-        <h3 id="membership-create-title">새 사용자 만들어 연결</h3>
-        <p className={styles.membershipSubsectionHint}>새 로그인 계정을 만들고 곧바로 이 Realm에 연결합니다. 초기 비밀번호는 사용자에게 안전하게 전달해 주세요.</p>
-        <form className={styles.provisionForm} onSubmit={submitRegister}>
-          <div className={styles.fieldGrid}>
-            <TextInput label="로그인 identifier" value={newIdentifier} onChange={setNewIdentifier} description="예: 이메일. 이 Realm의 로그인 아이디로 사용됩니다." isDisabled={!canRegister} isRequired />
-            <TextInput label="초기 비밀번호" type="password" autoComplete="new-password" value={newPassword} onChange={setNewPassword} description="12자 이상이어야 합니다. 사용자에게 안전하게 전달해 주세요." isDisabled={!canRegister} isRequired />
-          </div>
-          <DisplayModeGate minimum="standard">
-            <TextAreaField
-              label="초기 Profile JSON"
-              value={newProfileSource}
-              onChange={setNewProfileSource}
-              rows={4}
-              errorMessage={newProfileError ?? undefined}
-              description="Profile Collection Schema 검증을 통과해야 합니다."
-              isDisabled={!canRegister}
-            />
-          </DisplayModeGate>
-          <TextInput label="현재 관리자 비밀번호" type="password" autoComplete="current-password" value={newReauthPassword} onChange={setNewReauthPassword} description="본인 확인을 위해 현재 로그인한 관리자 비밀번호를 입력합니다." isDisabled={!canRegister} isRequired />
-          <MutationError error={register.error} />
-          <div className={styles.formActions}>
-            <Button type="submit" isDisabled={!canRegister || newIdentifier.trim() === "" || newPassword === "" || newReauthPassword === "" || register.isPending}>
-              {register.isPending ? "생성 중…" : "새 사용자 생성 후 연결"}
-            </Button>
-          </div>
-        </form>
-      </div>
-
-      <div className={styles.membershipSubsection} aria-labelledby="membership-link-title">
-        <h3 id="membership-link-title">기존 운영자 계정 연결</h3>
-        <p className={styles.membershipSubsectionHint}>이미 존재하는 운영자(System) 계정을 이 Realm에 연결합니다.</p>
-        {!realm.authentication.acceptSystemIdentities ? (
-          <Callout tone="warning">운영자(System) 계정 연결이 <strong>Realm 설정에서 꺼져 있습니다.</strong> 붙이려면 위 ‘Realm 설정’에서 “System Global Identity가 이 Realm의 Membership을 가질 수 있음”을 켜 주세요.</Callout>
-        ) : realm.status === "active" && candidates.length === 0 ? (
-          <Callout tone="info">연결할 수 있는 운영자(System) 계정이 없습니다. 모든 운영자 계정이 이미 이 Realm에 연결되어 있거나 비활성 상태입니다.</Callout>
-        ) : null}
-      <form className={styles.provisionForm} onSubmit={submitProvision}>
-        <div className={styles.fieldGrid}>
-          <SelectField
-            label="연결할 운영자(System) 계정"
-            value={identityId}
-            options={candidates.map((identity) => ({
-              value: identity.globalIdentityId,
-              label: `${identity.primaryIdentifier} · ${identity.globalIdentityId}`,
-            }))}
-            description="이 Realm에 연결할 기존 운영자 계정을 선택합니다."
-            onChange={setIdentityId}
-            isDisabled={!canProvision || identities.isPending || candidates.length === 0}
-          />
-          <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isDisabled={!canProvision} isRequired />
-        </div>
-        <DisplayModeGate minimum="standard">
-          <TextAreaField
-            label="초기 Profile JSON"
-            value={profileSource}
-            onChange={setProfileSource}
-            rows={4}
-            errorMessage={profileError ?? undefined}
-            description="Profile Collection Schema 검증을 통과해야 합니다."
-            isDisabled={!canProvision}
-          />
-        </DisplayModeGate>
-        <MutationError error={provision.error} />
-        <div className={styles.formActions}>
-          <Button type="submit" isDisabled={!canProvision || identityId === "" || password === "" || provision.isPending}>
-            {provision.isPending ? "연결 중…" : "운영자 계정 연결"}
-          </Button>
-        </div>
-      </form>
-      </div>
+      {!realm.authentication.acceptSystemIdentities ? (
+        <p className={styles.compactHint}>기존 운영자 연결은 Realm 설정에서 System Identity Membership을 허용하면 사용할 수 있습니다.</p>
+      ) : realm.status === "active" && !identities.isPending && candidates.length === 0 ? (
+        <p className={styles.compactHint}>연결 가능한 운영자 계정이 없습니다.</p>
+      ) : null}
       {memberships.isPending ? <PageLoading label="Membership을 불러오는 중" /> : null}
       {memberships.isError ? <LoadError error={memberships.error} onRetry={() => void memberships.refetch()} /> : null}
-      {memberships.data?.items.length === 0 ? <EmptyState title="연결된 사용자가 없습니다" description="위 폼으로 새 사용자를 만들거나 운영자 계정을 연결하면, 또는 일반 사용자가 가입/JIT 로그인하면 여기에 표시됩니다." /> : null}
+      {memberships.data?.items.length === 0 ? <EmptyState title="연결된 사용자가 없습니다" description="상단 작업으로 사용자를 연결하거나 일반 사용자가 가입/JIT 로그인하면 여기에 표시됩니다." /> : null}
       {memberships.data && memberships.data.items.length > 0 ? (
         <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead><tr><th>Global Identity</th><th>Realm Subject</th><th>Profile Document</th><th>상태</th><th>생성 방식</th><th>Revision</th><th /></tr></thead>
+          <table className={`${styles.table} ${styles.membershipTable}`}>
+            <thead><tr><th>사용자</th><th>Realm Subject</th><th>Profile</th><th>상태</th><th>연결 방식</th><th>작업</th></tr></thead>
             <tbody>
               {memberships.data.items.map((membership) => {
                 const identity = membership.identity ?? identityById.get(membership.globalIdentityId);
                 return (
                   <tr key={membership.membershipId}>
-                    <td><strong>{identity?.primaryIdentifier ?? "Identifier 미제공"}</strong><IdValue label="Global Identity ID" value={membership.globalIdentityId} /><IdValue label="Membership ID" value={membership.membershipId} /></td>
-                    <td><IdValue label="Subject ID" value={membership.subjectId} /></td>
-                    <td><IdValue label="Profile Document ID" value={membership.profileDocumentId ?? "프로비저닝 중"} /></td>
+                    <td>
+                      <strong>{identity?.primaryIdentifier ?? "Identifier 미제공"}</strong>
+                      <DisplayModeGate minimum="advanced">
+                        <IdValue label="Global Identity ID" value={membership.globalIdentityId} />
+                        <IdValue label="Membership ID" value={membership.membershipId} />
+                      </DisplayModeGate>
+                    </td>
+                    <td><code className={styles.compactCode}>{membership.subjectId}</code></td>
+                    <td><code className={styles.compactCode}>{membership.profileDocumentId ?? "프로비저닝 중"}</code></td>
                     <td><MembershipStatusBadge status={membership.status} /></td>
-                    <td>{provisionedByLabel(membership.provisionedBy)}</td>
-                    <td>{membership.revision}</td>
+                    <td>{provisionedByLabel(membership.provisionedBy)}<span className={styles.secondaryLine}>Revision {membership.revision}</span></td>
                     <td>
                       <div className={styles.rowActions}>
                         {membership.status === "active" && realm.kind === "content" ? (
@@ -715,6 +894,77 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
         </div>
       ) : null}
       <MutationError error={changeStatus.error} />
+      {membershipAction === "register" ? (
+        <ConfirmDialog
+          title="새 사용자 만들어 연결"
+          confirmLabel="새 사용자 생성 후 연결"
+          isPending={register.isPending}
+          isConfirmDisabled={!canRegister || newIdentifier.trim() === "" || newPassword === "" || newReauthPassword === ""}
+          onCancel={() => { setMembershipAction(null); register.reset(); }}
+          onConfirm={submitRegister}
+        >
+          <div className={styles.dialogStack}>
+            <p>새 로그인 계정을 만들고 곧바로 이 Realm에 연결합니다.</p>
+            <div className={styles.dialogFieldGrid}>
+              <TextInput label="로그인 identifier" value={newIdentifier} onChange={setNewIdentifier} description="예: 이메일 또는 사용자명" isRequired />
+              <TextInput label="초기 비밀번호" type="password" autoComplete="new-password" value={newPassword} onChange={setNewPassword} description="12자 이상" isRequired />
+            </div>
+            <TextInput label="현재 관리자 비밀번호" type="password" autoComplete="current-password" value={newReauthPassword} onChange={setNewReauthPassword} description="본인 확인을 위해 필요합니다." isRequired />
+            <DisplayModeGate minimum="standard">
+              <details className={styles.optionalDetails}>
+                <summary>초기 Profile JSON</summary>
+                <TextAreaField
+                  label="초기 Profile JSON"
+                  value={newProfileSource}
+                  onChange={setNewProfileSource}
+                  rows={4}
+                  errorMessage={newProfileError ?? undefined}
+                  description="비워 둘 수 있으며 Profile Collection Schema 검증을 통과해야 합니다."
+                />
+              </details>
+            </DisplayModeGate>
+            <MutationError error={register.error} />
+          </div>
+        </ConfirmDialog>
+      ) : null}
+      {membershipAction === "provision" ? (
+        <ConfirmDialog
+          title="기존 운영자 계정 연결"
+          confirmLabel="운영자 계정 연결"
+          isPending={provision.isPending}
+          isConfirmDisabled={!canProvision || identityId === "" || password === ""}
+          onCancel={() => { setMembershipAction(null); provision.reset(); }}
+          onConfirm={submitProvision}
+        >
+          <div className={styles.dialogStack}>
+            <p>기존 System 운영자 계정을 이 Realm의 Membership으로 연결합니다.</p>
+            <SelectField
+              label="연결할 운영자(System) 계정"
+              value={identityId}
+              options={candidates.map((identity) => ({
+                value: identity.globalIdentityId,
+                label: `${identity.primaryIdentifier} · ${identity.globalIdentityId}`,
+              }))}
+              onChange={setIdentityId}
+            />
+            <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
+            <DisplayModeGate minimum="standard">
+              <details className={styles.optionalDetails}>
+                <summary>초기 Profile JSON</summary>
+                <TextAreaField
+                  label="초기 Profile JSON"
+                  value={profileSource}
+                  onChange={setProfileSource}
+                  rows={4}
+                  errorMessage={profileError ?? undefined}
+                  description="비워 둘 수 있으며 Profile Collection Schema 검증을 통과해야 합니다."
+                />
+              </details>
+            </DisplayModeGate>
+            <MutationError error={provision.error} />
+          </div>
+        </ConfirmDialog>
+      ) : null}
       {promoting ? (
         <ConfirmDialog
           title="Realm 관리자로 지정"
@@ -761,6 +1011,7 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
   const [reason, setReason] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [password, setPassword] = useState("");
+  const [granting, setGranting] = useState(false);
   const [revoking, setRevoking] = useState<RealmFullAccessBinding | null>(null);
   const [revokePassword, setRevokePassword] = useState("");
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.realmFullAccess(realm.realmId) });
@@ -776,6 +1027,7 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
       setReason("");
       setValidUntil("");
       setPassword("");
+      setGranting(false);
       await refresh();
     },
   });
@@ -792,30 +1044,17 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
 
   return (
     <section className={styles.panel} aria-labelledby="full-access-title">
-      <SectionHeader id="full-access-title" title="Realm Full Access" description="현재와 미래의 이 Realm 리소스에만 적용되는 별도 보호 바인딩입니다." />
+      <SectionHeader
+        id="full-access-title"
+        title="Realm Full Access"
+        description="현재와 미래의 이 Realm 리소스에만 적용되는 별도 보호 바인딩입니다."
+        actions={<Button
+          variant="danger"
+          onPress={() => { grant.reset(); setGranting(true); }}
+          isDisabled={realm.status !== "active" || activeMemberships.length === 0}
+        >Full Access 부여</Button>}
+      />
       <Callout tone="warning"><strong>복구와 초기 설정에만 사용하세요.</strong> 일반 운영 권한은 Realm Role Binding으로 부여해야 하며, grant와 revoke 모두 현재 System 계정 비밀번호를 재검증합니다.</Callout>
-      <form className={styles.formStack} onSubmit={(event) => { event.preventDefault(); grant.mutate(); }}>
-        <div className={styles.fieldGrid}>
-          <SelectField
-            label="대상 Realm Subject"
-            value={subjectId}
-            options={activeMemberships.map((membership) => ({
-              value: membership.subjectId,
-              label: `${identityById.get(membership.globalIdentityId)?.primaryIdentifier ?? membership.globalIdentityId} · Subject ${membership.subjectId}`,
-            }))}
-            description="Global Identity ID가 아닌 이 Realm의 Subject ID에 부여합니다."
-            onChange={setSubjectId}
-            isDisabled={realm.status !== "active" || activeMemberships.length === 0}
-          />
-          <TextInput label="만료 시각" type="datetime-local" value={validUntil} onChange={setValidUntil} description="비워 두면 revoke할 때까지 유지됩니다." isDisabled={realm.status !== "active"} />
-          <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isDisabled={realm.status !== "active"} isRequired />
-        </div>
-        <TextAreaField label="부여 사유" value={reason} onChange={setReason} rows={3} isDisabled={realm.status !== "active"} isRequired />
-        <MutationError error={grant.error} />
-        <div className={styles.formActions}>
-          <Button type="submit" isDisabled={realm.status !== "active" || subjectId === "" || reason.trim() === "" || password === "" || grant.isPending}>{grant.isPending ? "부여 중…" : "Full Access 부여"}</Button>
-        </div>
-      </form>
       {bindings.isPending ? <PageLoading label="Full Access 바인딩을 불러오는 중" /> : null}
       {bindings.isError ? <LoadError error={bindings.error} onRetry={() => void bindings.refetch()} /> : null}
       {bindings.data?.items.length === 0 ? <EmptyState title="Full Access 바인딩이 없습니다" description="필요한 Role과 Scope만 부여하는 상태가 가장 안전합니다." /> : null}
@@ -841,6 +1080,34 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
         </div>
       ) : null}
       <MutationError error={revoke.error} />
+      {granting ? (
+        <ConfirmDialog
+          title="Realm Full Access 부여"
+          confirmLabel="Full Access 부여"
+          danger
+          isPending={grant.isPending}
+          isConfirmDisabled={subjectId === "" || reason.trim() === "" || password === ""}
+          onCancel={() => { setGranting(false); grant.reset(); }}
+          onConfirm={() => grant.mutate()}
+        >
+          <div className={styles.dialogStack}>
+            <Callout tone="warning">이 권한은 복구와 초기 설정에만 사용해야 합니다.</Callout>
+            <SelectField
+              label="대상 Realm Subject"
+              value={subjectId}
+              options={activeMemberships.map((membership) => ({
+                value: membership.subjectId,
+                label: `${identityById.get(membership.globalIdentityId)?.primaryIdentifier ?? membership.globalIdentityId} · Subject ${membership.subjectId}`,
+              }))}
+              onChange={setSubjectId}
+            />
+            <TextInput label="만료 시각" type="datetime-local" value={validUntil} onChange={setValidUntil} description="비워 두면 해지할 때까지 유지됩니다." />
+            <TextAreaField label="부여 사유" value={reason} onChange={setReason} rows={3} isRequired />
+            <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
+            <MutationError error={grant.error} />
+          </div>
+        </ConfirmDialog>
+      ) : null}
       {revoking ? (
         <ConfirmDialog
           title="Realm Full Access 해지"

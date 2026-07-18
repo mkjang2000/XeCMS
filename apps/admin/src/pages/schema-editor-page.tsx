@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Controller, useFieldArray, useForm, useWatch, type Control } from "react-hook-form";
 import { useNavigate, useParams } from "react-router";
@@ -388,6 +388,7 @@ export function SchemaEditorPage() {
   });
   const editable = diagnostics.data?.schemaMode === "editable";
   const [stableIdSaveActive, setStableIdSaveActive] = useState(false);
+  const stableIdAuthIntent = useRef<SchemaFormValues | null>(null);
   const { control, handleSubmit, reset, setError, setValue, formState: { errors, isDirty } } = useForm<SchemaFormValues>({ defaultValues: toFormValues() });
   const { fields, append, remove } = useFieldArray({ control, name: "fields", keyName: "formKey" });
   const hierarchyEnabled = useWatch({ control, name: "hierarchyEnabled" });
@@ -412,8 +413,17 @@ export function SchemaEditorPage() {
     && pendingIdentifierField;
 
   useEffect(() => {
-    if (collectionQuery.data) reset(toFormValues(collectionQuery.data));
-  }, [collectionQuery.data, reset]);
+    if (!collectionQuery.data) return;
+    reset(toFormValues(collectionQuery.data));
+    const authIntent = stableIdAuthIntent.current;
+    if (authIntent !== null) {
+      setValue("authEnabled", true, { shouldDirty: true });
+      setValue("authRealmKey", authIntent.authRealmKey, { shouldDirty: true });
+      setValue("authAcceptSystemIdentities", authIntent.authAcceptSystemIdentities, { shouldDirty: true });
+      setValue("authProvisioning", authIntent.authProvisioning, { shouldDirty: true });
+      setValue("authDefaultRoleIds", authIntent.authDefaultRoleIds, { shouldDirty: true });
+    }
+  }, [collectionQuery.data, reset, setValue]);
 
   const mutation = useMutation({
     mutationFn: async (values: SchemaFormValues) => {
@@ -437,6 +447,7 @@ export function SchemaEditorPage() {
         : api.collections.updateDraft(collectionId, { draft, expectedDraftVersion: collectionQuery.data!.draftVersion });
     },
     onSuccess: async (collection) => {
+      stableIdAuthIntent.current = null;
       flushSync(() => reset(toFormValues(collection)));
       await queryClient.invalidateQueries({ queryKey: queryKeys.collections });
       queryClient.setQueryData(queryKeys.collectionDraft(collection.id), collection);
@@ -473,12 +484,11 @@ export function SchemaEditorPage() {
       return { collection, previousAuth: values };
     },
     onSuccess: async ({ collection, previousAuth }) => {
+      // The stable URL mounts the same editor against a new query key. Preserve
+      // the operator's unsaved auth choices when that query hydrates/refetches.
+      stableIdAuthIntent.current = previousAuth;
       await queryClient.invalidateQueries({ queryKey: queryKeys.collections });
       queryClient.setQueryData(queryKeys.collectionDraft(collection.id), collection);
-      if (isNew) {
-        // A brand-new collection now has an ID; move onto its editable draft URL.
-        navigate(`/admin/schema/${collection.id}`);
-      }
       // Re-apply the fields (now carrying stable IDs) and restore the auth intent.
       flushSync(() => reset(toFormValues(collection)));
       setValue("authEnabled", true, { shouldDirty: true });
@@ -486,6 +496,10 @@ export function SchemaEditorPage() {
       setValue("authAcceptSystemIdentities", previousAuth.authAcceptSystemIdentities, { shouldDirty: true });
       setValue("authProvisioning", previousAuth.authProvisioning, { shouldDirty: true });
       setValue("authDefaultRoleIds", previousAuth.authDefaultRoleIds, { shouldDirty: true });
+      if (isNew) {
+        // A brand-new collection now has an ID; move onto its editable draft URL.
+        navigate(`/admin/schema/${collection.id}`);
+      }
     },
     onError: (error) => {
       const apiError = toAdminApiError(error);
@@ -503,6 +517,7 @@ export function SchemaEditorPage() {
 
   const reloadLatest = async () => {
     const result = await collectionQuery.refetch();
+    stableIdAuthIntent.current = null;
     if (result.data) reset(toFormValues(result.data));
     mutation.reset();
   };
