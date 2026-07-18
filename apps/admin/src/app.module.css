@@ -422,6 +422,17 @@
   backdrop-filter: blur(12px);
 }
 
+.reviewBlockers {
+  margin: 0.5rem 0 0;
+  padding-left: 1.3rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.reviewBlockers li {
+  line-height: 1.5;
+}
+
 .schemaFormActions {
   position: sticky;
   z-index: 5;

@@ -254,6 +254,14 @@ export function SchemaEditorPage() {
         ...(realms.isPending ? ["Realm 목록을 불러오는 동안 인증 설정 저장을 잠시 기다려 주세요."] : []),
         ...authConfigurationMessages(watchedValues, contentRealms, collectionId, realms.isError),
     ] : [];
+    // Deadlock: auth requires an identifier, an identifier needs a stable Field ID,
+    // and a Field ID is only issued on save — but auth blocks the save. It resolves
+    // the moment a required+unique text field exists but has not been saved yet, so
+    // saving the fields once (without auth) breaks the cycle.
+    const pendingIdentifierField = (watchedValues.fields ?? []).some((field) => field.persistentId === null && field.type === "text" && field.required && field.unique);
+    const identifierNeedsSave = watchedValues.authEnabled
+        && identifierCandidates.length === 0
+        && pendingIdentifierField;
     useEffect(() => {
         if (collectionQuery.data)
             reset(toFormValues(collectionQuery.data));
@@ -297,6 +305,50 @@ export function SchemaEditorPage() {
             });
         },
     });
+    // Breaks the auth identifier deadlock: persist the fields with auth temporarily
+    // omitted so the server issues stable Field IDs, then restore the auth settings
+    // the operator had entered so they can pick the now-eligible identifier.
+    const saveFieldsMutation = useMutation({
+        mutationFn: async (values) => {
+            const normalizedNames = values.fields.map(({ name }) => name.trim());
+            const duplicateIndex = normalizedNames.findIndex((name, index) => normalizedNames.indexOf(name) !== index);
+            if (duplicateIndex >= 0) {
+                setError(`fields.${duplicateIndex}.name`, { message: "같은 이름의 필드가 이미 있습니다." });
+                throw new Error("DUPLICATE_FIELD_NAME");
+            }
+            const draft = toDraft({ ...values, authEnabled: false });
+            const collection = isNew
+                ? await api.collections.create(draft)
+                : await api.collections.updateDraft(collectionId, { draft, expectedDraftVersion: collectionQuery.data.draftVersion });
+            return { collection, previousAuth: values };
+        },
+        onSuccess: async ({ collection, previousAuth }) => {
+            await queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+            queryClient.setQueryData(queryKeys.collectionDraft(collection.id), collection);
+            if (isNew) {
+                // A brand-new collection now has an ID; move onto its editable draft URL.
+                navigate(`/admin/schema/${collection.id}`);
+            }
+            // Re-apply the fields (now carrying stable IDs) and restore the auth intent.
+            flushSync(() => reset(toFormValues(collection)));
+            setValue("authEnabled", true, { shouldDirty: true });
+            setValue("authRealmKey", previousAuth.authRealmKey, { shouldDirty: true });
+            setValue("authAcceptSystemIdentities", previousAuth.authAcceptSystemIdentities, { shouldDirty: true });
+            setValue("authProvisioning", previousAuth.authProvisioning, { shouldDirty: true });
+            setValue("authDefaultRoleIds", previousAuth.authDefaultRoleIds, { shouldDirty: true });
+        },
+        onError: (error) => {
+            const apiError = toAdminApiError(error);
+            let shouldFocus = true;
+            Object.entries(apiError.fieldErrors).forEach(([path, message]) => {
+                const formPath = schemaIssuePathToFormPath(path);
+                if (formPath !== null) {
+                    setError(formPath, { message }, { shouldFocus });
+                    shouldFocus = false;
+                }
+            });
+        },
+    });
     const reloadLatest = async () => {
         const result = await collectionQuery.refetch();
         if (result.data)
@@ -305,6 +357,19 @@ export function SchemaEditorPage() {
     };
     const mutationError = mutation.isError ? toAdminApiError(mutation.error) : null;
     const isVersionConflict = mutationError?.status === 409 && mutationError.code === "SCHEMA_DRAFT_CONFLICT";
+    // Every reason the "변경 사항 검토" button is disabled, surfaced next to it so
+    // the operator never has to guess why nothing happens when it is greyed out.
+    const authReviewBlockers = authBlockingMessages.length === 0
+        ? []
+        : displayModeAtLeast(mode, "advanced")
+            ? authBlockingMessages
+            : ["콘텐츠 계정 인증 설정에 해결할 항목이 있습니다. 상단 표시 모드를 Advanced로 전환해 확인해 주세요."];
+    const reviewBlockers = [
+        ...(diagnostics.isPending || editable ? [] : ["현재 스키마가 편집 불가 상태입니다. 활성 초안이 없거나 다른 작업이 진행 중일 수 있습니다."]),
+        ...(mutation.isPending ? ["초안을 저장하는 중입니다."] : []),
+        ...authReviewBlockers,
+    ];
+    const reviewDisabled = reviewBlockers.length > 0 || diagnostics.isPending;
     const collectionOptions = (collections.data?.items ?? []).map((item) => ({
         value: item.id,
         label: `${item.label || item.name} · ${item.id}`,
@@ -337,6 +402,6 @@ export function SchemaEditorPage() {
                                                                     return (_jsxs(CheckboxField, { isSelected: field.value.includes(fieldId), onChange: (selected) => field.onChange(selected
                                                                             ? [...field.value, fieldId]
                                                                             : field.value.filter((value) => value !== fieldId)), children: [candidate.label || candidate.name, " \u00B7 ", fieldId] }, fieldId));
-                                                                }) })) })) : (_jsx(Callout, { tone: "warning", children: "\uC120\uD0DD \uAC00\uB2A5\uD55C \uD544\uB4DC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. text \uD544\uB4DC\uC5D0 \uD544\uC218\u00B7\uACE0\uC720 \uAC12 \uC870\uAC74\uC744 \uC9C0\uC815\uD558\uACE0 \uCD08\uC548\uC744 \uD55C \uBC88 \uC800\uC7A5\uD574 stable ID\uB97C \uBC1C\uAE09\uD574 \uC8FC\uC138\uC694." }))] }), selectedRealm !== undefined ? (_jsxs(Callout, { tone: "info", children: ["\uAC00\uC785 \uACF5\uAC1C \uC5EC\uBD80\uB294 Realm \uC124\uC815\uC774 source of truth\uC785\uB2C8\uB2E4. \uD604\uC7AC ", _jsx("strong", { children: selectedRealm.authentication.registration === "open" ? "Open" : "Closed" }), "\uC774\uBA70 \uC774 Schema JSON\uC5D0\uB294 registration\uC744 \uC800\uC7A5\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. Realm\uC758 \uD604\uC7AC provisioning\uACFC Role \uC124\uC815\uC740 \uC120\uD0DD \uC2DC \uD3B8\uC9D1\uAE30\uC5D0 \uBCF5\uC0AC\uB418\uBA70 Schema \uC801\uC6A9 \uB2E8\uACC4\uC5D0\uC11C \uD568\uAED8 \uAC80\uD1A0\uB429\uB2C8\uB2E4."] })) : null, authBlockingMessages.map((message) => (_jsx(Callout, { tone: "error", children: message }, message)))] })) : (_jsx("p", { className: styles.authHint, children: "\uBE44\uD65C\uC131\uD654\uD558\uBA74 \uC800\uC7A5 JSON\uC5D0\uC11C `auth` \uAC1D\uCCB4 \uC804\uCCB4\uB97C \uC0DD\uB7B5\uD569\uB2C8\uB2E4." }))] })] }) }), _jsxs("section", { className: styles.card, "aria-labelledby": "fields-heading", children: [_jsx(SectionHeader, { id: "fields-heading", title: "\uD544\uB4DC", description: "M2\uC758 \uBAA8\uB4E0 \uD544\uB4DC \uC720\uD615\uC744 \uCD94\uAC00\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.", actions: _jsxs(Button, { type: "button", variant: "secondary", onPress: () => append(emptyField()), children: [_jsx(Icon, { name: "plus", size: 16 }), "\uD544\uB4DC \uCD94\uAC00"] }) }), fields.map((field, index) => (_jsxs("fieldset", { className: styles.fieldset, "aria-label": `필드 ${index + 1}`, children: [_jsxs("legend", { children: ["\uD544\uB4DC ", index + 1] }), _jsxs("div", { className: styles.fieldGrid, children: [_jsx(Controller, { control: control, name: `fields.${index}.name`, rules: { required: "필드 이름을 입력해 주세요.", pattern: { value: SCHEMA_NAME_PATTERN, message: SCHEMA_NAME_ERROR_MESSAGE } }, render: ({ field: { ref, ...input }, fieldState }) => _jsx(TextInput, { inputRef: ref, label: "\uD544\uB4DC \uC774\uB984", isRequired: true, maxLength: 64, errorMessage: fieldState.error?.message, ...input }) }), _jsx(Controller, { control: control, name: `fields.${index}.label`, render: ({ field: { ref, ...input } }) => _jsx(TextInput, { inputRef: ref, label: "\uD544\uB4DC \uB808\uC774\uBE14", ...input }) }), _jsx(Controller, { control: control, name: `fields.${index}.type`, render: ({ field: input }) => _jsx(SelectField, { label: "\uD544\uB4DC \uC720\uD615", options: fieldTypes, value: input.value, onChange: input.onChange }) })] }), _jsxs("div", { className: styles.fieldFooter, children: [_jsx(Controller, { control: control, name: `fields.${index}.required`, render: ({ field: input }) => _jsx(CheckboxField, { isSelected: input.value, onChange: input.onChange, children: "\uD544\uC218 \uD544\uB4DC" }) }), _jsx(Button, { type: "button", variant: "quiet", onPress: () => remove(index), isDisabled: fields.length === 1, children: "\uD544\uB4DC \uC0AD\uC81C" })] }), _jsxs("details", { className: styles.advanced, children: [_jsx("summary", { children: "\uC720\uD615\uBCC4 \uC124\uC815\uACFC \uC81C\uC57D \uC870\uAC74" }), _jsx(FieldAdvanced, { control: control, index: index, collectionOptions: collectionOptions }), _jsx(DisplayModeGate, { minimum: "advanced", children: _jsxs("code", { children: ["Field ID: ", field.persistentId ?? "초안 저장 시 서버가 발급", field.relationId ? ` · Relation ID: ${field.relationId}` : ""] }) })] })] }, field.formKey))), _jsx(DisplayModeGate, { minimum: "advanced", children: collections.data?.items.length ? (_jsxs(Callout, { tone: "info", children: ["\uAD00\uACC4 \uB300\uC0C1 ID: ", collections.data.items.map((item) => `${item.label || item.name} = ${item.id}`).join(" · ")] })) : null }), errors.fields?.root?.message ? _jsx(Callout, { tone: "error", children: errors.fields.root.message }) : null] }), _jsxs("div", { className: styles.schemaFormActions, children: [_jsx(Button, { type: "submit", isDisabled: !editable || mutation.isPending || authBlockingMessages.length > 0, children: mutation.isPending ? "초안 저장 중…" : "변경 사항 검토" }), _jsx(Button, { type: "button", variant: "secondary", isDisabled: mutation.isPending, onPress: () => navigate("/admin/schema"), children: "\uCDE8\uC18C" })] })] }), _jsx(UnsavedChangesGuard, { when: isDirty && !mutation.isPending })] }));
+                                                                }) })) })) : (_jsx(Callout, { tone: "warning", children: "\uC120\uD0DD \uAC00\uB2A5\uD55C \uD544\uB4DC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. text \uD544\uB4DC\uC5D0 \uD544\uC218\u00B7\uACE0\uC720 \uAC12 \uC870\uAC74\uC744 \uC9C0\uC815\uD558\uACE0 \uCD08\uC548\uC744 \uD55C \uBC88 \uC800\uC7A5\uD574 stable ID\uB97C \uBC1C\uAE09\uD574 \uC8FC\uC138\uC694." }))] }), selectedRealm !== undefined ? (_jsxs(Callout, { tone: "info", children: ["\uAC00\uC785 \uACF5\uAC1C \uC5EC\uBD80\uB294 Realm \uC124\uC815\uC774 source of truth\uC785\uB2C8\uB2E4. \uD604\uC7AC ", _jsx("strong", { children: selectedRealm.authentication.registration === "open" ? "Open" : "Closed" }), "\uC774\uBA70 \uC774 Schema JSON\uC5D0\uB294 registration\uC744 \uC800\uC7A5\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. Realm\uC758 \uD604\uC7AC provisioning\uACFC Role \uC124\uC815\uC740 \uC120\uD0DD \uC2DC \uD3B8\uC9D1\uAE30\uC5D0 \uBCF5\uC0AC\uB418\uBA70 Schema \uC801\uC6A9 \uB2E8\uACC4\uC5D0\uC11C \uD568\uAED8 \uAC80\uD1A0\uB429\uB2C8\uB2E4."] })) : null] })) : (_jsx("p", { className: styles.authHint, children: "\uBE44\uD65C\uC131\uD654\uD558\uBA74 \uC800\uC7A5 JSON\uC5D0\uC11C `auth` \uAC1D\uCCB4 \uC804\uCCB4\uB97C \uC0DD\uB7B5\uD569\uB2C8\uB2E4." }))] })] }) }), _jsxs("section", { className: styles.card, "aria-labelledby": "fields-heading", children: [_jsx(SectionHeader, { id: "fields-heading", title: "\uD544\uB4DC", description: "M2\uC758 \uBAA8\uB4E0 \uD544\uB4DC \uC720\uD615\uC744 \uCD94\uAC00\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.", actions: _jsxs(Button, { type: "button", variant: "secondary", onPress: () => append(emptyField()), children: [_jsx(Icon, { name: "plus", size: 16 }), "\uD544\uB4DC \uCD94\uAC00"] }) }), fields.map((field, index) => (_jsxs("fieldset", { className: styles.fieldset, "aria-label": `필드 ${index + 1}`, children: [_jsxs("legend", { children: ["\uD544\uB4DC ", index + 1] }), _jsxs("div", { className: styles.fieldGrid, children: [_jsx(Controller, { control: control, name: `fields.${index}.name`, rules: { required: "필드 이름을 입력해 주세요.", pattern: { value: SCHEMA_NAME_PATTERN, message: SCHEMA_NAME_ERROR_MESSAGE } }, render: ({ field: { ref, ...input }, fieldState }) => _jsx(TextInput, { inputRef: ref, label: "\uD544\uB4DC \uC774\uB984", isRequired: true, maxLength: 64, errorMessage: fieldState.error?.message, ...input }) }), _jsx(Controller, { control: control, name: `fields.${index}.label`, render: ({ field: { ref, ...input } }) => _jsx(TextInput, { inputRef: ref, label: "\uD544\uB4DC \uB808\uC774\uBE14", ...input }) }), _jsx(Controller, { control: control, name: `fields.${index}.type`, render: ({ field: input }) => _jsx(SelectField, { label: "\uD544\uB4DC \uC720\uD615", options: fieldTypes, value: input.value, onChange: input.onChange }) })] }), _jsxs("div", { className: styles.fieldFooter, children: [_jsx(Controller, { control: control, name: `fields.${index}.required`, render: ({ field: input }) => _jsx(CheckboxField, { isSelected: input.value, onChange: input.onChange, children: "\uD544\uC218 \uD544\uB4DC" }) }), _jsx(Button, { type: "button", variant: "quiet", onPress: () => remove(index), isDisabled: fields.length === 1, children: "\uD544\uB4DC \uC0AD\uC81C" })] }), _jsxs("details", { className: styles.advanced, children: [_jsx("summary", { children: "\uC720\uD615\uBCC4 \uC124\uC815\uACFC \uC81C\uC57D \uC870\uAC74" }), _jsx(FieldAdvanced, { control: control, index: index, collectionOptions: collectionOptions }), _jsx(DisplayModeGate, { minimum: "advanced", children: _jsxs("code", { children: ["Field ID: ", field.persistentId ?? "초안 저장 시 서버가 발급", field.relationId ? ` · Relation ID: ${field.relationId}` : ""] }) })] })] }, field.formKey))), _jsx(DisplayModeGate, { minimum: "advanced", children: collections.data?.items.length ? (_jsxs(Callout, { tone: "info", children: ["\uAD00\uACC4 \uB300\uC0C1 ID: ", collections.data.items.map((item) => `${item.label || item.name} = ${item.id}`).join(" · ")] })) : null }), errors.fields?.root?.message ? _jsx(Callout, { tone: "error", children: errors.fields.root.message }) : null] }), identifierNeedsSave ? (_jsxs(Callout, { tone: "info", children: [_jsx("strong", { children: "\uB85C\uADF8\uC778 identifier\uB85C \uC4F0\uB824\uBA74 \uD544\uB4DC\uC5D0 \uBA3C\uC800 stable ID\uAC00 \uBC1C\uAE09\uB418\uC5B4\uC57C \uD569\uB2C8\uB2E4." }), _jsx("p", { children: "\uD544\uC218\u00B7\uACE0\uC720 text \uD544\uB4DC\uB294 \uC900\uBE44\uB410\uC9C0\uB9CC, \uC778\uC99D(auth)\uC774 \uCF1C\uC838 \uC788\uC73C\uBA74 identifier\uAC00 \uC5C6\uC5B4 \uC800\uC7A5\uC774 \uB9C9\uD788\uACE0, \uC800\uC7A5\uC744 \uD574\uC57C stable ID\uAC00 \uC0DD\uAE30\uB294 \uAD50\uCC29 \uC0C1\uD0DC\uC785\uB2C8\uB2E4. \uC544\uB798 \uBC84\uD2BC\uC73C\uB85C \uC778\uC99D \uC124\uC815\uC744 \uC7A0\uC2DC \uBE7C\uACE0 \uD544\uB4DC\uB9CC \uC800\uC7A5\uD574 stable ID\uB97C \uBC1C\uAE09\uBC1B\uC740 \uB4A4, \uB3CC\uC544\uC640\uC11C identifier\uB97C \uC120\uD0DD\uD574 \uC8FC\uC138\uC694." }), _jsx(Button, { type: "button", onPress: () => void handleSubmit((values) => saveFieldsMutation.mutate(values))(), isDisabled: !editable || saveFieldsMutation.isPending, children: saveFieldsMutation.isPending ? "필드 저장 중…" : "필드 먼저 저장하고 ID 발급" })] })) : reviewBlockers.length > 0 ? (_jsxs(Callout, { tone: "warning", children: [_jsx("strong", { children: "\u2018\uBCC0\uACBD \uC0AC\uD56D \uAC80\uD1A0\u2019\uB97C \uC9C4\uD589\uD558\uB824\uBA74 \uBA3C\uC800 \uC544\uB798\uB97C \uD574\uACB0\uD574 \uC8FC\uC138\uC694." }), _jsx("ul", { className: styles.reviewBlockers, children: reviewBlockers.map((reason) => _jsx("li", { children: reason }, reason)) })] })) : null, _jsxs("div", { className: styles.schemaFormActions, children: [_jsx(Button, { type: "submit", isDisabled: reviewDisabled, children: mutation.isPending ? "초안 저장 중…" : "변경 사항 검토" }), _jsx(Button, { type: "button", variant: "secondary", isDisabled: mutation.isPending, onPress: () => navigate("/admin/schema"), children: "\uCDE8\uC18C" })] })] }), _jsx(UnsavedChangesGuard, { when: isDirty && !mutation.isPending })] }));
 }
 //# sourceMappingURL=schema-editor-page.js.map

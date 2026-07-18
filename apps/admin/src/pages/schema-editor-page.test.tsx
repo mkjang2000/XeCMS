@@ -7,7 +7,7 @@ import {
   type CollectionDetail,
   type IdentityRealm,
 } from "@xecms/admin";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -169,6 +169,50 @@ describe("SchemaEditorPage Collection auth", () => {
     expect(await screen.findByText("싱글턴은 콘텐츠 계정 Profile Collection으로 사용할 수 없습니다.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "변경 사항 검토" }) as HTMLButtonElement).disabled).toBe(true);
     expect(updateDraft).not.toHaveBeenCalled();
+  });
+
+  it("surfaces why the review button is disabled right next to it", async () => {
+    const { user } = renderEditor({ collection: collectionFixture("singleton") });
+    await screen.findByRole("heading", { name: "Members 스키마" });
+
+    await user.click(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }));
+
+    // A single, explicit summary tells the operator what to fix before the
+    // greyed-out button will engage — no guessing.
+    const summary = await screen.findByText("‘변경 사항 검토’를 진행하려면 먼저 아래를 해결해 주세요.");
+    const callout = summary.closest("div");
+    expect(callout?.textContent).toContain("싱글턴은 콘텐츠 계정 Profile Collection으로 사용할 수 없습니다.");
+    expect((screen.getByRole("button", { name: "변경 사항 검토" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("breaks the identifier deadlock by saving fields once without auth", async () => {
+    // Existing saved fields are not unique, so there is no eligible identifier;
+    // the operator adds a new required+unique text field, which has no stable ID
+    // yet — the classic deadlock.
+    const { updateDraft, user } = renderEditor({ collection: collectionFixture("collection", false) });
+    await screen.findByRole("heading", { name: "Members 스키마" });
+
+    await user.click(screen.getByRole("button", { name: "필드 추가" }));
+    const newField = screen.getByRole("group", { name: "필드 3" }) as HTMLElement;
+    const scoped = within(newField);
+    await user.type(scoped.getByRole("textbox", { name: "필드 이름" }), "loginId");
+    await user.click(scoped.getByRole("checkbox", { name: "필수 필드" }));
+    await user.click(scoped.getByText("유형별 설정과 제약 조건"));
+    await user.click(scoped.getByRole("checkbox", { name: "고유 값" }));
+
+    await user.click(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }));
+    const realmSelect = [...document.querySelectorAll("select")].find((select) =>
+      select.querySelector('option[value="community"]') !== null);
+    await user.selectOptions(realmSelect!, "community");
+
+    // Instead of a dead-end message, an actionable escape hatch appears.
+    const breakButton = await screen.findByRole("button", { name: "필드 먼저 저장하고 ID 발급" });
+    await user.click(breakButton);
+
+    // The draft is persisted with auth omitted so the server issues stable IDs.
+    await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(1));
+    const request = updateDraft.mock.calls[0]?.[1] as { readonly draft: { readonly auth?: unknown } };
+    expect(request.draft.auth).toBeUndefined();
   });
 
   it("explains and blocks missing Realm and ineligible identifier fields", async () => {

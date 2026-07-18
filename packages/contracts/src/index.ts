@@ -1166,6 +1166,21 @@ export interface ProvisionRealmMembershipRequest {
   readonly password: string;
 }
 
+export interface RegisterRealmMembershipRequest {
+  /** Login identifier for the brand-new content user being created. */
+  readonly identifier: string;
+  /** Initial credential for the new user (not the operator's password). */
+  readonly password: string;
+  readonly profile: Readonly<Record<string, unknown>>;
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly reauthPassword: string;
+}
+
+export interface GrantRealmAdministratorRequest {
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly reauthPassword: string;
+}
+
 export interface GrantRealmFullAccessRequest {
   readonly subjectId: string;
   readonly reason: string;

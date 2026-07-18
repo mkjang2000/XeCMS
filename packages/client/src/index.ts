@@ -91,6 +91,8 @@ import {
   type RealmMembershipListDto,
   type RealmMembershipRevisionRequest,
   type ProvisionRealmMembershipRequest,
+  type RegisterRealmMembershipRequest,
+  type GrantRealmAdministratorRequest,
   type RevokeRealmFullAccessRequest,
   type UnpublishDocumentRequest,
   type UpdateAuthorizationBindingRequest,
@@ -400,6 +402,15 @@ export interface XeCmsClient {
     provisionMembership(
       realmId: string,
       input: ProvisionRealmMembershipRequest,
+    ): Promise<RealmMembershipDto>;
+    registerMembership(
+      realmId: string,
+      input: RegisterRealmMembershipRequest,
+    ): Promise<RealmMembershipDto>;
+    grantRealmAdministrator(
+      realmId: string,
+      membershipId: string,
+      input: GrantRealmAdministratorRequest,
     ): Promise<RealmMembershipDto>;
     suspendMembership(
       realmId: string,
@@ -1034,6 +1045,21 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
           body: json(input),
           csrf: true,
         }),
+      registerMembership: (realmId, input) =>
+        request<RealmMembershipDto>(`${identityRealmPath(realmId)}/memberships/register`, {
+          method: "POST",
+          body: json(input),
+          csrf: true,
+        }),
+      grantRealmAdministrator: (realmId, membershipId, input) =>
+        request<RealmMembershipDto>(
+          `${identityRealmPath(realmId)}/memberships/${encodeURIComponent(membershipId)}/administrator`,
+          {
+            method: "POST",
+            body: json(input),
+            csrf: true,
+          },
+        ),
       suspendMembership: (realmId, membershipId, input) =>
         request<RealmMembershipDto>(
           `${identityRealmPath(realmId)}/memberships/${encodeURIComponent(membershipId)}`,

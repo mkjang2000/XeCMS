@@ -30,7 +30,9 @@ import type {
   RealmFullAccessListDto,
   RealmMembershipDto,
   RealmMembershipListDto,
+  GrantRealmAdministratorRequest,
   ProvisionRealmMembershipRequest,
+  RegisterRealmMembershipRequest,
   UpdateContentRealmProfileRequest,
   UpdateDocumentRequest,
   UpdateIdentityRealmRequest,
@@ -67,6 +69,24 @@ export interface IdentityRealmAdministrationRouteService {
       readonly realmId: string;
       readonly identityId: string;
       readonly profile: Readonly<Record<string, unknown>>;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmMembershipRecord>;
+  registerMembership(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly identifier: string;
+      readonly password: string;
+      readonly profile: Readonly<Record<string, unknown>>;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmMembershipRecord>;
+  grantRealmAdministrator(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly membershipId: string;
       readonly reauthenticatedAt: string;
     },
   ): Promise<RealmMembershipRecord>;
@@ -357,6 +377,44 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
         realmId,
         identityId: body.globalIdentityId,
         profile: body.profile,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+      });
+      reply.code(201);
+      return toMembershipDto(membership);
+    },
+  );
+
+  app.post(
+    "/api/identity-realms/:realmId/memberships/register",
+    async (request, reply): Promise<RealmMembershipDto> => {
+      const actor = await systemActor(request, true);
+      const { realmId } = pathParams(request.params, ["realmId"]);
+      const body = parseMembershipRegister(request.body);
+      // The operator re-authenticates with their own password; `password` is the
+      // brand-new user's initial credential and must never be used for reauth.
+      const verified = await actors.verifySystemReauthentication(request, actor, body.reauthPassword);
+      const membership = await administration.registerMembership(actor, {
+        realmId,
+        identifier: body.identifier,
+        password: body.password,
+        profile: body.profile,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+      });
+      reply.code(201);
+      return toMembershipDto(membership);
+    },
+  );
+
+  app.post(
+    "/api/identity-realms/:realmId/memberships/:membershipId/administrator",
+    async (request, reply): Promise<RealmMembershipDto> => {
+      const actor = await systemActor(request, true);
+      const { realmId, membershipId } = pathParams(request.params, ["realmId", "membershipId"]);
+      const body = parseGrantAdministrator(request.body);
+      const verified = await actors.verifySystemReauthentication(request, actor, body.reauthPassword);
+      const membership = await administration.grantRealmAdministrator(actor, {
+        realmId,
+        membershipId,
         reauthenticatedAt: trustedReauthenticationTimestamp(verified),
       });
       reply.code(201);
@@ -864,6 +922,27 @@ function parseMembershipProvision(value: unknown): ProvisionRealmMembershipReque
     globalIdentityId: requiredString(body, "globalIdentityId"),
     profile: recordValue(body["profile"], "profile"),
     password: requiredString(body, "password"),
+  };
+}
+
+function parseMembershipRegister(value: unknown): RegisterRealmMembershipRequest {
+  const body = exactObject(
+    value,
+    ["identifier", "password", "profile", "reauthPassword"],
+    "Membership register request",
+  );
+  return {
+    identifier: requiredString(body, "identifier"),
+    password: requiredString(body, "password"),
+    profile: recordValue(body["profile"], "profile"),
+    reauthPassword: requiredString(body, "reauthPassword"),
+  };
+}
+
+function parseGrantAdministrator(value: unknown): GrantRealmAdministratorRequest {
+  const body = exactObject(value, ["reauthPassword"], "Grant administrator request");
+  return {
+    reauthPassword: requiredString(body, "reauthPassword"),
   };
 }
 

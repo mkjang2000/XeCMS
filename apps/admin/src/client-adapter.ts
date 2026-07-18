@@ -772,6 +772,10 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
       })),
       provisionMembership: (realmId, input) => call(() =>
         client.identityRealms.provisionMembership(realmId, input)),
+      registerMembership: (realmId, input) => call(() =>
+        client.identityRealms.registerMembership(realmId, input)),
+      grantRealmAdministrator: (realmId, membershipId, input) => call(() =>
+        client.identityRealms.grantRealmAdministrator(realmId, membershipId, input)),
       suspendMembership: (realmId, membershipId, expectedRevision) => call(() =>
         client.identityRealms.suspendMembership(realmId, membershipId, { expectedRevision })),
       reactivateMembership: (realmId, membershipId, expectedRevision) => call(() =>

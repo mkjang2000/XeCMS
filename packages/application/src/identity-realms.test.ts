@@ -544,6 +544,83 @@ describe("M4-A Identity Realm", () => {
     expect(provisionExistingIdentity).toHaveBeenCalledTimes(1);
   });
 
+  it("registers a brand-new user, hashing the initial password before the saga", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm({
+      authentication: {
+        acceptSystemIdentities: false,
+        provisioning: "explicit",
+        registration: "closed",
+        defaultRoleIds: [],
+      },
+    });
+    store.realms.set(realm.id, realm);
+    const register = vi.fn<RealmIdentityProvisioner["register"]>(
+      async () => activeMembership("usr_new_member"),
+    );
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      { register, provisionExistingIdentity: vi.fn() },
+      { hash: vi.fn(async (password: string) => `hashed:${password}`) } as never,
+    );
+    const operator: ActorContext = {
+      subjectId: "subject_system_operator",
+      identityId: "usr_system_operator",
+      realmId: "rlm_system",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    };
+
+    await service.registerMembership(operator, {
+      realmId: realm.id,
+      identifier: "New.User@Example.com",
+      password: "sufficiently-long-pw",
+      profile: { displayName: "New user" },
+      reauthenticatedAt: NOW,
+    });
+
+    expect(register).toHaveBeenCalledTimes(1);
+    const call = register.mock.calls[0]?.[0];
+    // Identifier is normalized, password is hashed (never passed in the clear).
+    expect(call).toMatchObject({
+      realm,
+      normalizedIdentifier: "new.user@example.com",
+      passwordHash: "hashed:sufficiently-long-pw",
+      profile: { displayName: "New user" },
+    });
+  });
+
+  it("rejects a too-short initial password before creating any identity", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    store.realms.set(realm.id, realm);
+    const register = vi.fn();
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      { register, provisionExistingIdentity: vi.fn() },
+      { hash: vi.fn() } as never,
+    );
+    const operator: ActorContext = {
+      subjectId: "subject_system_operator",
+      identityId: "usr_system_operator",
+      realmId: "rlm_system",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    };
+
+    await expect(service.registerMembership(operator, {
+      realmId: realm.id,
+      identifier: "short@example.com",
+      password: "short",
+      profile: {},
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "PASSWORD_TOO_SHORT" });
+    // No identity or membership is created when the password is rejected.
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it("returns an already active explicit Membership idempotently", async () => {
     const store = new MemoryIdentityRealmStore();
     const realm = contentRealm();

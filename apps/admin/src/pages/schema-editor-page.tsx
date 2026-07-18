@@ -400,6 +400,15 @@ export function SchemaEditorPage() {
     ...(realms.isPending ? ["Realm 목록을 불러오는 동안 인증 설정 저장을 잠시 기다려 주세요."] : []),
     ...authConfigurationMessages(watchedValues, contentRealms, collectionId, realms.isError),
   ] : [];
+  // Deadlock: auth requires an identifier, an identifier needs a stable Field ID,
+  // and a Field ID is only issued on save — but auth blocks the save. It resolves
+  // the moment a required+unique text field exists but has not been saved yet, so
+  // saving the fields once (without auth) breaks the cycle.
+  const pendingIdentifierField = (watchedValues.fields ?? []).some((field) =>
+    field.persistentId === null && field.type === "text" && field.required && field.unique);
+  const identifierNeedsSave = watchedValues.authEnabled
+    && identifierCandidates.length === 0
+    && pendingIdentifierField;
 
   useEffect(() => {
     if (collectionQuery.data) reset(toFormValues(collectionQuery.data));
@@ -445,6 +454,51 @@ export function SchemaEditorPage() {
     },
   });
 
+  // Breaks the auth identifier deadlock: persist the fields with auth temporarily
+  // omitted so the server issues stable Field IDs, then restore the auth settings
+  // the operator had entered so they can pick the now-eligible identifier.
+  const saveFieldsMutation = useMutation({
+    mutationFn: async (values: SchemaFormValues) => {
+      const normalizedNames = values.fields.map(({ name }) => name.trim());
+      const duplicateIndex = normalizedNames.findIndex((name, index) => normalizedNames.indexOf(name) !== index);
+      if (duplicateIndex >= 0) {
+        setError(`fields.${duplicateIndex}.name`, { message: "같은 이름의 필드가 이미 있습니다." });
+        throw new Error("DUPLICATE_FIELD_NAME");
+      }
+      const draft = toDraft({ ...values, authEnabled: false });
+      const collection = isNew
+        ? await api.collections.create(draft)
+        : await api.collections.updateDraft(collectionId, { draft, expectedDraftVersion: collectionQuery.data!.draftVersion });
+      return { collection, previousAuth: values };
+    },
+    onSuccess: async ({ collection, previousAuth }) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+      queryClient.setQueryData(queryKeys.collectionDraft(collection.id), collection);
+      if (isNew) {
+        // A brand-new collection now has an ID; move onto its editable draft URL.
+        navigate(`/admin/schema/${collection.id}`);
+      }
+      // Re-apply the fields (now carrying stable IDs) and restore the auth intent.
+      flushSync(() => reset(toFormValues(collection)));
+      setValue("authEnabled", true, { shouldDirty: true });
+      setValue("authRealmKey", previousAuth.authRealmKey, { shouldDirty: true });
+      setValue("authAcceptSystemIdentities", previousAuth.authAcceptSystemIdentities, { shouldDirty: true });
+      setValue("authProvisioning", previousAuth.authProvisioning, { shouldDirty: true });
+      setValue("authDefaultRoleIds", previousAuth.authDefaultRoleIds, { shouldDirty: true });
+    },
+    onError: (error) => {
+      const apiError = toAdminApiError(error);
+      let shouldFocus = true;
+      Object.entries(apiError.fieldErrors).forEach(([path, message]) => {
+        const formPath = schemaIssuePathToFormPath(path);
+        if (formPath !== null) {
+          setError(formPath, { message }, { shouldFocus });
+          shouldFocus = false;
+        }
+      });
+    },
+  });
+
   const reloadLatest = async () => {
     const result = await collectionQuery.refetch();
     if (result.data) reset(toFormValues(result.data));
@@ -452,6 +506,19 @@ export function SchemaEditorPage() {
   };
   const mutationError = mutation.isError ? toAdminApiError(mutation.error) : null;
   const isVersionConflict = mutationError?.status === 409 && mutationError.code === "SCHEMA_DRAFT_CONFLICT";
+  // Every reason the "변경 사항 검토" button is disabled, surfaced next to it so
+  // the operator never has to guess why nothing happens when it is greyed out.
+  const authReviewBlockers = authBlockingMessages.length === 0
+    ? []
+    : displayModeAtLeast(mode, "advanced")
+      ? authBlockingMessages
+      : ["콘텐츠 계정 인증 설정에 해결할 항목이 있습니다. 상단 표시 모드를 Advanced로 전환해 확인해 주세요."];
+  const reviewBlockers = [
+    ...(diagnostics.isPending || editable ? [] : ["현재 스키마가 편집 불가 상태입니다. 활성 초안이 없거나 다른 작업이 진행 중일 수 있습니다."]),
+    ...(mutation.isPending ? ["초안을 저장하는 중입니다."] : []),
+    ...authReviewBlockers,
+  ];
+  const reviewDisabled = reviewBlockers.length > 0 || diagnostics.isPending;
   const collectionOptions = (collections.data?.items ?? []).map((item) => ({
     value: item.id,
     label: `${item.label || item.name} · ${item.id}`,
@@ -625,9 +692,6 @@ export function SchemaEditorPage() {
                     가입 공개 여부는 Realm 설정이 source of truth입니다. 현재 <strong>{selectedRealm.authentication.registration === "open" ? "Open" : "Closed"}</strong>이며 이 Schema JSON에는 registration을 저장하지 않습니다. Realm의 현재 provisioning과 Role 설정은 선택 시 편집기에 복사되며 Schema 적용 단계에서 함께 검토됩니다.
                   </Callout>
                 ) : null}
-                {authBlockingMessages.map((message) => (
-                  <Callout key={message} tone="error">{message}</Callout>
-                ))}
               </>
             ) : (
               <p className={styles.authHint}>비활성화하면 저장 JSON에서 `auth` 객체 전체를 생략합니다.</p>
@@ -661,8 +725,28 @@ export function SchemaEditorPage() {
           ) : null}</DisplayModeGate>
           {errors.fields?.root?.message ? <Callout tone="error">{errors.fields.root.message}</Callout> : null}
         </section>
+        {identifierNeedsSave ? (
+          <Callout tone="info">
+            <strong>로그인 identifier로 쓰려면 필드에 먼저 stable ID가 발급되어야 합니다.</strong>
+            <p>필수·고유 text 필드는 준비됐지만, 인증(auth)이 켜져 있으면 identifier가 없어 저장이 막히고, 저장을 해야 stable ID가 생기는 교착 상태입니다. 아래 버튼으로 인증 설정을 잠시 빼고 필드만 저장해 stable ID를 발급받은 뒤, 돌아와서 identifier를 선택해 주세요.</p>
+            <Button
+              type="button"
+              onPress={() => void handleSubmit((values) => saveFieldsMutation.mutate(values))()}
+              isDisabled={!editable || saveFieldsMutation.isPending}
+            >
+              {saveFieldsMutation.isPending ? "필드 저장 중…" : "필드 먼저 저장하고 ID 발급"}
+            </Button>
+          </Callout>
+        ) : reviewBlockers.length > 0 ? (
+          <Callout tone="warning">
+            <strong>‘변경 사항 검토’를 진행하려면 먼저 아래를 해결해 주세요.</strong>
+            <ul className={styles.reviewBlockers}>
+              {reviewBlockers.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
+          </Callout>
+        ) : null}
         <div className={styles.schemaFormActions}>
-          <Button type="submit" isDisabled={!editable || mutation.isPending || authBlockingMessages.length > 0}>{mutation.isPending ? "초안 저장 중…" : "변경 사항 검토"}</Button>
+          <Button type="submit" isDisabled={reviewDisabled}>{mutation.isPending ? "초안 저장 중…" : "변경 사항 검토"}</Button>
           <Button type="button" variant="secondary" isDisabled={mutation.isPending} onPress={() => navigate("/admin/schema")}>취소</Button>
         </div>
       </form>

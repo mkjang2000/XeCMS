@@ -2,7 +2,8 @@ import { jsx as _jsx } from "react/jsx-runtime";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AdminApiProvider, } from "@xecms/admin";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IdentityRealmDetailPage } from "./identity-realm-pages.js";
@@ -24,6 +25,7 @@ function contentRealm(overrides = {}) {
     };
 }
 function renderDetail(realm) {
+    const registerMembership = vi.fn().mockResolvedValue({});
     const api = {
         identityRealms: {
             get: vi.fn().mockResolvedValue(realm),
@@ -31,6 +33,7 @@ function renderDetail(realm) {
             listGlobalIdentities: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
             listMemberships: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
             listFullAccess: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+            registerMembership,
         },
     };
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -39,6 +42,7 @@ function renderDetail(realm) {
             element: _jsx(IdentityRealmDetailPage, {}),
         }], { initialEntries: [`/admin/realms/${realm.realmId}`] });
     render(_jsx(QueryClientProvider, { client: queryClient, children: _jsx(AdminApiProvider, { api: api, children: _jsx(RouterProvider, { router: router }) }) }));
+    return { registerMembership, user: userEvent.setup() };
 }
 afterEach(cleanup);
 describe("IdentityRealmDetailPage provisioning guidance", () => {
@@ -55,6 +59,23 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
         expect(screen.getByRole("button", { name: "스키마 빌더로 이동" })).toBeTruthy();
         // The settings form explains why it is locked instead of just disabling silently.
         expect(screen.getByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeTruthy();
+    });
+    it("creates a new user and assigns it to an active Realm", async () => {
+        const { registerMembership, user } = renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }));
+        await screen.findByRole("heading", { name: "새 사용자 만들어 연결" });
+        // These labels are unique to the new-user form, so global queries are safe.
+        await user.type(screen.getByRole("textbox", { name: "로그인 identifier" }), "new.user@example.com");
+        // Required fields render a "*" inside the label, so match on a prefix.
+        await user.type(screen.getByLabelText(/초기 비밀번호/), "new-user-initial-pw");
+        await user.type(screen.getByLabelText(/현재 관리자 비밀번호/), "admin-pw");
+        await user.click(screen.getByRole("button", { name: "새 사용자 생성 후 연결" }));
+        await waitFor(() => expect(registerMembership).toHaveBeenCalledTimes(1));
+        expect(registerMembership).toHaveBeenCalledWith("rlm_testre", expect.objectContaining({
+            identifier: "new.user@example.com",
+            password: "new-user-initial-pw",
+            reauthPassword: "admin-pw",
+            profile: {},
+        }));
     });
     it("drops the provisioning guidance once the Realm is active", async () => {
         renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }));

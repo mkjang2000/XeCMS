@@ -167,6 +167,77 @@ implements RealmAuthorizationSubjectProvisioner {
     }
   }
 
+  /**
+   * Grants the realm Content Administrator Role to an existing member Subject
+   * through the trusted provisioner path, breaking the bootstrap deadlock: a
+   * human operator holds no policy permission in a freshly bootstrapped Realm,
+   * so they cannot bind anything themselves. This runs as the protected
+   * provisioner Subject (which owns the Realm). The Content Administrator Role
+   * carries authorization.read (policy screen access) plus role.assign/create/
+   * update (policy management), and unlike the protected Owner Role it is an
+   * assignable target. Idempotent.
+   */
+  public async grantRealmAdministrator(input: {
+    readonly realm: IdentityRealmRecord;
+    readonly subjectId: string;
+  }): Promise<void> {
+    assertActiveContentRealm(input.realm);
+    const adminRoleId = `authorization:${input.realm.id}:role:content-administrator`;
+    await this.withPolicyRetry(input.realm, async (state, actor) => {
+      const subject = state.subjects.find(({ id }) => id === input.subjectId);
+      if (
+        subject === undefined
+        || subject.realmId !== input.realm.id
+        || subject.type !== "user"
+        || subject.identityId === undefined
+        || subject.disabled === true
+      ) {
+        throw new ApplicationError(
+          "REALM_SUBJECT_NOT_PROVISIONED",
+          409,
+          `Subject '${input.subjectId}' is not an active identity-linked user in this Realm.`,
+        );
+      }
+      const adminRole = state.roles.find(({ id }) => id === adminRoleId);
+      if (adminRole === undefined || adminRole.realmId !== input.realm.id) {
+        throw new ApplicationError(
+          "REALM_ADMIN_ROLE_MISSING",
+          409,
+          `Realm '${input.realm.id}' has no Content Administrator Role to grant.`,
+        );
+      }
+      const binding: AuthorizationBindingRecord = {
+        id: realmDefaultRoleBindingId(input.realm.id, input.subjectId, adminRoleId),
+        realmId: input.realm.id,
+        subjectId: input.subjectId,
+        roleId: adminRoleId,
+        resourceId: state.realm.rootResourceId,
+        propagation: "self-and-children",
+      };
+      const existing = state.bindings.find(({ id }) => id === binding.id);
+      if (existing !== undefined) {
+        if (!defaultBindingMatches(existing, binding)) {
+          throw new ApplicationError(
+            "REALM_DEFAULT_BINDING_CONFLICT",
+            409,
+            `Administrator binding '${binding.id}' already exists with different semantics.`,
+          );
+        }
+        return;
+      }
+      const equivalent = state.bindings.find(
+        (candidate) => candidate.subjectId === binding.subjectId
+          && candidate.roleId === binding.roleId
+          && defaultBindingMatches(candidate, binding),
+      );
+      if (equivalent !== undefined) return;
+      await this.authorization.createBinding(actor, {
+        expectedRevision: state.revision,
+        binding,
+      });
+    });
+  }
+
   /** Reconciles the complete desired Collection projection for this Realm. */
   public async syncCollectionResources(input: {
     readonly realm: IdentityRealmRecord;

@@ -463,6 +463,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     identityRealmStore,
     realmRuntime,
     realmIdentityProvisioner,
+    passwordHasher,
   );
   const contentRealmAuthentication = new ContentRealmAuthenticationService(
     identityRealmStore,
@@ -876,6 +877,41 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       updateRealm: (actor, input) => identityRealms.updateRealm(actor, input),
       listMemberships: (actor, realmId) => identityRealms.listMemberships(actor, realmId),
       provisionMembership: (actor, input) => identityRealms.provisionMembership(actor, input),
+      registerMembership: (actor, input) => identityRealms.registerMembership(actor, input),
+      grantRealmAdministrator: async (actor, input) => {
+        const realm = await identityRealmStore.getRealmById(input.realmId);
+        if (
+          realm === null ||
+          realm.kind !== "content" ||
+          realm.status !== "active" ||
+          realm.workspaceId !== actor.workspaceId
+        ) {
+          throw new ApplicationError(
+            "CONTENT_REALM_UNAVAILABLE",
+            409,
+            "The Content Realm is not active.",
+          );
+        }
+        const membership = await identityRealmStore.findMembershipById(input.membershipId);
+        if (
+          membership === null ||
+          membership.realmId !== realm.id ||
+          membership.status !== "active"
+        ) {
+          throw new ApplicationError(
+            "REALM_MEMBERSHIP_NOT_ACTIVE",
+            409,
+            "An active Realm Membership is required to grant administration.",
+          );
+        }
+        // Trusted path: the operator holds no policy permission in this Realm, so
+        // the protected provisioner Subject binds the Content Administrator Role.
+        await realmAuthorization.grantRealmAdministrator({
+          realm,
+          subjectId: membership.subjectId,
+        });
+        return membership;
+      },
       suspendMembership: (actor, input) => identityRealms.suspendMembership(actor, input),
       reactivateMembership: (actor, input) => identityRealms.reactivateMembership(actor, input),
       listFullAccessBindings: (actor, realmId) =>

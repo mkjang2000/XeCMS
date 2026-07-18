@@ -236,6 +236,34 @@ describe("registerIdentityRealmRoutes", () => {
     ]);
   });
 
+  it("registers a brand-new user, reauthenticating with the operator's own password", async () => {
+    const harness = await createHarness();
+    const registered = await harness.app.inject({
+      method: "POST",
+      url: "/api/identity-realms/rlm_community/memberships/register",
+      payload: {
+        identifier: "new.user@example.com",
+        password: "new-user-initial-pw",
+        profile: { displayName: "New User" },
+        reauthPassword: "admin-password",
+      },
+    });
+
+    expect(registered.statusCode).toBe(201);
+    // The new user's identifier and initial credential reach the service; the
+    // operator's own password is what re-authenticates the action.
+    expect(harness.administration.registerMembership).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        realmId: "rlm_community",
+        identifier: "new.user@example.com",
+        password: "new-user-initial-pw",
+        reauthenticatedAt: VERIFIED_REAUTHENTICATED_AT,
+      }),
+    );
+    expect(harness.actors.verifySystemReauthentication.mock.calls.at(-1)?.[2]).toBe("admin-password");
+  });
+
   it("keeps Content cookies, Origin, CSRF, sessions, and Profile actors Realm-scoped", async () => {
     const harness = await createHarness();
 
@@ -598,6 +626,12 @@ async function createHarness(): Promise<{
       async () => [membership],
     ),
     provisionMembership: vi.fn<IdentityRealmAdministrationRouteService["provisionMembership"]>(
+      async () => membership,
+    ),
+    registerMembership: vi.fn<IdentityRealmAdministrationRouteService["registerMembership"]>(
+      async () => membership,
+    ),
+    grantRealmAdministrator: vi.fn<IdentityRealmAdministrationRouteService["grantRealmAdministrator"]>(
       async () => membership,
     ),
     suspendMembership: vi.fn<IdentityRealmAdministrationRouteService["suspendMembership"]>(

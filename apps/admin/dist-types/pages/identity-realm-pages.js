@@ -187,6 +187,13 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }) {
     const [profileSource, setProfileSource] = useState("{}");
     const [password, setPassword] = useState("");
     const [profileError, setProfileError] = useState(null);
+    const [newIdentifier, setNewIdentifier] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [newProfileSource, setNewProfileSource] = useState("{}");
+    const [newReauthPassword, setNewReauthPassword] = useState("");
+    const [newProfileError, setNewProfileError] = useState(null);
+    const [promoting, setPromoting] = useState(null);
+    const [promoteReauthPassword, setPromoteReauthPassword] = useState("");
     const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.realmMemberships(realm.realmId) });
     const provision = useMutation({
         mutationFn: (profile) => api.identityRealms.provisionMembership(realm.realmId, {
@@ -200,11 +207,36 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }) {
             await refresh();
         },
     });
+    const register = useMutation({
+        mutationFn: (profile) => api.identityRealms.registerMembership(realm.realmId, {
+            identifier: newIdentifier.trim(),
+            password: newPassword,
+            profile,
+            reauthPassword: newReauthPassword,
+        }),
+        onSuccess: async () => {
+            setNewIdentifier("");
+            setNewPassword("");
+            setNewReauthPassword("");
+            setNewProfileSource("{}");
+            await refresh();
+        },
+    });
     const changeStatus = useMutation({
         mutationFn: (input) => input.status === "active"
             ? api.identityRealms.reactivateMembership(realm.realmId, input.membership.membershipId, input.membership.revision)
             : api.identityRealms.suspendMembership(realm.realmId, input.membership.membershipId, input.membership.revision),
         onSuccess: refresh,
+    });
+    const promote = useMutation({
+        mutationFn: (membership) => api.identityRealms.grantRealmAdministrator(realm.realmId, membership.membershipId, {
+            reauthPassword: promoteReauthPassword,
+        }),
+        onSuccess: async () => {
+            setPromoting(null);
+            setPromoteReauthPassword("");
+            await refresh();
+        },
     });
     const membershipIdentityIds = new Set(memberships.data?.items.map(({ globalIdentityId }) => globalIdentityId));
     const candidates = identities.data?.items.filter((identity) => identity.disabledAt === undefined &&
@@ -212,28 +244,43 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }) {
         !membershipIdentityIds.has(identity.globalIdentityId)) ?? [];
     const identityById = new Map(identities.data?.items.map((identity) => [identity.globalIdentityId, identity]));
     const canProvision = realm.status === "active" && realm.authentication.acceptSystemIdentities;
-    const submitProvision = (event) => {
-        event.preventDefault();
-        setProfileError(null);
+    // A brand-new content user is not a System account, so acceptSystemIdentities
+    // is irrelevant here — only that the Realm is active.
+    const canRegister = realm.status === "active";
+    const parseProfile = (source, setError) => {
+        setError(null);
         try {
-            const value = JSON.parse(profileSource);
+            const value = JSON.parse(source);
             if (typeof value !== "object" || value === null || Array.isArray(value)) {
-                setProfileError("Profile은 JSON object여야 합니다.");
-                return;
+                setError("Profile은 JSON object여야 합니다.");
+                return null;
             }
-            provision.mutate(value);
+            return value;
         }
         catch {
-            setProfileError("유효한 JSON object를 입력해 주세요.");
+            setError("유효한 JSON object를 입력해 주세요.");
+            return null;
         }
     };
-    return (_jsxs("section", { className: styles.panel, "aria-labelledby": "membership-title", children: [_jsx(SectionHeader, { id: "membership-title", title: "Realm Memberships", description: "Global Identity\uC640 \uC774 Realm \uC804\uC6A9 Subject\u00B7Profile Document\uC758 \uC5F0\uACB0\uC785\uB2C8\uB2E4." }), !realm.authentication.acceptSystemIdentities ? _jsx(Callout, { tone: "warning", children: "System Identity provisioning\uC774 \uC124\uC815\uC5D0\uC11C \uBE44\uD65C\uC131\uD654\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." }) : null, identities.isError ? _jsx(LoadError, { error: identities.error, onRetry: () => void identities.refetch() }) : null, _jsxs("form", { className: styles.provisionForm, onSubmit: submitProvision, children: [_jsxs("div", { className: styles.fieldGrid, children: [_jsx(SelectField, { label: "System Global Identity", value: identityId, options: candidates.map((identity) => ({
-                                    value: identity.globalIdentityId,
-                                    label: `${identity.primaryIdentifier} · ${identity.globalIdentityId}`,
-                                })), description: "Global Identity ID\uB97C \uC120\uD0DD\uD569\uB2C8\uB2E4. Membership ID\uB098 Subject ID\uAC00 \uC544\uB2D9\uB2C8\uB2E4.", onChange: setIdentityId, isDisabled: !canProvision || identities.isPending || candidates.length === 0 }), _jsx(TextInput, { label: "\uD604\uC7AC System \uACC4\uC815 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: password, onChange: setPassword, isDisabled: !canProvision, isRequired: true })] }), _jsx(TextAreaField, { label: "\uCD08\uAE30 Profile JSON", value: profileSource, onChange: setProfileSource, rows: 4, errorMessage: profileError ?? undefined, description: "Profile Collection Schema \uAC80\uC99D\uC744 \uD1B5\uACFC\uD574\uC57C \uD569\uB2C8\uB2E4.", isDisabled: !canProvision }), _jsx(MutationError, { error: provision.error }), _jsx("div", { className: styles.formActions, children: _jsx(Button, { type: "submit", isDisabled: !canProvision || identityId === "" || password === "" || provision.isPending, children: provision.isPending ? "프로비저닝 중…" : "Membership 명시적 생성" }) })] }), memberships.isPending ? _jsx(PageLoading, { label: "Membership\uC744 \uBD88\uB7EC\uC624\uB294 \uC911" }) : null, memberships.isError ? _jsx(LoadError, { error: memberships.error, onRetry: () => void memberships.refetch() }) : null, memberships.data?.items.length === 0 ? _jsx(EmptyState, { title: "Membership\uC774 \uC5C6\uC2B5\uB2C8\uB2E4", description: "System Identity\uB97C \uBA85\uC2DC\uC801\uC73C\uB85C \uC5F0\uACB0\uD558\uAC70\uB098 \uAC00\uC785/JIT \uB85C\uADF8\uC778\uC744 \uC0AC\uC6A9\uD558\uC138\uC694." }) : null, memberships.data && memberships.data.items.length > 0 ? (_jsx("div", { className: styles.tableWrap, children: _jsxs("table", { className: styles.table, children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Global Identity" }), _jsx("th", { children: "Realm Subject" }), _jsx("th", { children: "Profile Document" }), _jsx("th", { children: "\uC0C1\uD0DC" }), _jsx("th", { children: "\uC0DD\uC131 \uBC29\uC2DD" }), _jsx("th", { children: "Revision" }), _jsx("th", {})] }) }), _jsx("tbody", { children: memberships.data.items.map((membership) => {
+    const submitProvision = (event) => {
+        event.preventDefault();
+        const profile = parseProfile(profileSource, setProfileError);
+        if (profile !== null)
+            provision.mutate(profile);
+    };
+    const submitRegister = (event) => {
+        event.preventDefault();
+        const profile = parseProfile(newProfileSource, setNewProfileError);
+        if (profile !== null)
+            register.mutate(profile);
+    };
+    return (_jsxs("section", { className: styles.panel, "aria-labelledby": "membership-title", children: [_jsx(SectionHeader, { id: "membership-title", title: "\uC0AC\uC6A9\uC790 \uD560\uB2F9", description: "\uC774 Realm\uC5D0 \uC0AC\uC6A9\uC790\uB97C \uC5F0\uACB0(Membership)\uD569\uB2C8\uB2E4. \uC0C8 \uC0AC\uC6A9\uC790\uB97C \uC9C1\uC811 \uB9CC\uB4E4\uC5B4 \uC5F0\uACB0\uD558\uAC70\uB098, \uAE30\uC874 \uC6B4\uC601\uC790(System) \uACC4\uC815\uC744 \uBD99\uC77C \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uC77C\uBC18 \uC0AC\uC6A9\uC790\uB294 \uC2A4\uC2A4\uB85C \uAC00\uC785\uD558\uAC70\uB098 JIT \uB85C\uADF8\uC778\uC73C\uB85C\uB3C4 \uC790\uB3D9 \uC5F0\uACB0\uB429\uB2C8\uB2E4." }), realm.status !== "active" ? (_jsx(Callout, { tone: "warning", children: "\uC774 Realm\uC774 \uD65C\uC131 \uC0C1\uD0DC\uAC00 \uB418\uC5B4\uC57C \uC0AC\uC6A9\uC790\uB97C \uC5F0\uACB0\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." })) : null, identities.isError ? _jsx(LoadError, { error: identities.error, onRetry: () => void identities.refetch() }) : null, _jsxs("div", { className: styles.membershipSubsection, "aria-labelledby": "membership-create-title", children: [_jsx("h3", { id: "membership-create-title", children: "\uC0C8 \uC0AC\uC6A9\uC790 \uB9CC\uB4E4\uC5B4 \uC5F0\uACB0" }), _jsx("p", { className: styles.membershipSubsectionHint, children: "\uC0C8 \uB85C\uADF8\uC778 \uACC4\uC815\uC744 \uB9CC\uB4E4\uACE0 \uACE7\uBC14\uB85C \uC774 Realm\uC5D0 \uC5F0\uACB0\uD569\uB2C8\uB2E4. \uCD08\uAE30 \uBE44\uBC00\uBC88\uD638\uB294 \uC0AC\uC6A9\uC790\uC5D0\uAC8C \uC548\uC804\uD558\uAC8C \uC804\uB2EC\uD574 \uC8FC\uC138\uC694." }), _jsxs("form", { className: styles.provisionForm, onSubmit: submitRegister, children: [_jsxs("div", { className: styles.fieldGrid, children: [_jsx(TextInput, { label: "\uB85C\uADF8\uC778 identifier", value: newIdentifier, onChange: setNewIdentifier, description: "\uC608: \uC774\uBA54\uC77C. \uC774 Realm\uC758 \uB85C\uADF8\uC778 \uC544\uC774\uB514\uB85C \uC0AC\uC6A9\uB429\uB2C8\uB2E4.", isDisabled: !canRegister, isRequired: true }), _jsx(TextInput, { label: "\uCD08\uAE30 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "new-password", value: newPassword, onChange: setNewPassword, description: "12\uC790 \uC774\uC0C1\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4. \uC0AC\uC6A9\uC790\uC5D0\uAC8C \uC548\uC804\uD558\uAC8C \uC804\uB2EC\uD574 \uC8FC\uC138\uC694.", isDisabled: !canRegister, isRequired: true })] }), _jsx(TextAreaField, { label: "\uCD08\uAE30 Profile JSON", value: newProfileSource, onChange: setNewProfileSource, rows: 4, errorMessage: newProfileError ?? undefined, description: "Profile Collection Schema \uAC80\uC99D\uC744 \uD1B5\uACFC\uD574\uC57C \uD569\uB2C8\uB2E4.", isDisabled: !canRegister }), _jsx(TextInput, { label: "\uD604\uC7AC \uAD00\uB9AC\uC790 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: newReauthPassword, onChange: setNewReauthPassword, description: "\uBCF8\uC778 \uD655\uC778\uC744 \uC704\uD574 \uD604\uC7AC \uB85C\uADF8\uC778\uD55C \uAD00\uB9AC\uC790 \uBE44\uBC00\uBC88\uD638\uB97C \uC785\uB825\uD569\uB2C8\uB2E4.", isDisabled: !canRegister, isRequired: true }), _jsx(MutationError, { error: register.error }), _jsx("div", { className: styles.formActions, children: _jsx(Button, { type: "submit", isDisabled: !canRegister || newIdentifier.trim() === "" || newPassword === "" || newReauthPassword === "" || register.isPending, children: register.isPending ? "생성 중…" : "새 사용자 생성 후 연결" }) })] })] }), _jsxs("div", { className: styles.membershipSubsection, "aria-labelledby": "membership-link-title", children: [_jsx("h3", { id: "membership-link-title", children: "\uAE30\uC874 \uC6B4\uC601\uC790 \uACC4\uC815 \uC5F0\uACB0" }), _jsx("p", { className: styles.membershipSubsectionHint, children: "\uC774\uBBF8 \uC874\uC7AC\uD558\uB294 \uC6B4\uC601\uC790(System) \uACC4\uC815\uC744 \uC774 Realm\uC5D0 \uC5F0\uACB0\uD569\uB2C8\uB2E4." }), !realm.authentication.acceptSystemIdentities ? (_jsxs(Callout, { tone: "warning", children: ["\uC6B4\uC601\uC790(System) \uACC4\uC815 \uC5F0\uACB0\uC774 ", _jsx("strong", { children: "Realm \uC124\uC815\uC5D0\uC11C \uAEBC\uC838 \uC788\uC2B5\uB2C8\uB2E4." }), " \uBD99\uC774\uB824\uBA74 \uC704 \u2018Realm \uC124\uC815\u2019\uC5D0\uC11C \u201CSystem Global Identity\uAC00 \uC774 Realm\uC758 Membership\uC744 \uAC00\uC9C8 \uC218 \uC788\uC74C\u201D\uC744 \uCF1C \uC8FC\uC138\uC694."] })) : realm.status === "active" && candidates.length === 0 ? (_jsx(Callout, { tone: "info", children: "\uC5F0\uACB0\uD560 \uC218 \uC788\uB294 \uC6B4\uC601\uC790(System) \uACC4\uC815\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uBAA8\uB4E0 \uC6B4\uC601\uC790 \uACC4\uC815\uC774 \uC774\uBBF8 \uC774 Realm\uC5D0 \uC5F0\uACB0\uB418\uC5B4 \uC788\uAC70\uB098 \uBE44\uD65C\uC131 \uC0C1\uD0DC\uC785\uB2C8\uB2E4." })) : null, _jsxs("form", { className: styles.provisionForm, onSubmit: submitProvision, children: [_jsxs("div", { className: styles.fieldGrid, children: [_jsx(SelectField, { label: "\uC5F0\uACB0\uD560 \uC6B4\uC601\uC790(System) \uACC4\uC815", value: identityId, options: candidates.map((identity) => ({
+                                            value: identity.globalIdentityId,
+                                            label: `${identity.primaryIdentifier} · ${identity.globalIdentityId}`,
+                                        })), description: "\uC774 Realm\uC5D0 \uC5F0\uACB0\uD560 \uAE30\uC874 \uC6B4\uC601\uC790 \uACC4\uC815\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.", onChange: setIdentityId, isDisabled: !canProvision || identities.isPending || candidates.length === 0 }), _jsx(TextInput, { label: "\uD604\uC7AC System \uACC4\uC815 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: password, onChange: setPassword, isDisabled: !canProvision, isRequired: true })] }), _jsx(TextAreaField, { label: "\uCD08\uAE30 Profile JSON", value: profileSource, onChange: setProfileSource, rows: 4, errorMessage: profileError ?? undefined, description: "Profile Collection Schema \uAC80\uC99D\uC744 \uD1B5\uACFC\uD574\uC57C \uD569\uB2C8\uB2E4.", isDisabled: !canProvision }), _jsx(MutationError, { error: provision.error }), _jsx("div", { className: styles.formActions, children: _jsx(Button, { type: "submit", isDisabled: !canProvision || identityId === "" || password === "" || provision.isPending, children: provision.isPending ? "연결 중…" : "운영자 계정 연결" }) })] })] }), memberships.isPending ? _jsx(PageLoading, { label: "Membership\uC744 \uBD88\uB7EC\uC624\uB294 \uC911" }) : null, memberships.isError ? _jsx(LoadError, { error: memberships.error, onRetry: () => void memberships.refetch() }) : null, memberships.data?.items.length === 0 ? _jsx(EmptyState, { title: "\uC5F0\uACB0\uB41C \uC0AC\uC6A9\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4", description: "\uC704 \uD3FC\uC73C\uB85C \uC0C8 \uC0AC\uC6A9\uC790\uB97C \uB9CC\uB4E4\uAC70\uB098 \uC6B4\uC601\uC790 \uACC4\uC815\uC744 \uC5F0\uACB0\uD558\uBA74, \uB610\uB294 \uC77C\uBC18 \uC0AC\uC6A9\uC790\uAC00 \uAC00\uC785/JIT \uB85C\uADF8\uC778\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4." }) : null, memberships.data && memberships.data.items.length > 0 ? (_jsx("div", { className: styles.tableWrap, children: _jsxs("table", { className: styles.table, children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Global Identity" }), _jsx("th", { children: "Realm Subject" }), _jsx("th", { children: "Profile Document" }), _jsx("th", { children: "\uC0C1\uD0DC" }), _jsx("th", { children: "\uC0DD\uC131 \uBC29\uC2DD" }), _jsx("th", { children: "Revision" }), _jsx("th", {})] }) }), _jsx("tbody", { children: memberships.data.items.map((membership) => {
                                 const identity = membership.identity ?? identityById.get(membership.globalIdentityId);
-                                return (_jsxs("tr", { children: [_jsxs("td", { children: [_jsx("strong", { children: identity?.primaryIdentifier ?? "Identifier 미제공" }), _jsx(IdValue, { label: "Global Identity ID", value: membership.globalIdentityId }), _jsx(IdValue, { label: "Membership ID", value: membership.membershipId })] }), _jsx("td", { children: _jsx(IdValue, { label: "Subject ID", value: membership.subjectId }) }), _jsx("td", { children: _jsx(IdValue, { label: "Profile Document ID", value: membership.profileDocumentId ?? "프로비저닝 중" }) }), _jsx("td", { children: _jsx(MembershipStatusBadge, { status: membership.status }) }), _jsx("td", { children: provisionedByLabel(membership.provisionedBy) }), _jsx("td", { children: membership.revision }), _jsx("td", { children: membership.status === "active" ? (_jsx(Button, { size: "small", variant: "danger", isDisabled: realm.status !== "active" || changeStatus.isPending, onPress: () => changeStatus.mutate({ membership, status: "suspended" }), children: "\uC815\uC9C0" })) : membership.status === "suspended" ? (_jsx(Button, { size: "small", variant: "secondary", isDisabled: realm.status !== "active" || changeStatus.isPending, onPress: () => changeStatus.mutate({ membership, status: "active" }), children: "\uC7AC\uD65C\uC131\uD654" })) : _jsx(Badge, { tone: "warning", children: "\uC644\uB8CC \uB300\uAE30" }) })] }, membership.membershipId));
-                            }) })] }) })) : null, _jsx(MutationError, { error: changeStatus.error })] }));
+                                return (_jsxs("tr", { children: [_jsxs("td", { children: [_jsx("strong", { children: identity?.primaryIdentifier ?? "Identifier 미제공" }), _jsx(IdValue, { label: "Global Identity ID", value: membership.globalIdentityId }), _jsx(IdValue, { label: "Membership ID", value: membership.membershipId })] }), _jsx("td", { children: _jsx(IdValue, { label: "Subject ID", value: membership.subjectId }) }), _jsx("td", { children: _jsx(IdValue, { label: "Profile Document ID", value: membership.profileDocumentId ?? "프로비저닝 중" }) }), _jsx("td", { children: _jsx(MembershipStatusBadge, { status: membership.status }) }), _jsx("td", { children: provisionedByLabel(membership.provisionedBy) }), _jsx("td", { children: membership.revision }), _jsx("td", { children: _jsxs("div", { className: styles.rowActions, children: [membership.status === "active" && realm.kind === "content" ? (_jsx(Button, { size: "small", variant: "secondary", isDisabled: realm.status !== "active" || promote.isPending, onPress: () => { setPromoting(membership); setPromoteReauthPassword(""); }, children: "\uAD00\uB9AC\uC790\uB85C \uC9C0\uC815" })) : null, membership.status === "active" ? (_jsx(Button, { size: "small", variant: "danger", isDisabled: realm.status !== "active" || changeStatus.isPending, onPress: () => changeStatus.mutate({ membership, status: "suspended" }), children: "\uC815\uC9C0" })) : membership.status === "suspended" ? (_jsx(Button, { size: "small", variant: "secondary", isDisabled: realm.status !== "active" || changeStatus.isPending, onPress: () => changeStatus.mutate({ membership, status: "active" }), children: "\uC7AC\uD65C\uC131\uD654" })) : _jsx(Badge, { tone: "warning", children: "\uC644\uB8CC \uB300\uAE30" })] }) })] }, membership.membershipId));
+                            }) })] }) })) : null, _jsx(MutationError, { error: changeStatus.error }), promoting ? (_jsx(ConfirmDialog, { title: "Realm \uAD00\uB9AC\uC790\uB85C \uC9C0\uC815", confirmLabel: "\uAD00\uB9AC\uC790\uB85C \uC9C0\uC815", isPending: promote.isPending, isConfirmDisabled: promoteReauthPassword === "", onCancel: () => { setPromoting(null); setPromoteReauthPassword(""); }, onConfirm: () => promote.mutate(promoting), children: _jsxs("div", { className: styles.dialogStack, children: [_jsxs("p", { children: [_jsx("strong", { children: (promoting.identity ?? identityById.get(promoting.globalIdentityId))?.primaryIdentifier ?? promoting.subjectId }), " \uB2D8\uC5D0\uAC8C \uC774 Realm\uC758 ", _jsx("strong", { children: "\uAD00\uB9AC\uC790(content-administrator)" }), " \uAD8C\uD55C\uC744 \uBD80\uC5EC\uD569\uB2C8\uB2E4. \uC774\uD6C4 \uC774 \uACC4\uC815\uC73C\uB85C \u201CRealm \uAD8C\uD55C \uAD00\uB9AC\u201D \uD654\uBA74\uC5D0 \uB4E4\uC5B4\uAC00 \uAD8C\uD55C\uC744 \uC9C1\uC811 \uAD00\uB9AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."] }), _jsx(MutationError, { error: promote.error }), _jsx(TextInput, { label: "\uD604\uC7AC \uAD00\uB9AC\uC790 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: promoteReauthPassword, onChange: setPromoteReauthPassword, description: "\uBCF8\uC778 \uD655\uC778\uC744 \uC704\uD574 \uD604\uC7AC \uB85C\uADF8\uC778\uD55C \uAD00\uB9AC\uC790 \uBE44\uBC00\uBC88\uD638\uB97C \uC785\uB825\uD569\uB2C8\uB2E4.", isRequired: true })] }) })) : null] }));
 }
 function provisionedByLabel(value) {
     switch (value) {

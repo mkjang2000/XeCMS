@@ -8,3 +8,4 @@ devdocs/
 .env
 .env.*
 !.env.example
+apps/server/.xecms/media/objects/

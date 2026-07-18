@@ -396,6 +396,7 @@ export class IdentityRealmApplicationService {
       "now" | "newRealmId" | "newFullAccessId"
     >,
     private readonly provisioner?: RealmIdentityProvisioner,
+    private readonly passwords?: PasswordHasher,
   ) {}
 
   public async listRealms(actor: ActorContext): Promise<readonly IdentityRealmRecord[]> {
@@ -570,6 +571,60 @@ export class IdentityRealmApplicationService {
       realm,
       identity,
       method: "explicit",
+      profile: input.profile,
+      now,
+    });
+  }
+
+  /**
+   * Creates a brand-new Global Identity and provisions its Membership in one
+   * administrative step, reusing the same durable saga as public signup. Unlike
+   * signup this ignores the Realm registration policy — it is an operator action
+   * gated by System Realm administration and recent re-authentication.
+   */
+  public async registerMembership(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly identifier: string;
+      readonly password: string;
+      readonly profile: Readonly<Record<string, unknown>>;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmMembershipRecord> {
+    await requireRealmAdministration(actor);
+    if (actorRealmId(actor) !== SYSTEM_ACTOR_REALM_ID) {
+      throw new ApplicationError(
+        "SYSTEM_REALM_ACTOR_REQUIRED",
+        403,
+        "Explicit Realm provisioning requires a System Realm operator.",
+      );
+    }
+    const now = this.runtime.now();
+    requireRecentReauthentication(input.reauthenticatedAt, now);
+    const realm = await this.requireContentRealm(actor.workspaceId, input.realmId);
+    if (realm.status !== "active") {
+      throw new ApplicationError(
+        "CONTENT_REALM_NOT_ACTIVE",
+        409,
+        "Memberships can only be provisioned into an active Content Realm.",
+      );
+    }
+    if (this.provisioner === undefined || this.passwords === undefined) {
+      throw new ApplicationError(
+        "IDENTITY_PROVISIONER_UNAVAILABLE",
+        503,
+        "The durable Identity provisioning service is unavailable.",
+      );
+    }
+    const identifier = normalizeIdentityIdentifier(input.identifier);
+    validateContentPassword(input.password, identifier);
+    const passwordHash = await this.passwords.hash(input.password);
+    return this.provisioner.register({
+      realm,
+      normalizedIdentifier: identifier,
+      displayIdentifier: input.identifier.trim(),
+      passwordHash,
       profile: input.profile,
       now,
     });

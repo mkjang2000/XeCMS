@@ -324,6 +324,58 @@ describe("ContentRealmAuthorizationProvisioner", () => {
     expect(bindingAudit?.decision).toMatchObject({ allowed: true, reasonCode: "ALLOW_MANAGEMENT" });
   });
 
+  it("grants the Content Administrator Role to a member Subject, unlocking policy management", async () => {
+    const { store, authorization, provisioner } = await setup();
+    const realm = contentRealm();
+    const subjectId = "subject:operator-member";
+    const globalIdentity = identity();
+    await provisioner.ensureIdentitySubject({
+      realm,
+      identity: globalIdentity,
+      subjectId,
+      displayName: "Operator member",
+    });
+
+    // Before promotion the member cannot even read the policy — the deadlock.
+    await expect(authorization.authorize(
+      { realmId: realm.id, subjectId },
+      { action: "authorization.read", resourceId: realmAuthorizationRootResourceId(realm.id) },
+    )).resolves.toMatchObject({ allowed: false, reasonCode: "NO_PERMISSION" });
+
+    await provisioner.grantRealmAdministrator({ realm, subjectId });
+    const revisionAfterGrant = policy(store, realm.id).revision;
+    // Idempotent: a second call does not create a duplicate binding or bump revision.
+    await provisioner.grantRealmAdministrator({ realm, subjectId });
+    expect(policy(store, realm.id).revision).toBe(revisionAfterGrant);
+
+    const adminRoleId = `authorization:${realm.id}:role:content-administrator`;
+    const bindingId = realmDefaultRoleBindingId(realm.id, subjectId, adminRoleId);
+    expect(policy(store, realm.id).bindings.filter(({ id }) => id === bindingId)).toHaveLength(1);
+
+    // The deadlock is resolved: the member can now read the policy — this is what
+    // getPolicy (the "Realm 권한 관리" screen) requires. Role-management actions
+    // (role.assign/create/update) are carried by this Role too, but their kernel
+    // decisions need concrete target context and are exercised via the UI, not a
+    // bare authorize() probe.
+    await expect(authorization.authorize(
+      { realmId: realm.id, subjectId },
+      { action: "authorization.read", resourceId: realmAuthorizationRootResourceId(realm.id) },
+    )).resolves.toMatchObject({ allowed: true });
+    const adminRole = policy(store, realm.id).roles.find(({ id }) => id === adminRoleId);
+    expect(adminRole?.permissions).toEqual(expect.arrayContaining([
+      "authorization.read", "role.assign", "role.create", "role.update",
+    ]));
+  });
+
+  it("refuses to grant administration to a Subject that is not an active member", async () => {
+    const { provisioner } = await setup();
+    const realm = contentRealm();
+    await provisioner.ensureRealmPolicy(realm);
+    await expect(
+      provisioner.grantRealmAdministrator({ realm, subjectId: "subject:never-provisioned" }),
+    ).rejects.toMatchObject({ code: "REALM_SUBJECT_NOT_PROVISIONED", status: 409 });
+  });
+
   it("fails closed when a deterministic Subject ID has a different Identity link", async () => {
     const { store, provisioner } = await setup();
     const realm = contentRealm();

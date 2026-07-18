@@ -239,6 +239,18 @@ export interface ProvisionRealmMembershipInput {
   readonly password: string;
 }
 
+export interface RegisterRealmMembershipInput {
+  readonly identifier: string;
+  readonly password: string;
+  readonly profile: Readonly<Record<string, unknown>>;
+  readonly reauthPassword: string;
+}
+
+export interface GrantRealmAdministratorInput {
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly reauthPassword: string;
+}
+
 export interface GrantRealmFullAccessInput {
   readonly subjectId: string;
   readonly reason: string;
@@ -1016,6 +1028,15 @@ export interface AdminApi {
     provisionMembership(
       realmId: string,
       input: ProvisionRealmMembershipInput,
+    ): Promise<RealmMembership>;
+    registerMembership(
+      realmId: string,
+      input: RegisterRealmMembershipInput,
+    ): Promise<RealmMembership>;
+    grantRealmAdministrator(
+      realmId: string,
+      membershipId: string,
+      input: GrantRealmAdministratorInput,
     ): Promise<RealmMembership>;
     suspendMembership(
       realmId: string,
