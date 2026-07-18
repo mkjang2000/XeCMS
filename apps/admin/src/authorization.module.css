@@ -819,6 +819,33 @@
   outline: 2px solid var(--xe-color-primary);
 }
 
+.standardPermissionToggle {
+  display: flex;
+  min-width: 5.5rem;
+  min-height: 2.1rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.6rem;
+  gap: 0.4rem;
+  color: var(--xe-color-text-muted);
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-sm);
+  background: #f7f8fc;
+  font-size: 0.68rem;
+  font-weight: 670;
+  cursor: pointer;
+}
+
+.standardPermissionToggle[data-selected="true"] {
+  color: var(--xe-color-primary-strong);
+  border-color: #bfc5f8;
+  background: var(--xe-color-primary-soft);
+}
+
+.standardPermissionToggle input {
+  accent-color: var(--xe-color-primary);
+}
+
 .permissionToolbar {
   display: flex;
   align-items: end;

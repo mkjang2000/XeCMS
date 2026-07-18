@@ -19,6 +19,7 @@ import type {
   ContentSessionDto,
   CreateDocumentRequest,
   CreateIdentityRealmRequest,
+  CreateRealmProfileSchemaRequest,
   GlobalIdentityListDto,
   IdentityRealmDto,
   IdentityRealmListDto,
@@ -54,6 +55,10 @@ export interface IdentityRealmAdministrationRouteService {
   createRealm(
     actor: ActorContext,
     input: CreateIdentityRealmRequest,
+  ): Promise<IdentityRealmRecord>;
+  createProfileSchema(
+    actor: ActorContext,
+    input: CreateRealmProfileSchemaRequest & { readonly realmId: string },
   ): Promise<IdentityRealmRecord>;
   updateRealm(
     actor: ActorContext,
@@ -320,6 +325,16 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
     const actor = await systemActor(request, true);
     const realm = await administration.createRealm(actor, parseCreateRealm(request.body));
     reply.code(201);
+    return toRealmDto(realm);
+  });
+
+  app.post("/api/identity-realms/:realmId/profile-schema", async (request): Promise<IdentityRealmDto> => {
+    const actor = await systemActor(request, true);
+    const { realmId } = pathParams(request.params, ["realmId"]);
+    const realm = await administration.createProfileSchema(actor, {
+      realmId,
+      ...parseCreateProfileSchema(request.body),
+    });
     return toRealmDto(realm);
   });
 
@@ -872,6 +887,21 @@ function parseCreateRealm(value: unknown): CreateIdentityRealmRequest {
     ...(provisioning === undefined ? {} : { provisioning }),
     ...(registration === undefined ? {} : { registration }),
     ...(defaultRoleIds === undefined ? {} : { defaultRoleIds }),
+  };
+}
+
+function parseCreateProfileSchema(value: unknown): CreateRealmProfileSchemaRequest {
+  const body = exactObject(value, [
+    "collectionName",
+    "collectionLabel",
+    "identifierFieldName",
+    "includeDisplayName",
+  ], "Realm Profile Schema create request");
+  return {
+    collectionName: requiredString(body, "collectionName"),
+    collectionLabel: requiredString(body, "collectionLabel"),
+    identifierFieldName: requiredString(body, "identifierFieldName"),
+    includeDisplayName: requiredBoolean(body, "includeDisplayName"),
   };
 }
 

@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  SCHEMA_NAME_ERROR_MESSAGE,
+  SCHEMA_NAME_PATTERN,
   toAdminApiError,
   useAdminApi,
   type GlobalIdentity,
@@ -26,6 +28,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { LoadError, PageLoading, RealmAuthorizationError } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
+import { DisplayModeGate, displayModeAtLeast, useDisplayMode } from "../display-mode.js";
 import { queryKeys } from "../queries.js";
 import styles from "../identity-realms.module.css";
 
@@ -58,6 +61,12 @@ function formatInstant(value?: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function defaultProfileCollectionName(realmKey: string): string {
+  const camel = realmKey.replace(/-([a-z0-9])/g, (_, character: string) => character.toUpperCase());
+  const prefixed = /^[a-z]/.test(camel) ? camel : `realm${camel}`;
+  return `${prefixed}Accounts`.slice(0, 64);
 }
 
 function RealmStatusBadge({ realm }: { readonly realm: IdentityRealm }) {
@@ -232,6 +241,9 @@ export function IdentityRealmDetailPage() {
   const { realmId } = useParams();
   const api = useAdminApi();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { mode } = useDisplayMode();
+  const [profileSetupOpen, setProfileSetupOpen] = useState(false);
   const realm = useQuery({
     queryKey: queryKeys.identityRealm(realmId ?? "missing"),
     queryFn: () => api.identityRealms.get(realmId!),
@@ -256,7 +268,23 @@ export function IdentityRealmDetailPage() {
   const fullAccess = useQuery({
     queryKey: queryKeys.realmFullAccess(realmId ?? "missing"),
     queryFn: () => api.identityRealms.listFullAccess(realmId!),
-    enabled: realmId !== undefined && isContent,
+    enabled: realmId !== undefined && isContent && displayModeAtLeast(mode, "advanced"),
+  });
+  const createProfileSchema = useMutation({
+    mutationFn: (input: {
+      readonly collectionName: string;
+      readonly collectionLabel: string;
+      readonly identifierFieldName: string;
+      readonly includeDisplayName: boolean;
+    }) => api.identityRealms.createProfileSchema(realmId!, input),
+    onSuccess: async (nextRealm) => {
+      queryClient.setQueryData(queryKeys.identityRealm(nextRealm.realmId), nextRealm);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.identityRealms }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+      ]);
+      setProfileSetupOpen(false);
+    },
   });
 
   if (realmId === undefined) return <Page><Callout tone="error">Realm ID가 없습니다.</Callout></Page>;
@@ -274,7 +302,7 @@ export function IdentityRealmDetailPage() {
         actions={<>
           <RealmStatusBadge realm={realm.data} />
           {realm.data.kind === "content" && realm.data.status === "active" ? (
-            <Button onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.data.realmId)}/access/roles`)}>Realm 권한 관리</Button>
+            <Button onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.data.realmId)}/access/${mode === "basic" ? "grades" : "roles"}`)}>Realm 권한 관리</Button>
           ) : null}
           <Button variant="secondary" onPress={() => navigate("/admin/realms")}>목록으로</Button>
         </>}
@@ -286,14 +314,12 @@ export function IdentityRealmDetailPage() {
         <>
           {realm.data.status === "provisioning" ? (
             <Callout tone="warning">
-              <strong>아직 활성화되지 않았습니다. 한 단계가 더 필요합니다.</strong>
-              <p>이 Realm은 <strong>Auth Collection을 연결하고 스키마를 적용(Apply)</strong>하는 순간 자동으로 활성화됩니다. 기다린다고 저절로 활성화되지는 않습니다.</p>
-              <ol className={styles.provisioningSteps}>
-                <li>스키마 빌더에서 로그인 계정을 담을 Collection을 만들거나 엽니다.</li>
-                <li>그 Collection의 <strong>Auth</strong> 설정에서 Realm Key <code>{realm.data.realmKey}</code>를 지정합니다.</li>
-                <li>스키마를 <strong>Apply</strong>하면 Profile Collection이 연결되고 이 Realm이 활성 상태로 전환됩니다.</li>
-              </ol>
-              <Button onPress={() => navigate("/admin/schema")}>스키마 빌더로 이동</Button>
+              <strong>기본 인증 스키마를 만들면 Realm을 바로 활성화할 수 있습니다.</strong>
+              <p>로그인 identifier와 기본 Profile 필드를 확인하면 Collection 생성, stable ID 발급, Realm 연결과 Schema 적용을 한 번에 처리합니다.</p>
+              <div className={styles.formActions}>
+                <Button onPress={() => setProfileSetupOpen(true)}>기본 인증 스키마 생성</Button>
+                <Button variant="secondary" onPress={() => navigate("/admin/schema/new")}>직접 설계</Button>
+              </div>
             </Callout>
           ) : null}
           {realm.data.status === "disabled" ? (
@@ -306,10 +332,86 @@ export function IdentityRealmDetailPage() {
             identities={identities}
             systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
           />
-          <FullAccessSection realm={realm.data} memberships={memberships.data?.items ?? []} bindings={fullAccess} identities={identities.data?.items ?? []} />
+          {displayModeAtLeast(mode, "advanced") ? <FullAccessSection realm={realm.data} memberships={memberships.data?.items ?? []} bindings={fullAccess} identities={identities.data?.items ?? []} /> : null}
+          {profileSetupOpen ? (
+            <ProfileSchemaSetupDialog
+              realm={realm.data}
+              error={createProfileSchema.error}
+              isPending={createProfileSchema.isPending}
+              onCancel={() => { setProfileSetupOpen(false); createProfileSchema.reset(); }}
+              onConfirm={(input) => createProfileSchema.mutate(input)}
+            />
+          ) : null}
         </>
       )}
     </Page>
+  );
+}
+
+function ProfileSchemaSetupDialog({ realm, error, isPending, onCancel, onConfirm }: {
+  readonly realm: IdentityRealm;
+  readonly error: unknown;
+  readonly isPending: boolean;
+  readonly onCancel: () => void;
+  readonly onConfirm: (input: {
+    readonly collectionName: string;
+    readonly collectionLabel: string;
+    readonly identifierFieldName: string;
+    readonly includeDisplayName: boolean;
+  }) => void;
+}) {
+  const [collectionName, setCollectionName] = useState(() => defaultProfileCollectionName(realm.realmKey));
+  const [collectionLabel, setCollectionLabel] = useState(() => `${realm.name} Accounts`);
+  const [identifierFieldName, setIdentifierFieldName] = useState("loginId");
+  const [includeDisplayName, setIncludeDisplayName] = useState(true);
+  const collectionNameError = collectionName !== "" && !SCHEMA_NAME_PATTERN.test(collectionName)
+    ? SCHEMA_NAME_ERROR_MESSAGE
+    : undefined;
+  const identifierFieldNameError = identifierFieldName !== "" && !SCHEMA_NAME_PATTERN.test(identifierFieldName)
+    ? SCHEMA_NAME_ERROR_MESSAGE
+    : undefined;
+  const converted = error === null || error === undefined ? null : toAdminApiError(error);
+  const errorMessage = converted?.code === "SCHEMA_QUICK_SETUP_DRAFT_CONFLICT"
+    ? "적용되지 않은 다른 스키마 변경 사항이 있습니다. 먼저 스키마 화면에서 적용하거나 버려 주세요."
+    : converted?.code === "COLLECTION_NAME_CONFLICT"
+      ? "같은 이름의 Collection이 이미 있습니다. 다른 이름을 사용해 주세요."
+      : converted?.message;
+  return (
+    <ConfirmDialog
+      title="기본 인증 스키마 생성"
+      confirmLabel="생성하고 Realm 활성화"
+      isPending={isPending}
+      isConfirmDisabled={collectionName.trim() === ""
+        || collectionLabel.trim() === ""
+        || identifierFieldName.trim() === ""
+        || collectionNameError !== undefined
+        || identifierFieldNameError !== undefined}
+      onCancel={onCancel}
+      onConfirm={() => onConfirm({
+        collectionName: collectionName.trim(),
+        collectionLabel: collectionLabel.trim(),
+        identifierFieldName: identifierFieldName.trim(),
+        includeDisplayName,
+      })}
+    >
+      <div className={styles.dialogStack}>
+        <p><strong>{realm.name}</strong> Realm의 Profile Collection을 생성하고 즉시 Schema에 적용합니다.</p>
+        <TextInput label="Collection 이름" value={collectionName} onChange={setCollectionName} description="API와 저장소에서 사용하는 영문 이름입니다." maxLength={64} errorMessage={collectionNameError} isRequired />
+        <TextInput label="표시 이름" value={collectionLabel} onChange={setCollectionLabel} isRequired />
+        <TextInput
+          label="로그인 ID 필드명"
+          value={identifierFieldName}
+          onChange={setIdentifierFieldName}
+          description="예: loginId, email, username. 필수·고유 text 필드로 생성됩니다."
+          maxLength={64}
+          errorMessage={identifierFieldNameError}
+          isRequired
+        />
+        <CheckboxField isSelected={includeDisplayName} onChange={setIncludeDisplayName}>표시 이름 Profile 필드 추가</CheckboxField>
+        <Callout tone="info">이 작업은 현재 Schema에 다른 미적용 변경이 없을 때만 실행되며, 생성과 적용이 끝나면 Realm이 활성화됩니다.</Callout>
+        {errorMessage ? <Callout tone="error">{errorMessage}</Callout> : null}
+      </div>
+    </ConfirmDialog>
   );
 }
 
@@ -512,15 +614,17 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
             <TextInput label="로그인 identifier" value={newIdentifier} onChange={setNewIdentifier} description="예: 이메일. 이 Realm의 로그인 아이디로 사용됩니다." isDisabled={!canRegister} isRequired />
             <TextInput label="초기 비밀번호" type="password" autoComplete="new-password" value={newPassword} onChange={setNewPassword} description="12자 이상이어야 합니다. 사용자에게 안전하게 전달해 주세요." isDisabled={!canRegister} isRequired />
           </div>
-          <TextAreaField
-            label="초기 Profile JSON"
-            value={newProfileSource}
-            onChange={setNewProfileSource}
-            rows={4}
-            errorMessage={newProfileError ?? undefined}
-            description="Profile Collection Schema 검증을 통과해야 합니다."
-            isDisabled={!canRegister}
-          />
+          <DisplayModeGate minimum="standard">
+            <TextAreaField
+              label="초기 Profile JSON"
+              value={newProfileSource}
+              onChange={setNewProfileSource}
+              rows={4}
+              errorMessage={newProfileError ?? undefined}
+              description="Profile Collection Schema 검증을 통과해야 합니다."
+              isDisabled={!canRegister}
+            />
+          </DisplayModeGate>
           <TextInput label="현재 관리자 비밀번호" type="password" autoComplete="current-password" value={newReauthPassword} onChange={setNewReauthPassword} description="본인 확인을 위해 현재 로그인한 관리자 비밀번호를 입력합니다." isDisabled={!canRegister} isRequired />
           <MutationError error={register.error} />
           <div className={styles.formActions}>
@@ -554,15 +658,17 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
           />
           <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isDisabled={!canProvision} isRequired />
         </div>
-        <TextAreaField
-          label="초기 Profile JSON"
-          value={profileSource}
-          onChange={setProfileSource}
-          rows={4}
-          errorMessage={profileError ?? undefined}
-          description="Profile Collection Schema 검증을 통과해야 합니다."
-          isDisabled={!canProvision}
-        />
+        <DisplayModeGate minimum="standard">
+          <TextAreaField
+            label="초기 Profile JSON"
+            value={profileSource}
+            onChange={setProfileSource}
+            rows={4}
+            errorMessage={profileError ?? undefined}
+            description="Profile Collection Schema 검증을 통과해야 합니다."
+            isDisabled={!canProvision}
+          />
+        </DisplayModeGate>
         <MutationError error={provision.error} />
         <div className={styles.formActions}>
           <Button type="submit" isDisabled={!canProvision || identityId === "" || password === "" || provision.isPending}>

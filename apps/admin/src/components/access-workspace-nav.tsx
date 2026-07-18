@@ -7,7 +7,7 @@ const items = [
   { path: "members", label: "멤버", minimum: "basic" },
   { path: "roles", label: "레벨과 역할", minimum: "standard" },
   { path: "bindings", label: "역할 배정", minimum: "standard" },
-  { path: "simulator", label: "사용자 권한 확인", minimum: "advanced" },
+  { path: "simulator", label: "사용자 권한 확인", minimum: "standard" },
   { path: "audit", label: "감사 로그", minimum: "advanced" },
 ] as const;
 

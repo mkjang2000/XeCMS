@@ -11,6 +11,7 @@ export function PermissionEditor({
   delegated,
   query,
   technical,
+  advanced,
   readOnly,
   onQueryChange,
   onTechnicalChange,
@@ -22,6 +23,7 @@ export function PermissionEditor({
   readonly delegated: readonly string[];
   readonly query: string;
   readonly technical: boolean;
+  readonly advanced: boolean;
   readonly readOnly: boolean;
   readonly onQueryChange: (value: string) => void;
   readonly onTechnicalChange: (value: boolean) => void;
@@ -44,19 +46,21 @@ export function PermissionEditor({
       <div className={styles.permissionToolbar}>
         <div className={styles.permissionSummary}>
           <strong>{selected.length}개 업무 허용</strong>
-          <span>{delegated.length}개는 하위 역할에 위임 가능</span>
+          {advanced ? <span>{delegated.length}개는 하위 역할에 위임 가능</span> : null}
         </div>
         <div className={styles.permissionTools}>
           <label className={styles.permissionSearch}>
             <span className={styles.visuallyHidden}>권한 검색</span>
             <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="업무 또는 권한 검색" />
           </label>
-          <Button size="small" variant="secondary" onPress={() => onTechnicalChange(!technical)}>
-            {technical ? "업무별 간편 보기" : "권한 코드 보기"}
-          </Button>
+          {advanced ? (
+            <Button size="small" variant="secondary" onPress={() => onTechnicalChange(!technical)}>
+              {technical ? "업무별 간편 보기" : "권한 코드 보기"}
+            </Button>
+          ) : null}
         </div>
       </div>
-      {technical ? (
+      {advanced && technical ? (
         <div className={styles.permissionMatrix}>
           <div className={styles.permissionHeader}><span>권한 코드</span><span>사용</span><span>위임</span></div>
           {permissions.map((permission) => (
@@ -85,28 +89,41 @@ export function PermissionEditor({
                       <article className={styles.permissionTask} key={permission.key} data-enabled={mode !== "none"}>
                         <div className={styles.permissionTaskIdentity}>
                           <strong>{permissionTaskName(permission.key)}</strong>
-                          <code>{permission.key}</code>
-                          {permission.hierarchyGuard !== "none" ? <span>대상과의 권한 레벨을 함께 확인합니다.</span> : null}
+                          {advanced ? <code>{permission.key}</code> : null}
+                          {advanced && permission.hierarchyGuard !== "none" ? <span>대상과의 권한 레벨을 함께 확인합니다.</span> : null}
                         </div>
-                        <div className={styles.permissionModes} role="radiogroup" aria-label={`${permissionTaskName(permission.key)} 권한 수준`}>
-                          {(["none", "use", "delegate"] as const).map((option) => {
-                            const disabled = readOnly || (option === "delegate" && (!permission.delegatable || permission.protected));
-                            const label = option === "none" ? "허용 안 함" : option === "use" ? "사용" : "사용 + 위임";
-                            return (
-                              <label key={option} data-selected={mode === option} data-disabled={disabled}>
-                                <input
-                                  type="radio"
-                                  name={`permission-${permission.key}`}
-                                  value={option}
-                                  checked={mode === option}
-                                  disabled={disabled}
-                                  onChange={() => setMode(permission.key, option)}
-                                />
-                                <span>{label}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
+                        {advanced ? (
+                          <div className={styles.permissionModes} role="radiogroup" aria-label={`${permissionTaskName(permission.key)} 권한 수준`}>
+                            {(["none", "use", "delegate"] as const).map((option) => {
+                              const disabled = readOnly || (option === "delegate" && (!permission.delegatable || permission.protected));
+                              const label = option === "none" ? "허용 안 함" : option === "use" ? "사용" : "사용 + 위임";
+                              return (
+                                <label key={option} data-selected={mode === option} data-disabled={disabled}>
+                                  <input
+                                    type="radio"
+                                    name={`permission-${permission.key}`}
+                                    value={option}
+                                    checked={mode === option}
+                                    disabled={disabled}
+                                    onChange={() => setMode(permission.key, option)}
+                                  />
+                                  <span>{label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <label className={styles.standardPermissionToggle} data-selected={selected.includes(permission.key)}>
+                            <input
+                              type="checkbox"
+                              aria-label={`${permissionTaskName(permission.key)} 허용`}
+                              checked={selected.includes(permission.key)}
+                              disabled={readOnly}
+                              onChange={(event) => onPermissionChange(permission.key, event.target.checked)}
+                            />
+                            <span>{selected.includes(permission.key) ? "허용됨" : "허용"}</span>
+                          </label>
+                        )}
                       </article>
                     );
                   })}

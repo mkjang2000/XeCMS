@@ -69,8 +69,27 @@ function collectionFixture(
 function renderEditor(input: {
   readonly collection?: CollectionDetail;
   readonly realms?: readonly IdentityRealm[];
+  readonly isNew?: boolean;
 }) {
   const collection = input.collection ?? collectionFixture();
+  let createdCollection: CollectionDetail | undefined;
+  const create = vi.fn().mockImplementation(async (
+    draft: Parameters<AdminApi["collections"]["create"]>[0],
+  ) => {
+    createdCollection = {
+      ...draft,
+      id: "col_created",
+      status: "draft",
+      hasPendingChanges: true,
+      revisionId: null,
+      draftVersion: "draft-created-1",
+      fields: draft.fields.map((field, index) => ({
+        ...field,
+        id: field.id ?? `fld_created_${index + 1}`,
+      })),
+    } as CollectionDetail;
+    return createdCollection;
+  });
   const updateDraft = vi.fn().mockImplementation(async (
     _collectionId: string,
     request: { readonly draft: Parameters<AdminApi["collections"]["create"]>[0] },
@@ -92,7 +111,9 @@ function renderEditor(input: {
           revisionId: collection.revisionId,
         }],
       }),
-      get: vi.fn().mockResolvedValue(collection),
+      get: vi.fn().mockImplementation(async (collectionId: string) =>
+        createdCollection?.id === collectionId ? createdCollection : collection),
+      create,
       updateDraft,
     },
     identityRealms: {
@@ -109,9 +130,10 @@ function renderEditor(input: {
     },
   });
   const router = createMemoryRouter([
+    { path: "/admin/schema/new", element: <SchemaEditorPage /> },
     { path: "/admin/schema/:collectionId", element: <SchemaEditorPage /> },
     { path: "/admin/schema/:collectionId/changes", element: <h1>Schema review</h1> },
-  ], { initialEntries: [`/admin/schema/${collection.id}`] });
+  ], { initialEntries: [input.isNew ? "/admin/schema/new" : `/admin/schema/${collection.id}`] });
   render(
     <AdminApiProvider api={api}>
       <QueryClientProvider client={queryClient}>
@@ -121,7 +143,7 @@ function renderEditor(input: {
       </QueryClientProvider>
     </AdminApiProvider>,
   );
-  return { router, updateDraft, user: userEvent.setup() };
+  return { create, router, updateDraft, user: userEvent.setup() };
 }
 
 afterEach(cleanup);
@@ -213,6 +235,31 @@ describe("SchemaEditorPage Collection auth", () => {
     await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(1));
     const request = updateDraft.mock.calls[0]?.[1] as { readonly draft: { readonly auth?: unknown } };
     expect(request.draft.auth).toBeUndefined();
+  });
+
+  it("moves a newly created draft to its stable URL without an unsaved-changes prompt", async () => {
+    const { create, router, user } = renderEditor({ isNew: true });
+    await screen.findByRole("heading", { name: "새 콘텐츠 타입" });
+
+    await user.type(screen.getByRole("textbox", { name: "이름" }), "members");
+    const firstField = screen.getByRole("group", { name: "필드 1" }) as HTMLElement;
+    const scoped = within(firstField);
+    await user.type(scoped.getByRole("textbox", { name: "필드 이름" }), "loginId");
+    await user.click(scoped.getByRole("checkbox", { name: "필수 필드" }));
+    await user.click(scoped.getByText("유형별 설정과 제약 조건"));
+    await user.click(scoped.getByRole("checkbox", { name: "고유 값" }));
+
+    await user.click(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }));
+    const realmSelect = [...document.querySelectorAll("select")].find((select) =>
+      select.querySelector('option[value="community"]') !== null);
+    await user.selectOptions(realmSelect!, "community");
+    await user.click(screen.getByRole("button", { name: "필드 먼저 저장하고 ID 발급" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/admin/schema/col_created"));
+    expect(screen.queryByRole("heading", { name: "저장하지 않은 변경 사항" })).toBeNull();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("checkbox", { name: "loginId · fld_created_1" })).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }) as HTMLInputElement).checked).toBe(true);
   });
 
   it("explains and blocks missing Realm and ineligible identifier fields", async () => {

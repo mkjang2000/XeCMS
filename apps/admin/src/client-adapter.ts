@@ -766,6 +766,8 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
       })),
       get: (realmId) => call(() => client.identityRealms.get(realmId)),
       create: (input) => call(() => client.identityRealms.create(input)),
+      createProfileSchema: (realmId, input) => call(() =>
+        client.identityRealms.createProfileSchema(realmId, input)),
       update: (realmId, input) => call(() => client.identityRealms.update(realmId, input)),
       listMemberships: (realmId) => call(async () => ({
         items: (await client.identityRealms.listMemberships(realmId)).items,

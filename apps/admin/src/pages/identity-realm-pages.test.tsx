@@ -11,6 +11,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DisplayModeProvider, type DisplayMode } from "../display-mode.js";
 import { IdentityRealmDetailPage, IdentityRealmListPage } from "./identity-realm-pages.js";
 
 function contentRealm(overrides: Partial<IdentityRealm> = {}): IdentityRealm {
@@ -31,52 +32,70 @@ function contentRealm(overrides: Partial<IdentityRealm> = {}): IdentityRealm {
   };
 }
 
-function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = []) {
+function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = [], mode: DisplayMode = "basic") {
   const registerMembership = vi.fn().mockResolvedValue({});
   const grantRealmAdministrator = vi.fn().mockResolvedValue({});
+  const createProfileSchema = vi.fn().mockResolvedValue({
+    ...realm,
+    status: "active",
+    profileCollectionId: "col_profile",
+  });
+  const listFullAccess = vi.fn().mockResolvedValue({ items: [], nextCursor: undefined });
   const api = {
     identityRealms: {
       get: vi.fn().mockResolvedValue(realm),
       list: vi.fn().mockResolvedValue({ items: [realm], nextCursor: undefined }),
       listGlobalIdentities: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
       listMemberships: vi.fn().mockResolvedValue({ items: memberships, nextCursor: undefined }),
-      listFullAccess: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+      listFullAccess,
+      createProfileSchema,
       registerMembership,
       grantRealmAdministrator,
     },
   } as unknown as AdminApi;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const router = createMemoryRouter([{
-    path: "/admin/realms/:realmId",
-    element: <IdentityRealmDetailPage />,
-  }], { initialEntries: [`/admin/realms/${realm.realmId}`] });
+  const router = createMemoryRouter([
+    { path: "/admin/realms/:realmId", element: <IdentityRealmDetailPage /> },
+    { path: "/admin/realms/:realmId/access/grades", element: <div>Realm 등급 화면</div> },
+    { path: "/admin/realms/:realmId/access/roles", element: <div>Realm 역할 화면</div> },
+  ], { initialEntries: [`/admin/realms/${realm.realmId}`] });
   render(
-    <QueryClientProvider client={queryClient}>
-      <AdminApiProvider api={api}>
-        <RouterProvider router={router} />
-      </AdminApiProvider>
-    </QueryClientProvider>,
+    <DisplayModeProvider initialMode={mode}>
+      <QueryClientProvider client={queryClient}>
+        <AdminApiProvider api={api}>
+          <RouterProvider router={router} />
+        </AdminApiProvider>
+      </QueryClientProvider>
+    </DisplayModeProvider>,
   );
-  return { registerMembership, grantRealmAdministrator, user: userEvent.setup() };
+  return { createProfileSchema, registerMembership, grantRealmAdministrator, listFullAccess, router, user: userEvent.setup() };
 }
 
 afterEach(cleanup);
 
 describe("IdentityRealmDetailPage provisioning guidance", () => {
-  it("tells a provisioning Realm exactly how to activate, naming its Realm Key", async () => {
-    renderDetail(contentRealm({ status: "provisioning", realmKey: "testre" }));
+  it("creates the provisioning Realm's Profile Schema with a directly entered login field name", async () => {
+    const { createProfileSchema, user } = renderDetail(
+      contentRealm({ status: "provisioning", realmKey: "testre" }),
+    );
 
-    // The activation is a required, explicit next step — not a background wait.
-    expect(await screen.findByText(/한 단계가 더 필요합니다/)).toBeTruthy();
-    expect(screen.getByText(/기다린다고 저절로 활성화되지는 않습니다/)).toBeTruthy();
-    // The Realm Key the user must reference in the Auth Collection is shown
-    // inside the activation steps (it also appears in the summary grid).
-    const step = screen.getByText(/를 지정합니다/).closest("li");
-    expect(step?.textContent).toContain("testre");
-    // A direct path to the place where activation actually happens.
-    expect(screen.getByRole("button", { name: "스키마 빌더로 이동" })).toBeTruthy();
-    // The settings form explains why it is locked instead of just disabling silently.
+    expect(await screen.findByText(/Realm을 바로 활성화할 수 있습니다/)).toBeTruthy();
     expect(screen.getByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "기본 인증 스키마 생성" }));
+    const dialog = await screen.findByRole("dialog");
+    const identifierField = within(dialog).getByRole("textbox", { name: "로그인 ID 필드명" });
+    expect((identifierField as HTMLInputElement).value).toBe("loginId");
+    await user.clear(identifierField);
+    await user.type(identifierField, "memberEmail");
+    await user.click(within(dialog).getByRole("button", { name: "생성하고 Realm 활성화" }));
+
+    await waitFor(() => expect(createProfileSchema).toHaveBeenCalledTimes(1));
+    expect(createProfileSchema).toHaveBeenCalledWith("rlm_testre", {
+      collectionName: "testreAccounts",
+      collectionLabel: "Test Realm Accounts",
+      identifierFieldName: "memberEmail",
+      includeDisplayName: true,
+    });
   });
 
   it("creates a new user and assigns it to an active Realm", async () => {
@@ -134,9 +153,44 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
 
     // Wait until the detail view has rendered.
     expect(await screen.findByText("Realm 설정")).toBeTruthy();
-    expect(screen.queryByText(/한 단계가 더 필요합니다/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "스키마 빌더로 이동" })).toBeNull();
+    expect(screen.queryByText(/Realm을 바로 활성화할 수 있습니다/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "기본 인증 스키마 생성" })).toBeNull();
     expect(screen.queryByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeNull();
+  });
+});
+
+describe("IdentityRealmDetailPage 표시 모드", () => {
+  const activeRealm = contentRealm({ status: "active", profileCollectionId: "col_profile" });
+
+  it("keeps basic mode focused and routes Realm authorization to grades", async () => {
+    const { listFullAccess, router, user } = renderDetail(activeRealm, [], "basic");
+
+    await screen.findByText("Realm 설정");
+    expect(screen.queryByLabelText("초기 Profile JSON")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
+    expect(listFullAccess).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/grades"));
+  });
+
+  it("shows profile JSON in standard mode and routes authorization to roles", async () => {
+    const { listFullAccess, router, user } = renderDetail(activeRealm, [], "standard");
+
+    expect((await screen.findAllByLabelText("초기 Profile JSON")).length).toBe(2);
+    expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
+    expect(listFullAccess).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/roles"));
+  });
+
+  it("loads and shows Full Access only in advanced mode", async () => {
+    const { listFullAccess } = renderDetail(activeRealm, [], "advanced");
+
+    expect(await screen.findByRole("heading", { name: "Realm Full Access" })).toBeTruthy();
+    expect(screen.getAllByLabelText("초기 Profile JSON").length).toBe(2);
+    expect(listFullAccess).toHaveBeenCalledWith("rlm_testre");
   });
 });
 

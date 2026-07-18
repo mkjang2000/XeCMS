@@ -223,6 +223,13 @@ export interface CreateIdentityRealmInput {
   readonly defaultRoleIds?: readonly string[];
 }
 
+export interface CreateRealmProfileSchemaInput {
+  readonly collectionName: string;
+  readonly collectionLabel: string;
+  readonly identifierFieldName: string;
+  readonly includeDisplayName: boolean;
+}
+
 export interface UpdateIdentityRealmInput {
   readonly expectedRevision: number;
   readonly name: string;
@@ -1023,6 +1030,7 @@ export interface AdminApi {
     list(): Promise<PageResult<IdentityRealm>>;
     get(realmId: string): Promise<IdentityRealm>;
     create(input: CreateIdentityRealmInput): Promise<IdentityRealm>;
+    createProfileSchema(realmId: string, input: CreateRealmProfileSchemaInput): Promise<IdentityRealm>;
     update(realmId: string, input: UpdateIdentityRealmInput): Promise<IdentityRealm>;
     listMemberships(realmId: string): Promise<PageResult<RealmMembership>>;
     provisionMembership(

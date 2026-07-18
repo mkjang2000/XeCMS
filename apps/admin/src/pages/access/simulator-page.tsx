@@ -7,6 +7,7 @@ import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
 import { Page, PageHeader, SectionHeader } from "../../components/page.js";
 import { ScopeTreeSelector } from "../../components/resource-scope-tree.js";
+import { useDisplayMode } from "../../display-mode.js";
 import { MutationError, resourceNameOf, resourcePathOf, roleNameOf, subjectNameOf } from "./common.js";
 import {
   decisionReasonName,
@@ -20,6 +21,8 @@ import { useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.j
 export function AccessSimulatorPage() {
   const { authorization, realmId } = useAuthorizationWorkspace();
   const policy = useAuthorizationPolicy();
+  const { mode } = useDisplayMode();
+  const advanced = mode === "advanced";
   const [subjectId, setSubjectId] = useState("");
   const [action, setAction] = useState("");
   const [resourceId, setResourceId] = useState("");
@@ -59,7 +62,7 @@ export function AccessSimulatorPage() {
     <AccessWorkspaceNav />
     <div className={styles.guideBanner}>
       <span className={styles.guideNumber}>?</span>
-      <div><strong>설정을 바꾸지 않고 현재 권한만 안전하게 확인합니다.</strong><p>특정 권한의 상세 판정은 아래 고급 진단에서 별도로 실행할 수 있습니다.</p></div>
+      <div><strong>설정을 바꾸지 않고 현재 권한만 안전하게 확인합니다.</strong><p>{advanced ? "특정 권한의 상세 판정은 아래 고급 진단에서 별도로 실행할 수 있습니다." : "사용자와 영역을 고르면 가능한 업무를 평이한 이름으로 보여 드립니다."}</p></div>
     </div>
     <div className={`${styles.layout} ${styles.simulatorLayout}`}>
       <section className={styles.panel}>
@@ -74,7 +77,7 @@ export function AccessSimulatorPage() {
             onChange={(next) => { setResourceId(next); resetResults(); }}
           />
           <Button isFullWidth onPress={() => effectivePermissions.mutate()} isDisabled={!subjectId || !resourceId || effectivePermissions.isPending}>{effectivePermissions.isPending ? "권한 확인 중…" : "이 영역의 전체 권한 확인"}</Button>
-          <details className={styles.advancedDetails}>
+          {advanced ? <details className={styles.advancedDetails}>
             <summary><span>특정 권한 상세 진단</span><small>Action과 조건을 직접 지정하는 고급 도구</small></summary>
             <div className={styles.advancedDetailsBody}>
               <label className={styles.field}><span>확인할 권한</span><select value={action} onChange={(event) => { setAction(event.target.value); resetResults(); }}><option value="">선택해 주세요</option>{policy.data.permissions.map((permission) => <option key={permission.key} value={permission.key}>{permissionTaskName(permission.key)} · {permission.key}{permission.hierarchyGuard === "none" ? "" : " · 대상 정보 필요"}</option>)}</select></label>
@@ -87,11 +90,11 @@ export function AccessSimulatorPage() {
               ) : null}
               <Button variant="secondary" isFullWidth onPress={() => simulation.mutate()} isDisabled={!subjectId || !action || !resourceId || hierarchyUnsupported || simulation.isPending}>{simulation.isPending ? "진단 중…" : hierarchyUnsupported ? "대상 정보 필요" : "선택한 권한 진단"}</Button>
             </div>
-          </details>
+          </details> : null}
           <MutationError error={simulation.error ?? effectivePermissions.error} />
         </div>
       </section>
-      <div className={styles.stack}><EffectivePermissionList policy={policy.data} results={effectivePermissions.data ?? null} /><DecisionExplanation policy={policy.data} decision={simulation.data ?? null} /></div>
+      <div className={styles.stack}><EffectivePermissionList policy={policy.data} results={effectivePermissions.data ?? null} technical={advanced} />{advanced ? <DecisionExplanation policy={policy.data} decision={simulation.data ?? null} /> : null}</div>
     </div>
   </Page>;
 }
@@ -99,6 +102,7 @@ export function AccessSimulatorPage() {
 export function EffectivePermissionList({
   policy,
   results,
+  technical = false,
 }: {
   readonly policy: AuthorizationPolicy;
   readonly results: readonly {
@@ -106,6 +110,7 @@ export function EffectivePermissionList({
     readonly supported: boolean;
     readonly decision: AuthorizationDecision | null;
   }[] | null;
+  readonly technical?: boolean;
 }) {
   if (results === null) return <section className={styles.panel}><EmptyState title="전체 권한 결과" description="사용자·그룹과 영역을 선택한 뒤 전체 권한 확인을 실행하세요." /></section>;
   const sorted = [...results].sort((left, right) =>
@@ -124,7 +129,7 @@ export function EffectivePermissionList({
       <div className={styles.effectiveList}>
         {sorted.map(({ permission, supported, decision }) => (
           <article className={styles.effectiveItem} key={permission.key} data-allowed={decision?.allowed === true}>
-            <div><strong>{permissionTaskName(permission.key)}</strong><code>{permission.key}</code></div>
+            <div><strong>{permissionTaskName(permission.key)}</strong>{technical ? <code>{permission.key}</code> : null}</div>
             <Badge tone={!supported ? "neutral" : decision?.allowed ? "success" : "danger"}>{!supported ? "추가 정보 필요" : decision?.allowed ? "가능" : "불가"}</Badge>
             <span>{supported ? decisionReasonName(decision?.reasonCode ?? "") : hierarchyContextDescription(permission.hierarchyGuard)}</span>
           </article>

@@ -25,6 +25,7 @@ interface Realm {
   readonly realmKey: string;
   readonly name: string;
   readonly status: "provisioning" | "active" | "disabled";
+  readonly profileCollectionId?: string;
   readonly revision: number;
   readonly authentication: {
     readonly acceptSystemIdentities: boolean;
@@ -72,9 +73,37 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
         registration: "open",
         defaultRoleIds: [],
       }, 201);
-      await applySchema(server, owner);
-      let realm = await getJson<Realm>(server, "/api/identity-realms/" + createdRealm.realmId, owner.cookie);
+      let realm = await adminJson<Realm>(
+        server,
+        owner,
+        "POST",
+        `/api/identity-realms/${createdRealm.realmId}/profile-schema`,
+        {
+          collectionName: "members",
+          collectionLabel: "Members",
+          identifierFieldName: "memberEmail",
+          includeDisplayName: true,
+        },
+        200,
+      );
       expect(realm.status).toBe("active");
+      expect(realm.profileCollectionId).toMatch(/^col_/);
+      const repeatedSetup = await adminJson<Realm>(
+        server,
+        owner,
+        "POST",
+        `/api/identity-realms/${createdRealm.realmId}/profile-schema`,
+        {
+          collectionName: "members",
+          collectionLabel: "Members",
+          identifierFieldName: "memberEmail",
+          includeDisplayName: true,
+        },
+        200,
+      );
+      expect(repeatedSetup.profileCollectionId).toBe(realm.profileCollectionId);
+      await applyArticleSchema(server, owner);
+      realm = await getJson<Realm>(server, "/api/identity-realms/" + createdRealm.realmId, owner.cookie);
 
       const contentAdministratorRoleId = `authorization:${realm.realmId}:role:content-administrator`;
       realm = await updateRealm(server, owner, realm, [contentAdministratorRoleId]);
@@ -183,21 +212,29 @@ async function loginAdmin(server: XeCmsServer): Promise<Session> {
   return { cookie: String(response.headers["set-cookie"]).split(";", 1)[0]!, csrfToken: response.json().csrfToken as string };
 }
 
-async function applySchema(server: XeCmsServer, owner: Session): Promise<void> {
+async function applyArticleSchema(server: XeCmsServer, owner: Session): Promise<void> {
+  const active = await getJson<{
+    readonly revisionId: string;
+    readonly schema: {
+      readonly format: "xecms.schema";
+      readonly formatVersion: 1;
+      readonly collections: readonly Readonly<Record<string, unknown>>[];
+    };
+  }>(server, "/api/schema", owner.cookie);
+  const profile = active.schema.collections.find(({ name }) => name === "members");
+  expect(profile).toMatchObject({
+    name: "members",
+    fields: expect.arrayContaining([
+      expect.objectContaining({ name: "memberEmail", required: true, unique: true }),
+    ]),
+  });
   const imported = await adminRequest(server, owner, "PUT", "/api/schema/manifest", {
-    baseRevisionId: null,
+    baseRevisionId: active.revisionId,
     expectedDraftVersion: null,
     schema: {
       format: "xecms.schema", formatVersion: 1,
       collections: [
-        {
-          id: "col_members", name: "members", label: "Members",
-          fields: [
-            { id: "fld_member_email", name: "email", label: "Email", type: "text", required: true, unique: true },
-            { id: "fld_member_name", name: "displayName", label: "Display name", type: "text", required: true },
-          ],
-          auth: { enabled: true, realmKey: "community", identifierFieldIds: ["fld_member_email"], acceptSystemIdentities: true, provisioning: "explicit", defaultRoleIds: [] },
-        },
+        ...active.schema.collections,
         {
           id: "col_articles", name: "articles", label: "Articles",
           fields: [
@@ -213,7 +250,7 @@ async function applySchema(server: XeCmsServer, owner: Session): Promise<void> {
   expect(preview.statusCode, preview.body).toBe(200);
   const applied = await adminRequest(server, owner, "POST", "/api/schema/apply", {
     planId: preview.json().planId,
-    expectedRevisionId: null,
+    expectedRevisionId: active.revisionId,
     expectedDraftVersion: imported.json().draftVersion,
     approveDestructive: false,
   });

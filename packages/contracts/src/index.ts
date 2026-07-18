@@ -1140,6 +1140,13 @@ export interface CreateIdentityRealmRequest {
   readonly defaultRoleIds?: readonly string[];
 }
 
+export interface CreateRealmProfileSchemaRequest {
+  readonly collectionName: string;
+  readonly collectionLabel: string;
+  readonly identifierFieldName: string;
+  readonly includeDisplayName: boolean;
+}
+
 export interface UpdateIdentityRealmRequest {
   readonly expectedRevision: number;
   readonly name: string;

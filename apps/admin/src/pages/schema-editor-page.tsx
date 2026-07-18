@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { Controller, useFieldArray, useForm, useWatch, type Control } from "react-hook-form";
 import { useNavigate, useParams } from "react-router";
@@ -387,6 +387,7 @@ export function SchemaEditorPage() {
     queryFn: () => api.settings.diagnostics(),
   });
   const editable = diagnostics.data?.schemaMode === "editable";
+  const [stableIdSaveActive, setStableIdSaveActive] = useState(false);
   const { control, handleSubmit, reset, setError, setValue, formState: { errors, isDirty } } = useForm<SchemaFormValues>({ defaultValues: toFormValues() });
   const { fields, append, remove } = useFieldArray({ control, name: "fields", keyName: "formKey" });
   const hierarchyEnabled = useWatch({ control, name: "hierarchyEnabled" });
@@ -497,6 +498,7 @@ export function SchemaEditorPage() {
         }
       });
     },
+    onSettled: () => setStableIdSaveActive(false),
   });
 
   const reloadLatest = async () => {
@@ -731,10 +733,16 @@ export function SchemaEditorPage() {
             <p>필수·고유 text 필드는 준비됐지만, 인증(auth)이 켜져 있으면 identifier가 없어 저장이 막히고, 저장을 해야 stable ID가 생기는 교착 상태입니다. 아래 버튼으로 인증 설정을 잠시 빼고 필드만 저장해 stable ID를 발급받은 뒤, 돌아와서 identifier를 선택해 주세요.</p>
             <Button
               type="button"
-              onPress={() => void handleSubmit((values) => saveFieldsMutation.mutate(values))()}
-              isDisabled={!editable || saveFieldsMutation.isPending}
+              onPress={() => {
+                flushSync(() => setStableIdSaveActive(true));
+                void handleSubmit(
+                  (values) => saveFieldsMutation.mutate(values),
+                  () => setStableIdSaveActive(false),
+                )();
+              }}
+              isDisabled={!editable || stableIdSaveActive || saveFieldsMutation.isPending}
             >
-              {saveFieldsMutation.isPending ? "필드 저장 중…" : "필드 먼저 저장하고 ID 발급"}
+              {stableIdSaveActive || saveFieldsMutation.isPending ? "필드 저장 중…" : "필드 먼저 저장하고 ID 발급"}
             </Button>
           </Callout>
         ) : reviewBlockers.length > 0 ? (
@@ -747,10 +755,10 @@ export function SchemaEditorPage() {
         ) : null}
         <div className={styles.schemaFormActions}>
           <Button type="submit" isDisabled={reviewDisabled}>{mutation.isPending ? "초안 저장 중…" : "변경 사항 검토"}</Button>
-          <Button type="button" variant="secondary" isDisabled={mutation.isPending} onPress={() => navigate("/admin/schema")}>취소</Button>
+          <Button type="button" variant="secondary" isDisabled={mutation.isPending || stableIdSaveActive || saveFieldsMutation.isPending} onPress={() => navigate("/admin/schema")}>취소</Button>
         </div>
       </form>
-      <UnsavedChangesGuard when={isDirty && !mutation.isPending} />
+      <UnsavedChangesGuard when={isDirty && !mutation.isPending && !stableIdSaveActive && !saveFieldsMutation.isPending} />
     </Page>
   );
 }

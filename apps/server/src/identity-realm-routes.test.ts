@@ -113,6 +113,16 @@ describe("registerIdentityRealmRoutes", () => {
       url: "/api/identity-realms",
       payload: { key: "community", name: "Community" },
     });
+    const profileSchema = await harness.app.inject({
+      method: "POST",
+      url: "/api/identity-realms/rlm_community/profile-schema",
+      payload: {
+        collectionName: "communityAccounts",
+        collectionLabel: "Community Accounts",
+        identifierFieldName: "memberEmail",
+        includeDisplayName: true,
+      },
+    });
     const updated = await harness.app.inject({
       method: "PATCH",
       url: "/api/identity-realms/rlm_community",
@@ -180,6 +190,12 @@ describe("registerIdentityRealmRoutes", () => {
     });
     expect(detail.json()).toMatchObject({ realmId: realm.id });
     expect(created.statusCode).toBe(201);
+    expect(profileSchema.statusCode).toBe(200);
+    expect(profileSchema.json()).toMatchObject({
+      realmId: realm.id,
+      status: "active",
+      profileCollectionId: "col_members",
+    });
     expect(updated.statusCode).toBe(200);
     expect(memberships.json().items[0]).toMatchObject({
       membershipId: membership.id,
@@ -198,6 +214,16 @@ describe("registerIdentityRealmRoutes", () => {
     expect(harness.administration.updateRealm).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ realmId: realm.id, expectedRevision: 3 }),
+    );
+    expect(harness.administration.createProfileSchema).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        realmId: realm.id,
+        collectionName: "communityAccounts",
+        collectionLabel: "Community Accounts",
+        identifierFieldName: "memberEmail",
+        includeDisplayName: true,
+      },
     );
     expect(harness.administration.updateRealm.mock.calls[0]?.[0]).not.toHaveProperty("execution");
     expect(harness.administration.suspendMembership).toHaveBeenCalledWith(
@@ -224,6 +250,7 @@ describe("registerIdentityRealmRoutes", () => {
       false,
       false,
       false,
+      true,
       true,
       true,
       false,
@@ -618,6 +645,9 @@ async function createHarness(): Promise<{
     ),
     createRealm: vi.fn<IdentityRealmAdministrationRouteService["createRealm"]>(
       async () => realm,
+    ),
+    createProfileSchema: vi.fn<IdentityRealmAdministrationRouteService["createProfileSchema"]>(
+      async () => ({ ...realm, status: "active", profileCollectionId: "col_members" }),
     ),
     updateRealm: vi.fn<IdentityRealmAdministrationRouteService["updateRealm"]>(
       async (_actor, input) => ({ ...realm, name: input.name, revision: realm.revision + 1 }),

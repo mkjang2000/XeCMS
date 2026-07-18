@@ -51,6 +51,7 @@ import type {
   AuthenticatedSessionDto,
   BootstrapRequest,
   CollectionListDto,
+  CreateRealmProfileSchemaRequest,
   DeleteDocumentRequest,
   DocumentListDto,
   DocumentQueryResultDto,
@@ -106,7 +107,7 @@ import {
   ScryptPasswordHasher,
   qualifiedName,
 } from "@xecms/database";
-import type { CollectionDefinition } from "@xecms/schema";
+import { serializeSchema, type CollectionDefinition, type SchemaIrV1 } from "@xecms/schema";
 import { pluginManifestDigest, type XeCmsPluginModule } from "@xecms/plugin-sdk";
 import Fastify, {
   type FastifyInstance,
@@ -613,6 +614,208 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       await realmAuthorization.syncCollectionResources({ realm, collections: projectedCollections });
     }
   };
+  const applySchemaWithProjection = async (
+    actor: ActorContext,
+    input: {
+      readonly expectedRevisionId: string | null;
+      readonly expectedDraftVersion: string;
+      readonly planId: string;
+      readonly approveDestructive: boolean;
+    },
+  ) => database.withContentProjectionLock(async () => {
+    const policyActor = authorizationActor(actor.subjectId);
+    await assertSafeAuthorizationHierarchyTransition(policyActor);
+    const pendingDraft = await database.getSchemaDraft();
+    if (pendingDraft === null) {
+      throw new ApplicationError("SCHEMA_DRAFT_NOT_FOUND", 404, "No schema draft exists.");
+    }
+    await prepareContentRealmsForSchemaApply(pendingDraft.schema.collections);
+    const quarantined = await authorization.quarantineAllContentResources(policyActor);
+    let applied;
+    try {
+      applied = await schema.apply(actor, input);
+    } catch (error: unknown) {
+      await authorization.releaseContentResourceQuarantine(policyActor, quarantined);
+      throw error;
+    }
+    try {
+      await sites.reconcileCollections({
+        workspaceId: actor.workspaceId,
+        activeCollectionIds: applied.revision.schema.collections.map(({ id }) => String(id)),
+        actorIdentityId: actor.identityId ?? actor.subjectId,
+        actorSubjectId: actor.subjectId,
+      });
+      await syncAuthorizationResources(policyActor, applied.revision.schema.collections);
+      await reconcileAuthorizationHierarchy(
+        policyActor,
+        applied.revision.schema.collections,
+        "schema.apply",
+      );
+      await syncConfiguredContentRealmResources(applied.revision.schema.collections);
+    } catch (error: unknown) {
+      // Schema is already committed; keep the durable fence until startup/retry reconcile.
+      throw error;
+    }
+    return applied.revision;
+  });
+  const createDefaultRealmProfileSchema = async (
+    actor: ActorContext,
+    input: CreateRealmProfileSchemaRequest & { readonly realmId: string },
+  ) => {
+    const realm = (await identityRealms.listRealms(actor)).find(({ id }) => id === input.realmId);
+    if (realm === undefined || realm.kind !== "content") {
+      throw new ApplicationError("IDENTITY_REALM_NOT_FOUND", 404, "The Content Realm does not exist.");
+    }
+    if (realm.profileCollectionId !== undefined) return realm;
+    if (realm.status !== "provisioning") {
+      throw new ApplicationError(
+        "IDENTITY_REALM_CONFIGURATION_INCOMPLETE",
+        409,
+        "Only a provisioning Content Realm can create a default Profile Schema.",
+      );
+    }
+
+    const [active, draft] = await Promise.all([schema.getActive(actor), schema.getDraft(actor)]);
+    const activeSchema: SchemaIrV1 = active?.schema ?? {
+      format: "xecms.schema",
+      formatVersion: 1,
+      collections: [],
+    };
+    const activeProfile = activeSchema.collections.find(
+      ({ auth: definition }) => definition?.realmKey === realm.key,
+    );
+    if (activeProfile !== undefined) {
+      throw new ApplicationError(
+        "IDENTITY_REALM_CONFIGURATION_INCOMPLETE",
+        409,
+        "The Realm Auth Collection is already applied but the Realm activation is incomplete.",
+      );
+    }
+
+    const draftedProfile = draft?.schema.collections.find(
+      ({ auth: definition }) => definition?.realmKey === realm.key,
+    );
+    let workingDraft = draft;
+    if (draftedProfile !== undefined && draft !== null) {
+      const draftWithoutProfile = {
+        ...draft.schema,
+        collections: draft.schema.collections.filter(({ id }) => id !== draftedProfile.id),
+      };
+      if (serializeSchema(draftWithoutProfile) !== serializeSchema(activeSchema)) {
+        throw new ApplicationError(
+          "SCHEMA_QUICK_SETUP_DRAFT_CONFLICT",
+          409,
+          "Apply or discard the other pending Schema changes before creating the Realm Profile Schema.",
+        );
+      }
+      const draftedIdentifierId = draftedProfile.auth?.identifierFieldIds[0];
+      const draftedIdentifier = draftedProfile.fields.find(({ id }) => id === draftedIdentifierId);
+      const expectedFieldCount = input.includeDisplayName ? 2 : 1;
+      const matchesRequest = draftedProfile.name === input.collectionName
+        && draftedProfile.label === input.collectionLabel
+        && draftedProfile.fields.length === expectedFieldCount
+        && draftedIdentifier?.name === input.identifierFieldName
+        && draftedProfile.auth?.identifierFieldIds.length === 1
+        && draftedProfile.fields.some(({ name }) => name === "displayName") === input.includeDisplayName;
+      if (!matchesRequest) {
+        throw new ApplicationError(
+          "SCHEMA_QUICK_SETUP_DRAFT_CONFLICT",
+          409,
+          "The pending Realm Profile Schema was created with different quick setup values.",
+        );
+      }
+    } else {
+      if (draft !== null && serializeSchema(draft.schema) !== serializeSchema(activeSchema)) {
+        throw new ApplicationError(
+          "SCHEMA_QUICK_SETUP_DRAFT_CONFLICT",
+          409,
+          "Apply or discard the pending Schema changes before creating the Realm Profile Schema.",
+        );
+      }
+      if (activeSchema.collections.some(({ name }) => name === input.collectionName)) {
+        throw new ApplicationError(
+          "COLLECTION_NAME_CONFLICT",
+          409,
+          `Collection '${input.collectionName}' already exists.`,
+        );
+      }
+      const fieldCount = input.includeDisplayName ? 2 : 1;
+      const [collectionIds, fieldIds] = await Promise.all([
+        schema.issueIds(actor, { kind: "collection", count: 1 }),
+        schema.issueIds(actor, { kind: "field", count: fieldCount }),
+      ]);
+      const collectionId = collectionIds[0];
+      const identifierFieldId = fieldIds[0];
+      if (collectionId === undefined || identifierFieldId === undefined) {
+        throw new ApplicationError("SCHEMA_ID_REQUEST_INVALID", 500, "Stable Schema IDs were not issued.");
+      }
+      const fields = [{
+        id: identifierFieldId,
+        name: input.identifierFieldName,
+        label: "Login ID",
+        type: "text" as const,
+        required: true,
+        unique: true,
+      }];
+      const displayNameFieldId = fieldIds[1];
+      if (input.includeDisplayName && displayNameFieldId !== undefined) {
+        fields.push({
+          id: displayNameFieldId,
+          name: "displayName",
+          label: "Display name",
+          type: "text",
+          required: false,
+          unique: false,
+        });
+      }
+      const profileCollection = {
+        id: collectionId,
+        name: input.collectionName,
+        label: input.collectionLabel,
+        fields,
+        auth: {
+          enabled: true as const,
+          realmKey: realm.key,
+          identifierFieldIds: [identifierFieldId],
+          acceptSystemIdentities: realm.authentication.acceptSystemIdentities,
+          provisioning: realm.authentication.provisioning,
+          defaultRoleIds: realm.authentication.defaultRoleIds,
+        },
+      } as unknown as CollectionDefinition;
+      workingDraft = await schema.saveDraft(actor, {
+        baseRevisionId: active?.revisionId ?? null,
+        expectedDraftVersion: draft?.draftVersion ?? null,
+        schema: { ...activeSchema, collections: [...activeSchema.collections, profileCollection] },
+      });
+    }
+
+    if (workingDraft === null) {
+      throw new ApplicationError("SCHEMA_DRAFT_NOT_FOUND", 404, "No Realm Profile Schema draft exists.");
+    }
+    const preview = await schema.preview(actor, { expectedDraftVersion: workingDraft.draftVersion });
+    if (preview.requiresDestructiveApproval) {
+      throw new ApplicationError(
+        "SCHEMA_QUICK_SETUP_DESTRUCTIVE",
+        409,
+        "Quick setup cannot apply destructive Schema changes.",
+      );
+    }
+    await applySchemaWithProjection(actor, {
+      expectedRevisionId: preview.baseRevisionId,
+      expectedDraftVersion: preview.draftVersion,
+      planId: preview.planId,
+      approveDestructive: false,
+    });
+    const activated = await identityRealmStore.getRealmById(realm.id);
+    if (activated === null || activated.status !== "active" || activated.profileCollectionId === undefined) {
+      throw new ApplicationError(
+        "IDENTITY_REALM_CONFIGURATION_INCOMPLETE",
+        503,
+        "The Realm did not activate after applying its Profile Schema.",
+      );
+    }
+    return activated;
+  };
   const existingOwner = await database.findOwnerIdentity();
   if (existingOwner !== null) {
     await ensureAuthorizationPolicy(existingOwner);
@@ -874,6 +1077,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         });
         return realm;
       },
+      createProfileSchema: createDefaultRealmProfileSchema,
       updateRealm: (actor, input) => identityRealms.updateRealm(actor, input),
       listMemberships: (actor, realmId) => identityRealms.listMemberships(actor, realmId),
       provisionMembership: (actor, input) => identityRealms.provisionMembership(actor, input),
@@ -1378,47 +1582,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     if (typeof approveDestructive !== "boolean") {
       throw badRequest("REQUEST_BODY_INVALID", "approveDestructive must be a boolean.");
     }
-    return database.withContentProjectionLock(async () => {
-      const policyActor = authorizationActor(actor.subjectId);
-      await assertSafeAuthorizationHierarchyTransition(policyActor);
-      const pendingDraft = await database.getSchemaDraft();
-      if (pendingDraft === null) {
-        throw new ApplicationError("SCHEMA_DRAFT_NOT_FOUND", 404, "No schema draft exists.");
-      }
-      await prepareContentRealmsForSchemaApply(pendingDraft.schema.collections);
-      const quarantined = await authorization.quarantineAllContentResources(policyActor);
-      let applied;
-      try {
-        applied = await schema.apply(actor, {
-          expectedRevisionId,
-          expectedDraftVersion,
-          planId,
-          approveDestructive,
-        });
-      } catch (error: unknown) {
-        await authorization.releaseContentResourceQuarantine(policyActor, quarantined);
-        throw error;
-      }
-      try {
-        await sites.reconcileCollections({
-          workspaceId: actor.workspaceId,
-          activeCollectionIds: applied.revision.schema.collections.map(({ id }) => String(id)),
-          actorIdentityId: actor.identityId ?? actor.subjectId,
-          actorSubjectId: actor.subjectId,
-        });
-        await syncAuthorizationResources(policyActor, applied.revision.schema.collections);
-        await reconcileAuthorizationHierarchy(
-          policyActor,
-          applied.revision.schema.collections,
-          "schema.apply",
-        );
-        await syncConfiguredContentRealmResources(applied.revision.schema.collections);
-      } catch (error: unknown) {
-        // Schema is already committed; keep the durable fence until startup/retry reconcile.
-        throw error;
-      }
-      return revisionDto(applied.revision);
-    });
+    return revisionDto(await applySchemaWithProjection(actor, {
+      expectedRevisionId,
+      expectedDraftVersion,
+      planId,
+      approveDestructive,
+    }));
   });
 
   app.get("/api/collections", async (request): Promise<CollectionListDto> => {
