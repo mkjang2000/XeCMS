@@ -16,17 +16,17 @@ export const DISPLAY_MODE_STORAGE_KEY = "xecms.admin.display-mode.v1";
 export const displayModes = [
   {
     id: "basic",
-    label: "Basic",
+    label: "간단",
     description: "콘텐츠와 기본 구조 관리에 필요한 항목만 표시합니다.",
   },
   {
     id: "standard",
-    label: "Standard",
+    label: "표준",
     description: "사용자·Realm·권한과 계층 설정까지 함께 표시합니다.",
   },
   {
     id: "advanced",
-    label: "Advanced",
+    label: "고급",
     description: "운영·감사·Worker·Plugin과 기술 정보를 모두 표시합니다.",
   },
 ] as const satisfies readonly {

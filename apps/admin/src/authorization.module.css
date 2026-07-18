@@ -1246,3 +1246,18 @@
     display: none;
   }
 }
+
+/* Guardrail notices shared by the simple-mode access screens. */
+.noticeReasons {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.noticeActions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}

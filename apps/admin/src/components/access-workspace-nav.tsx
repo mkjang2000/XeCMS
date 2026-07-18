@@ -3,6 +3,8 @@ import { displayModeAtLeast, useDisplayMode } from "../display-mode.js";
 import styles from "../authorization.module.css";
 
 const items = [
+  { path: "grades", label: "등급 관리", minimum: "basic" },
+  { path: "members", label: "멤버", minimum: "basic" },
   { path: "roles", label: "레벨과 역할", minimum: "standard" },
   { path: "bindings", label: "역할 배정", minimum: "standard" },
   { path: "simulator", label: "사용자 권한 확인", minimum: "advanced" },

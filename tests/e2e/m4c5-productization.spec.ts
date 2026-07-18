@@ -10,23 +10,25 @@ test("Admin 표시 모드는 권한을 바꾸지 않고 단계별 정보량과 �
   await expect(page).toHaveURL(/\/admin\/schema$/);
 
   const mode=page.getByRole("group",{name:"Admin 표시 모드"});
-  await expect(mode.getByRole("button",{name:"Basic"})).toHaveAttribute("aria-pressed","true");
+  await expect(mode.getByRole("button",{name:"간단"})).toHaveAttribute("aria-pressed","true");
   await expect(page.getByRole("link",{name:"사용자"})).toBeVisible();
+  await expect(page.getByRole("link",{name:"멤버 등급"})).toBeVisible();
+  await expect(page.getByRole("link",{name:"권한"})).toHaveCount(0);
   await expect(page.getByRole("link",{name:"Identity Realms"})).toHaveCount(0);
   await expect(page.getByRole("link",{name:"Plugins"})).toHaveCount(0);
 
-  await mode.getByRole("button",{name:"Standard"}).click();
+  await mode.getByRole("button",{name:"표준"}).click();
   await expect(page.getByRole("link",{name:"Identity Realms"})).toBeVisible();
   await expect(page.getByRole("link",{name:"권한"})).toBeVisible();
   await expect(page.getByRole("link",{name:"Plugins"})).toHaveCount(0);
 
-  await mode.getByRole("button",{name:"Advanced"}).click();
+  await mode.getByRole("button",{name:"고급"}).click();
   await expect(page.getByRole("link",{name:"Plugins"})).toBeVisible();
   await expect(page.getByRole("link",{name:"운영 및 감사"})).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("group",{name:"Admin 표시 모드"}).getByRole("button",{name:"Advanced"})).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByRole("group",{name:"Admin 표시 모드"}).getByRole("button",{name:"고급"})).toHaveAttribute("aria-pressed","true");
 
-  await page.getByRole("group",{name:"Admin 표시 모드"}).getByRole("button",{name:"Basic"}).click();
+  await page.getByRole("group",{name:"Admin 표시 모드"}).getByRole("button",{name:"간단"}).click();
   await page.goto("/admin/plugins");
   await expect(page.getByRole("heading",{name:"Plugins"})).toBeVisible();
 });

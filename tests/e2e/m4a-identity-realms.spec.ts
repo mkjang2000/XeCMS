@@ -138,15 +138,15 @@ test("M4-A Realm Admin과 Community 사용자 흐름을 Chromium에서 완주한
 
   await test.step("Realm UI에서 Subject에 Collection Scope 역할을 부여한다", async () => {
     await page.goto(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/bindings`);
-    await expect(page.getByRole("heading", { name: "주체와 역할 바인딩" })).toBeVisible();
-    await page.getByRole("button", { name: "새 바인딩" }).click();
-    const editor = page.getByRole("region", { name: "역할 바인딩 편집기" });
-    await editor.getByLabel("Subject").selectOption({ label: "browser-member@example.test · user" });
-    await editor.getByLabel("Role").selectOption({ label: "Editor" });
-    const scope = editor.getByRole("group", { name: "Resource Scope" });
+    await expect(page.getByRole("heading", { name: "역할 배정", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "역할 배정하기" }).click();
+    const editor = page.getByRole("region", { name: "역할 배정 편집기" });
+    await editor.getByLabel("사용자 또는 그룹").selectOption({ label: "browser-member@example.test · 사용자" });
+    await editor.getByLabel("부여할 역할").selectOption({ label: "Editor · Editors 레벨 40" });
+    const scope = editor.getByRole("group", { name: "적용할 영역" });
     await scope.getByRole("button", { name: "articles, Collection" }).click();
-    await scope.getByRole("radio", { name: /현재 및 모든 하위/ }).check();
-    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await scope.getByRole("radio", { name: /현재 \+ 모든 하위/ }).check();
+    await editor.getByRole("button", { name: "역할 배정", exact: true }).click();
     await expect(page.getByRole("row").filter({ hasText: "browser-member@example.test" })).toContainText("Editor");
   });
 

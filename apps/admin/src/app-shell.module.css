@@ -165,12 +165,17 @@
   z-index: 1;
   display: grid;
   min-height: 0;
-  gap: 0.32rem;
+  gap: 1rem;
   overflow-y: auto;
   scrollbar-width: thin;
 }
 
-.navLabel {
+.navGroup {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.navGroupLabel {
   padding: 0 0.65rem 0.42rem;
   color: #747f96;
   font-size: 0.65rem;

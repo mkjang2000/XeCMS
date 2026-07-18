@@ -43,21 +43,28 @@ export const navigationItems: readonly {
   readonly to: string;
   readonly icon: IconName;
   readonly label: string;
+  readonly group: "content" | "people" | "system";
   readonly minimum: DisplayMode;
   readonly access: readonly string[];
   readonly requireAll?: boolean;
 }[] = [
-  { to: "/admin/content", icon: "content", label: "콘텐츠", minimum: "basic", access: ["nav.content.list", "nav.content.schema"], requireAll: true },
-  { to: "/admin/schema", icon: "schema", label: "스키마", minimum: "basic", access: ["nav.schema"] },
-  { to: "/admin/media", icon: "media", label: "미디어", minimum: "basic", access: ["nav.media"] },
-  { to: "/admin/users", icon: "identity", label: "사용자", minimum: "basic", access: ["nav.users"] },
-  { to: "/admin/realms", icon: "identity", label: "Identity Realms", minimum: "standard", access: ["nav.realms"] },
-  { to: "/admin/access", icon: "shield", label: "권한", minimum: "standard", access: ["nav.access"] },
-  { to: "/admin/jobs", icon: "events", label: "이벤트 작업", minimum: "advanced", access: ["nav.jobs"] },
-  { to: "/admin/operations", icon: "shield", label: "운영 및 감사", minimum: "advanced", access: ["nav.operations.audit", "nav.operations.retention", "nav.operations.media"] },
-  { to: "/admin/plugins", icon: "schema", label: "Plugins", minimum: "advanced", access: ["nav.plugins"] },
-  { to: "/admin/settings", icon: "workspace", label: "설정 및 사이트", minimum: "basic", access: ["nav.settings.system", "nav.settings.sites"] },
+  { to: "/admin/content", icon: "content", label: "콘텐츠", group: "content", minimum: "basic", access: ["nav.content.list", "nav.content.schema"], requireAll: true },
+  { to: "/admin/media", icon: "media", label: "미디어", group: "content", minimum: "basic", access: ["nav.media"] },
+  { to: "/admin/schema", icon: "schema", label: "스키마", group: "content", minimum: "basic", access: ["nav.schema"] },
+  { to: "/admin/users", icon: "identity", label: "사용자", group: "people", minimum: "basic", access: ["nav.users"] },
+  { to: "/admin/access", icon: "shield", label: "권한", group: "people", minimum: "basic", access: ["nav.access"] },
+  { to: "/admin/realms", icon: "identity", label: "Identity Realms", group: "people", minimum: "standard", access: ["nav.realms"] },
+  { to: "/admin/jobs", icon: "events", label: "이벤트 작업", group: "system", minimum: "advanced", access: ["nav.jobs"] },
+  { to: "/admin/operations", icon: "shield", label: "운영 및 감사", group: "system", minimum: "advanced", access: ["nav.operations.audit", "nav.operations.retention", "nav.operations.media"] },
+  { to: "/admin/plugins", icon: "schema", label: "Plugins", group: "system", minimum: "advanced", access: ["nav.plugins"] },
+  { to: "/admin/settings", icon: "workspace", label: "설정 및 사이트", group: "system", minimum: "basic", access: ["nav.settings.system", "nav.settings.sites"] },
 ];
+
+const navigationGroups = [
+  { id: "content", label: "콘텐츠" },
+  { id: "people", label: "사람과 권한" },
+  { id: "system", label: "시스템" },
+] as const;
 
 export function visibleNavigationItems(
   mode: DisplayMode,
@@ -131,19 +138,27 @@ export function AppShell() {
           </span>
         </div>
         <nav className={styles.nav} aria-label="Admin 주 메뉴">
-          <span className={styles.navLabel}>Workspace</span>
           {accessProfile.isPending ? (
             <span className={styles.navMessage}>접근 가능한 메뉴 확인 중…</span>
           ) : accessProfile.isError ? (
             <span className={styles.navMessage}>메뉴 권한을 확인할 수 없습니다.</span>
           ) : visibleItems.length === 0 ? (
             <span className={styles.navMessage}>표시 가능한 관리 메뉴가 없습니다.</span>
-          ) : visibleItems.map((item) => (
-              <NavLink key={item.to} to={item.to}>
-                <Icon name={item.icon} size={18} />
-                <span>{item.label}</span>
-              </NavLink>
-            ))}
+          ) : navigationGroups.map((group) => {
+            const groupItems = visibleItems.filter((item) => item.group === group.id);
+            if (groupItems.length === 0) return null;
+            return (
+              <section className={styles.navGroup} key={group.id} aria-labelledby={`admin-nav-${group.id}`}>
+                <span className={styles.navGroupLabel} id={`admin-nav-${group.id}`}>{group.label}</span>
+                {groupItems.map((item) => (
+                  <NavLink key={item.to} to={item.to}>
+                    <Icon name={item.icon} size={18} />
+                    <span>{item.to === "/admin/access" && mode === "basic" ? "멤버 등급" : item.label}</span>
+                  </NavLink>
+                ))}
+              </section>
+            );
+          })}
         </nav>
         <div className={styles.sidebarFooter}>
           <div className={styles.account}>
