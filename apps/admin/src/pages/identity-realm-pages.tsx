@@ -23,7 +23,7 @@ import {
 } from "@xecms/ui";
 import { Link, useNavigate, useParams } from "react-router";
 
-import { LoadError, PageLoading } from "../components/async-state.js";
+import { LoadError, PageLoading, RealmAuthorizationError } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
 import { queryKeys } from "../queries.js";
@@ -117,7 +117,7 @@ export function IdentityRealmListPage() {
         />
       ) : null}
       {realms.isPending ? <PageLoading label="Identity Realm을 불러오는 중" /> : null}
-      {realms.isError ? <LoadError error={realms.error} onRetry={() => void realms.refetch()} /> : null}
+      {realms.isError ? <RealmAuthorizationError error={realms.error} context="list" onRetry={() => void realms.refetch()} /> : null}
       {realms.data?.items.length === 0 ? (
         <EmptyState
           title="등록된 Realm이 없습니다"
@@ -261,7 +261,7 @@ export function IdentityRealmDetailPage() {
 
   if (realmId === undefined) return <Page><Callout tone="error">Realm ID가 없습니다.</Callout></Page>;
   if (realm.isPending) return <Page><PageLoading label="Realm 상세 정보를 불러오는 중" /></Page>;
-  if (realm.isError) return <Page><LoadError error={realm.error} onRetry={() => void realm.refetch()} /></Page>;
+  if (realm.isError) return <Page><RealmAuthorizationError error={realm.error} context="detail" onRetry={() => void realm.refetch()} /></Page>;
 
   return (
     <Page>

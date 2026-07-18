@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   AdminApiProvider,
+  AdminApiError,
   type AdminApi,
   type IdentityRealm,
 } from "@xecms/admin";
@@ -10,7 +11,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { IdentityRealmDetailPage } from "./identity-realm-pages.js";
+import { IdentityRealmDetailPage, IdentityRealmListPage } from "./identity-realm-pages.js";
 
 function contentRealm(overrides: Partial<IdentityRealm> = {}): IdentityRealm {
   return {
@@ -136,5 +137,61 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
     expect(screen.queryByText(/한 단계가 더 필요합니다/)).toBeNull();
     expect(screen.queryByRole("button", { name: "스키마 빌더로 이동" })).toBeNull();
     expect(screen.queryByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeNull();
+  });
+});
+
+describe("Realm 권한 부트스트랩 안내 (목록·상세)", () => {
+  const denied = new AdminApiError({
+    status: 403,
+    code: "AUTHORIZATION_DENIED",
+    message: "Authorization denied: NO_PERMISSION.",
+    details: { decision: { reasonCode: "NO_PERMISSION" } },
+  });
+
+  it("guides the operator when the Realm list itself is denied", async () => {
+    const api = {
+      identityRealms: { list: vi.fn().mockRejectedValue(denied) },
+    } as unknown as AdminApi;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const router = createMemoryRouter([{
+      path: "/admin/realms",
+      element: <IdentityRealmListPage />,
+    }], { initialEntries: ["/admin/realms"] });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AdminApiProvider api={api}><RouterProvider router={router} /></AdminApiProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/Identity Realm을 관리할 권한이 없습니다/)).toBeTruthy();
+    // The raw English server message must not leak.
+    expect(screen.queryByText(/Authorization denied/)).toBeNull();
+  });
+
+  it("guides the operator back to the list when a Realm detail is denied", async () => {
+    const api = {
+      identityRealms: {
+        get: vi.fn().mockRejectedValue(denied),
+        list: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+        listGlobalIdentities: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+        listMemberships: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+        listFullAccess: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+      },
+    } as unknown as AdminApi;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const router = createMemoryRouter([{
+      path: "/admin/realms/:realmId",
+      element: <IdentityRealmDetailPage />,
+    }], { initialEntries: ["/admin/realms/rlm_testre"] });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AdminApiProvider api={api}><RouterProvider router={router} /></AdminApiProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/이 Realm을 관리할 권한이 없습니다/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Realm 목록으로" })).toBeTruthy();
   });
 });

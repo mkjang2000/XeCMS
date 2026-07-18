@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   AdminApiProvider,
+  AdminApiError,
   type AdminApi,
   type AuthorizationDecision,
   type AuthorizationPolicy,
@@ -253,5 +254,91 @@ describe("AccessRolesPage", () => {
     expect((screen.getByLabelText("역할 이름") as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText("authorization.manage")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "저장" })).toBeNull();
+  });
+});
+
+describe("Realm 권한 부트스트랩 데드락 안내", () => {
+  it("guides the operator to grant themselves administrator when getPolicy is denied", async () => {
+    const denied = new AdminApiError({
+      status: 403,
+      code: "AUTHORIZATION_DENIED",
+      message: "Authorization denied: NO_PERMISSION.",
+      details: { decision: { reasonCode: "NO_PERMISSION" } },
+    });
+    const getPolicy = vi.fn().mockRejectedValue(denied);
+    const api = {
+      identityRealms: {
+        authorizationFor: vi.fn().mockReturnValue({ getPolicy }),
+      },
+    } as unknown as AdminApi;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const router = createMemoryRouter([{
+      path: "/admin/realms/:realmId/access/roles",
+      element: <AccessRolesPage />,
+    }], { initialEntries: ["/admin/realms/rlm_testre/access/roles"] });
+
+    render(
+      <AdminApiProvider api={api}>
+        <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>
+      </AdminApiProvider>,
+    );
+
+    // The dead-end error is replaced by an actionable escape hatch.
+    expect(await screen.findByText(/관리할 권한이 아직 없습니다/)).toBeTruthy();
+    const goToRealm = screen.getByRole("button", { name: "Realm 상세로 이동해 관리자 지정" });
+    expect(goToRealm).toBeTruthy();
+  });
+
+  it("shows a plain error (not the deadlock guidance) for the System workspace", async () => {
+    const denied = new AdminApiError({
+      status: 403,
+      code: "AUTHORIZATION_DENIED",
+      message: "Authorization denied: NO_PERMISSION.",
+      details: { decision: { reasonCode: "NO_PERMISSION" } },
+    });
+    const api = {
+      authorization: { getPolicy: vi.fn().mockRejectedValue(denied) },
+    } as unknown as AdminApi;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const router = createMemoryRouter([{
+      path: "/admin/access/roles",
+      element: <AccessRolesPage />,
+    }], { initialEntries: ["/admin/access/roles"] });
+
+    render(
+      <AdminApiProvider api={api}>
+        <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>
+      </AdminApiProvider>,
+    );
+
+    expect(await screen.findByText(/요청을 완료하지 못했습니다/)).toBeTruthy();
+    expect(screen.queryByText(/관리할 권한이 아직 없습니다/)).toBeNull();
+  });
+
+  it("also treats REALM_MEMBERSHIP_REQUIRED (not yet a member) as the deadlock", async () => {
+    const denied = new AdminApiError({
+      status: 403,
+      code: "REALM_MEMBERSHIP_REQUIRED",
+      message: "An active Content Realm Membership is required to manage its authorization policy.",
+    });
+    const getPolicy = vi.fn().mockRejectedValue(denied);
+    const api = {
+      identityRealms: { authorizationFor: vi.fn().mockReturnValue({ getPolicy }) },
+    } as unknown as AdminApi;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const router = createMemoryRouter([{
+      path: "/admin/realms/:realmId/access/roles",
+      element: <AccessRolesPage />,
+    }], { initialEntries: ["/admin/realms/rlm_testre/access/roles"] });
+
+    render(
+      <AdminApiProvider api={api}>
+        <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>
+      </AdminApiProvider>,
+    );
+
+    // The raw English server message must not leak; the guidance takes over.
+    expect(await screen.findByText(/관리할 권한이 아직 없습니다/)).toBeTruthy();
+    expect(screen.queryByText(/An active Content Realm Membership/)).toBeNull();
   });
 });
