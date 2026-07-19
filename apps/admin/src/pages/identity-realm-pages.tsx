@@ -381,6 +381,7 @@ export function IdentityRealmDetailPage() {
               />
               <MembershipSection
                 realm={realm.data}
+                owner={owner}
                 memberships={memberships}
                 identities={identities}
                 systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
@@ -974,8 +975,9 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
   );
 }
 
-function MembershipSection({ realm, memberships, identities, systemRealmId }: {
+function MembershipSection({ realm, owner, memberships, identities, systemRealmId }: {
   readonly realm: IdentityRealm;
+  readonly owner: OwnerQueryResult;
   readonly memberships: QueryResult<RealmMembership>;
   readonly identities: QueryResult<GlobalIdentity>;
   readonly systemRealmId: string;
@@ -1123,10 +1125,15 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
             <tbody>
               {memberships.data.items.map((membership) => {
                 const identity = membership.identity ?? identityById.get(membership.globalIdentityId);
+                const isOwner = owner.data?.status === "healthy"
+                  && owner.data.owner?.membershipId === membership.membershipId;
+                const isAdministrator = membership.realmAdministrator === true;
                 return (
                   <tr key={membership.membershipId}>
                     <td>
                       <strong>{identity?.primaryIdentifier ?? "Identifier 미제공"}</strong>
+                      {isOwner ? <Badge tone="primary">소유자</Badge> : null}
+                      {isAdministrator ? <Badge tone="info">관리자</Badge> : null}
                       <DisplayModeGate minimum="advanced">
                         <IdValue label="Global Identity ID" value={membership.globalIdentityId} />
                         <IdValue label="Membership ID" value={membership.membershipId} />
@@ -1138,10 +1145,12 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
                     <td>{provisionedByLabel(membership.provisionedBy)}<span className={styles.secondaryLine}>Revision {membership.revision}</span></td>
                     <td>
                       <div className={styles.rowActions}>
-                        {membership.status === "active" && realm.kind === "content" ? (
+                        {membership.status === "active" && realm.kind === "content" && !isAdministrator && !isOwner ? (
                           <Button size="small" variant="secondary" isDisabled={realm.status !== "active" || promote.isPending} onPress={() => { setPromoting(membership); setPromoteReauthPassword(""); }}>관리자로 지정</Button>
                         ) : null}
-                        {membership.status === "active" ? (
+                        {isOwner ? (
+                          <span className={styles.compactHint}>소유자는 위 소유자 교체·복구로 관리</span>
+                        ) : membership.status === "active" ? (
                           <Button size="small" variant="danger" isDisabled={realm.status !== "active" || changeStatus.isPending} onPress={() => changeStatus.mutate({ membership, status: "suspended" })}>정지</Button>
                         ) : membership.status === "suspended" ? (
                           <Button size="small" variant="secondary" isDisabled={realm.status !== "active" || changeStatus.isPending} onPress={() => changeStatus.mutate({ membership, status: "active" })}>재활성화</Button>

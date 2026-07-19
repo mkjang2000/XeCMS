@@ -10,6 +10,7 @@ import { applyAuditRetentionMigration, AUDIT_RETENTION_MIGRATION_ID } from "./au
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_NAME, SYSTEM_REALM_ID } from "./migrate.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
+import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
 import { PostgresRetentionStore } from "./postgres-retention.js";
 import { PostgresUnifiedAuditStore } from "./postgres-unified-audit.js";
 import { PostgresDatabase } from "./postgres.js";
@@ -33,6 +34,7 @@ describe.runIf(RUN)("M4-C3 unified Audit and retention PostgreSQL gates", () => 
     new PostgresAuthorizationStore(database.pool, schema),
     { now: () => now, newAuditId: () => `audit_${randomUUID()}`,
       newId: (prefix) => `${prefix}_${randomUUID()}` },
+    new PostgresRealmCollectionEntitlementStore(database.pool, schema),
   );
   const q = (name: string) => qualifiedName(schema, name);
 

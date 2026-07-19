@@ -7,6 +7,7 @@ import { qualifiedName,quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID,DEFAULT_WORKSPACE_NAME,SYSTEM_REALM_ID } from "./migrate.js";
 import { applyPluginPlatformMigration,PLUGIN_PLATFORM_MIGRATION_ID } from "./plugin-migration.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
+import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
 import { PostgresPluginStore } from "./postgres-plugins.js";
 import { PostgresDatabase } from "./postgres.js";
 
@@ -17,7 +18,7 @@ describe.runIf(RUN)("M4-C4 Plugin PostgreSQL lifecycle",()=>{
   const ownerId="usr_plugin_owner",now="2026-07-15T16:00:00.000Z";let sequence=0;
   const service=new PluginService(store,new PluginCatalog([examplePlugin]),{now:()=>now,newPlanId:()=>`plugin_plan_${++sequence}`,loadedPluginIds:new Set()});
   const q=(name:string)=>qualifiedName(schema,name);
-  beforeAll(async()=>{await database.migrate();await database.createInitialOwner({id:ownerId,username:"plugin.owner",passwordHash:"hash",now});const authorization=new AuthorizationApplicationService(new PostgresAuthorizationStore(database.pool,schema),{now:()=>now,newAuditId:()=>`audit_${randomUUID()}`,newId:prefix=>`${prefix}_${randomUUID()}`});await authorization.initialize({realmId:SYSTEM_REALM_ID,realmName:"System Realm",rootResourceId:SYSTEM_WORKSPACE_RESOURCE_ID,rootResourceName:DEFAULT_WORKSPACE_NAME,ownerSubjectId:ownerId,ownerIdentityId:ownerId,ownerSubjectName:"plugin.owner"})});
+  beforeAll(async()=>{await database.migrate();await database.createInitialOwner({id:ownerId,username:"plugin.owner",passwordHash:"hash",now});const authorization=new AuthorizationApplicationService(new PostgresAuthorizationStore(database.pool,schema),{now:()=>now,newAuditId:()=>`audit_${randomUUID()}`,newId:prefix=>`${prefix}_${randomUUID()}`},new PostgresRealmCollectionEntitlementStore(database.pool,schema));await authorization.initialize({realmId:SYSTEM_REALM_ID,realmName:"System Realm",rootResourceId:SYSTEM_WORKSPACE_RESOURCE_ID,rootResourceName:DEFAULT_WORKSPACE_NAME,ownerSubjectId:ownerId,ownerIdentityId:ownerId,ownerSubjectName:"plugin.owner"})});
   afterAll(async()=>{await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`);await database.close()});
   it("installs migration 0018 idempotently",async()=>{expect((await database.pool.query(`SELECT 1 FROM ${q("_xecms_core_migrations")} WHERE id=$1`,[PLUGIN_PLATFORM_MIGRATION_ID])).rowCount).toBe(1);const client=await database.pool.connect();try{await client.query("BEGIN");await applyPluginPlatformMigration(client,schema);await client.query("COMMIT")}finally{client.release()}});
   it("installs, enables, reconciles restart, configures, disables and exports before uninstall",async()=>{

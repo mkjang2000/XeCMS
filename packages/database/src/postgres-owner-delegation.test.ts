@@ -13,6 +13,7 @@ import {
 } from "./owner-delegation-migration.js";
 import { DEFAULT_WORKSPACE_NAME, SYSTEM_REALM_ID } from "./migrate.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
+import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
 import { PostgresDatabase } from "./postgres.js";
 
 const RUN = process.env["XECMS_RUN_POSTGRES_TESTS"] === "true";
@@ -46,6 +47,7 @@ describe.runIf(RUN)("Owner delegation reconciliation", () => {
         newAuditId: () => `audit_${randomUUID()}`,
         newId: (prefix) => `${prefix}_${randomUUID()}`,
       },
+      new PostgresRealmCollectionEntitlementStore(database.pool, schema),
     );
     await authorization.initialize({
       realmId: SYSTEM_REALM_ID,

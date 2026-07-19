@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_NAME, SYSTEM_REALM_ID } from "./migrate.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
+import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
 import { PostgresContentHierarchyStore } from "./postgres-hierarchy.js";
 import { PostgresPluginStore } from "./postgres-plugins.js";
 import { PostgresUnifiedAuditStore } from "./postgres-unified-audit.js";
@@ -32,7 +33,7 @@ describe.runIf(RUN)("P2 scalability characterization", () => {
     await new AuthorizationApplicationService(new PostgresAuthorizationStore(database.pool, schema), {
       now: () => now, newAuditId: () => `audit_${randomUUID()}`,
       newId: (prefix) => `${prefix}_${randomUUID()}`,
-    }).initialize({
+    }, new PostgresRealmCollectionEntitlementStore(database.pool, schema)).initialize({
       realmId: SYSTEM_REALM_ID, realmName: "System Realm",
       rootResourceId: SYSTEM_WORKSPACE_RESOURCE_ID, rootResourceName: DEFAULT_WORKSPACE_NAME,
       ownerSubjectId: ownerId, ownerIdentityId: ownerId, ownerSubjectName: "p2.owner",

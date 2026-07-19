@@ -189,6 +189,34 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
         // cached policyRevision used by the Owner-assign CAS) must be refetched.
         await waitFor(() => expect(getOwner).toHaveBeenCalledTimes(2));
     });
+    it("marks administrator/owner members with a badge and hides the promote button", async () => {
+        const adminMember = {
+            membershipId: "mem_admin", globalIdentityId: "gid_admin", realmId: "rlm_testre",
+            subjectId: "subject:user:gid_admin", status: "active", provisionedBy: "account-link", revision: 2,
+            createdAt: "2026-01-01T00:00:00.000Z", realmAdministrator: true,
+            identity: { globalIdentityId: "gid_admin", kind: "human", primaryIdentifier: "admin@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
+        };
+        const ownerMember = {
+            membershipId: "mem_owner", globalIdentityId: "gid_owner", realmId: "rlm_testre",
+            subjectId: "subject:user:gid_owner", status: "active", provisionedBy: "account-link", revision: 2,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            identity: { globalIdentityId: "gid_owner", kind: "human", primaryIdentifier: "owner@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
+        };
+        const plainMember = {
+            membershipId: "mem_plain", globalIdentityId: "gid_plain", realmId: "rlm_testre",
+            subjectId: "subject:user:gid_plain", status: "active", provisionedBy: "signup", revision: 2,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            identity: { globalIdentityId: "gid_plain", kind: "human", primaryIdentifier: "plain@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
+        };
+        const { user } = renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }), [ownerMember, adminMember, plainMember], "basic", { status: "healthy", policyRevision: 3, owner: { globalIdentityId: "gid_owner", membershipId: "mem_owner", subjectId: "subject:user:gid_owner", primaryIdentifier: "owner@example.com", identityActive: true, membershipStatus: "active" } });
+        await user.click(await screen.findByRole("tab", { name: "사용자" }));
+        await screen.findByText("admin@example.com");
+        // Role badges are shown for owner and administrator rows.
+        expect(screen.getByText("소유자")).toBeTruthy();
+        expect(screen.getByText("관리자")).toBeTruthy();
+        // The promote button appears only for the plain member — one, not three.
+        expect(screen.getAllByRole("button", { name: "관리자로 지정" })).toHaveLength(1);
+    });
     it("assigns an active System operator as the first human Realm Owner", async () => {
         const membership = {
             membershipId: "mem_owner_candidate",

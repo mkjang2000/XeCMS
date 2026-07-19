@@ -20,6 +20,7 @@ import {
   type AuthorizationStore,
 } from "./authorization.js";
 import type { GlobalIdentityRecord, IdentityRealmRecord } from "./identity-realms.js";
+import { InMemoryRealmCollectionEntitlementStore } from "./realm-collection-entitlements.js";
 import { ApplicationError } from "./errors.js";
 import {
   ContentRealmAuthorizationProvisioner,
@@ -165,7 +166,7 @@ async function setup(): Promise<{
   readonly provisioner: ContentRealmAuthorizationProvisioner;
 }> {
   const store = new MemoryMultiRealmAuthorizationStore();
-  const authorization = new AuthorizationApplicationService(store, runtime());
+  const authorization = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
   return {
     store,
     authorization,

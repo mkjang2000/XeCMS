@@ -95,6 +95,7 @@ import {
   LocalMediaStorage,
   PostgresDatabase,
   PostgresAuthorizationStore,
+  PostgresRealmCollectionEntitlementStore,
   PostgresAdminAppStore,
   PostgresContentHierarchyStore,
   PostgresIdentityRealmStore,
@@ -216,6 +217,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   for(const module of loadedPluginModules){const health=await module.server?.health?.();if(health?.status==="degraded")throw new ApplicationError("PLUGIN_STARTUP_HEALTH_FAILED",503,`Plugin '${module.manifest.id}' startup health check failed: ${health.detail??"degraded"}`)}
   await plugins.reconcileRuntime(DEFAULT_WORKSPACE_ID);
   const authorizationStore = new PostgresAuthorizationStore(database.pool, database.schema);
+  const entitlementStore = new PostgresRealmCollectionEntitlementStore(database.pool, database.schema);
   const adminApps = new AdminAppApplicationService(
     new PostgresAdminAppStore(database.pool, database.schema),
     new CatalogAdminAppDependencyResolver({
@@ -288,7 +290,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     now: () => new Date().toISOString(),
     newAuditId: () => `audit_${randomUUID()}`,
     newId: (prefix) => `${prefix}_${randomUUID()}`,
-  });
+  }, entitlementStore);
   const realmAuthorization = new ContentRealmAuthorizationProvisioner(authorization);
   const hierarchyStore = new PostgresContentHierarchyStore(database.pool, database.schema);
   const ensureAuthorizationPolicy = async (owner: {
@@ -609,6 +611,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       // draft first closes the schema-activation/resource-projection window.
       if (realm.status === "provisioning") {
         await realmAuthorization.syncCollectionResources({ realm, collections: projectedCollections });
+        await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
       }
     }
   };
@@ -628,6 +631,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         );
       }
       await realmAuthorization.syncCollectionResources({ realm, collections: projectedCollections });
+      // Newly projected collections must gain access-preserving ceilings so the
+      // realm's existing owner/admin bindings keep reaching them under enforcement.
+      await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
     }
   };
   const applySchemaWithProjection = async (
@@ -958,6 +964,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           realm,
           collections: collections.map(({ id, name }) => ({ id: String(id), name })),
         });
+        // Keep entitlement ceilings in step with the projected collections at startup.
+        await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
       }
     });
   }
@@ -1344,6 +1352,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
             collections: collections.map(({ id, name }) => ({ id: String(id), name })),
           });
         });
+        // New realm joins the entitlement regime: enforced, with access-preserving
+        // ceilings derived from its current policy (consistent with migrated realms).
+        await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
         return realm;
       },
       createProfileSchema: createDefaultRealmProfileSchema,
@@ -1422,6 +1433,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           realm,
           subjectId: membership.subjectId,
         });
+        // The new administrator's root binding reaches every collection; ensure
+        // ceilings exist so the appointment is not silently blocked by the gate.
+        await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
         return membership;
       },
       revokeRealmAdministrator: async (actor, input) => {

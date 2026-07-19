@@ -24,6 +24,7 @@ import {
   type AuthorizationStore,
   type NewAuthorizationSubjectRecord,
 } from "./authorization.js";
+import { InMemoryRealmCollectionEntitlementStore } from "./realm-collection-entitlements.js";
 
 const NOW = "2026-07-15T12:00:00.000Z";
 const OWNER_ID = "subject:owner";
@@ -221,7 +222,7 @@ async function setup(): Promise<{
   readonly service: AuthorizationApplicationService;
 }> {
   const store = new MemoryAuthorizationStore();
-  const service = new AuthorizationApplicationService(store, runtime());
+  const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
   await service.initialize({
     realmId: REALM_ID,
     realmName: "System",
@@ -343,7 +344,7 @@ describe("AuthorizationApplicationService", () => {
       .toBe("authorization:rlm_community:resource:document:shared");
 
     const store = new MultiRealmMemoryAuthorizationStore();
-    const service = new AuthorizationApplicationService(store, runtime());
+    const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     const community = await initializeRealm(service, "rlm_community", "subject:community-owner");
     const commerce = await initializeRealm(service, "rlm_commerce", "subject:commerce-owner");
 
@@ -440,7 +441,7 @@ describe("AuthorizationApplicationService", () => {
 
   it("keeps process-local projection quarantine isolated by realm even for equal resource IDs", async () => {
     const store = new MultiRealmMemoryAuthorizationStore();
-    const service = new AuthorizationApplicationService(store, runtime());
+    const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     const sharedResourceId = "resource:shared-root";
     const community = await initializeRealm(
       service,
@@ -468,7 +469,7 @@ describe("AuthorizationApplicationService", () => {
 
   it("evaluates a self access profile against one revision and marks hierarchy checks unsupported", async () => {
     const store = new MemoryAuthorizationStore();
-    const service = new AuthorizationApplicationService(store, runtime());
+    const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     await service.initialize({
       realmId: REALM_ID,
       realmName: "System",
@@ -554,7 +555,7 @@ describe("AuthorizationApplicationService", () => {
 
   it("rejects invalid access profile batch boundaries", async () => {
     const store = new MemoryAuthorizationStore();
-    const service = new AuthorizationApplicationService(store, runtime());
+    const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     await service.initialize({
       realmId: REALM_ID,
       realmName: "System",
@@ -601,7 +602,7 @@ describe("AuthorizationApplicationService", () => {
 
   it("keeps Realm Full Access out of every content and field authorization path", async () => {
     const store = new MultiRealmMemoryAuthorizationStore();
-    const service = new AuthorizationApplicationService(store, runtime());
+    const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     const owner = await initializeRealm(service, "rlm_full_data_plane", "subject:data-owner");
     await service.syncCoreResources(owner, {
       expectedRevision: realmState(store, owner.realmId).revision,
@@ -636,7 +637,7 @@ describe("AuthorizationApplicationService", () => {
 
   it("supports audited CMS read-only oversight and management-only Full Access without a Realm Subject", async () => {
     const store = new MultiRealmMemoryAuthorizationStore();
-    const service = new AuthorizationApplicationService(store, runtime());
+    const service = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     const owner = await initializeRealm(service, "rlm_admin_control_plane", "subject:policy-owner");
     const readonly = {
       accessMode: "cms-owner-readonly" as const,
@@ -807,7 +808,7 @@ describe("AuthorizationApplicationService", () => {
       collectionId: "posts",
       collectionName: "Posts",
     });
-    const freshService = new AuthorizationApplicationService(store, runtime());
+    const freshService = new AuthorizationApplicationService(store, runtime(), new InMemoryRealmCollectionEntitlementStore());
     store.loadCount = 0;
     const request = { action: "content.read", resourceId: collectionResourceId("posts") } as const;
     const publicActor = { subjectId: SYSTEM_PUBLIC_SUBJECT_ID, realmId: REALM_ID };
@@ -1237,5 +1238,142 @@ describe("AuthorizationApplicationService", () => {
     })).rejects.toMatchObject({ code: "AUTHORITY_LEVEL_RANK_NOT_LOWER" });
     expect(current(store).revision).toBe(revision);
     expect(store.audits.at(-1)?.revision).toBe(revision);
+  });
+});
+
+describe("Collection entitlement gate (enforced)", () => {
+  const WORKSPACE = "wrk_default";
+  const NOW_ISO = NOW;
+
+  async function gateSetup(): Promise<{
+    readonly service: AuthorizationApplicationService;
+    readonly entitlements: InMemoryRealmCollectionEntitlementStore;
+    readonly owner: AuthorizationActor;
+    readonly posts: string;
+  }> {
+    const store = new MultiRealmMemoryAuthorizationStore();
+    const entitlements = new InMemoryRealmCollectionEntitlementStore();
+    const service = new AuthorizationApplicationService(store, runtime(), entitlements);
+    // Content realm whose owner has full content access to a "posts" collection.
+    const owner = await initializeRealm(service, "rlm_community", "subject:community-owner");
+    await service.syncCoreResources(owner, {
+      expectedRevision: realmState(store, owner.realmId).revision,
+      collections: [{ id: "posts", name: "Posts" }],
+    });
+    const posts = realmCollectionResourceId(owner.realmId, "posts");
+    return { service, entitlements, owner, posts };
+  }
+
+  it("skips the gate while enforcement is disabled (default)", async () => {
+    const { service, owner, posts } = await gateSetup();
+    // No enforcement row → gate skipped → realm policy stands.
+    await expect(service.authorize(owner, { action: "content.read", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: true });
+  });
+
+  it("denies with DENY_ENTITLEMENT_GATE when the ceiling is absent under enforcement", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced");
+    // Enforced but no entitlement for this collection = access ceiling absent.
+    await expect(service.authorize(owner, { action: "content.read", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: false, reasonCode: "DENY_ENTITLEMENT_GATE" });
+  });
+
+  it("allows only the actions the ceiling grants", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced");
+    entitlements.seed({
+      workspaceId: WORKSPACE, realmId: owner.realmId, collectionId: "posts",
+      actions: ["read"], revision: 1, updatedAt: NOW_ISO, updatedBy: "cms",
+    });
+    await expect(service.authorize(owner, { action: "content.read", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: true });
+    await expect(service.authorize(owner, { action: "content.update", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: false, reasonCode: "DENY_ENTITLEMENT_GATE" });
+  });
+
+  it("intersects readable fields with the ceiling", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced");
+    entitlements.seed({
+      workspaceId: WORKSPACE, realmId: owner.realmId, collectionId: "posts",
+      actions: ["read"], readableFields: ["title"], revision: 1, updatedAt: NOW_ISO, updatedBy: "cms",
+    });
+    const filtered = await service.filterReadableData(owner, {
+      resourceId: posts, data: { title: "Visible", secret: "Hidden" },
+    });
+    expect(filtered).toEqual({ title: "Visible" });
+  });
+
+  it("rejects writes to fields outside the ceiling", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced");
+    entitlements.seed({
+      workspaceId: WORKSPACE, realmId: owner.realmId, collectionId: "posts",
+      actions: ["update"], readableFields: ["title"], writableFields: ["title"], revision: 1, updatedAt: NOW_ISO, updatedBy: "cms",
+    });
+    await expect(service.assertWritableData(owner, { resourceId: posts, data: { title: "ok" } }))
+      .resolves.toBeUndefined();
+    await expect(service.assertWritableData(owner, { resourceId: posts, data: { secret: "no" } }))
+      .rejects.toMatchObject({ code: "FIELD_WRITE_FORBIDDEN", status: 403 });
+  });
+
+  it("enforces ownerOnly and status conditions", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced");
+    entitlements.seed({
+      workspaceId: WORKSPACE, realmId: owner.realmId, collectionId: "posts",
+      actions: ["read"], constraint: { ownerOnly: true, statuses: ["published"] },
+      revision: 1, updatedAt: NOW_ISO, updatedBy: "cms",
+    });
+    // Own + published → allowed.
+    await expect(service.authorize(owner, {
+      action: "content.read", resourceId: posts,
+      context: { ownerSubjectId: owner.subjectId, status: "published" },
+    })).resolves.toMatchObject({ allowed: true });
+    // Someone else's document → denied.
+    await expect(service.authorize(owner, {
+      action: "content.read", resourceId: posts,
+      context: { ownerSubjectId: "subject:other", status: "published" },
+    })).resolves.toMatchObject({ allowed: false, reasonCode: "DENY_ENTITLEMENT_GATE" });
+    // Wrong status → denied.
+    await expect(service.authorize(owner, {
+      action: "content.read", resourceId: posts,
+      context: { ownerSubjectId: owner.subjectId, status: "draft" },
+    })).resolves.toMatchObject({ allowed: false, reasonCode: "DENY_ENTITLEMENT_GATE" });
+  });
+
+  it("applies ownerOnly to filterReadableData (basis for list post-filtering)", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced");
+    entitlements.seed({
+      workspaceId: WORKSPACE, realmId: owner.realmId, collectionId: "posts",
+      actions: ["read"], constraint: { ownerOnly: true }, revision: 1, updatedAt: NOW_ISO, updatedBy: "cms",
+    });
+    // Own document → data returned.
+    await expect(service.filterReadableData(owner, {
+      resourceId: posts, data: { title: "Mine" }, context: { ownerSubjectId: owner.subjectId },
+    })).resolves.toEqual({ title: "Mine" });
+    // Someone else's document → gate denies; list post-filter treats this as "not visible".
+    await expect(service.filterReadableData(owner, {
+      resourceId: posts, data: { title: "Theirs" }, context: { ownerSubjectId: "subject:other" },
+    })).rejects.toMatchObject({ code: "AUTHORIZATION_DENIED", status: 403 });
+  });
+
+  it("does not gate the System realm", async () => {
+    const store = new MemoryAuthorizationStore();
+    const entitlements = new InMemoryRealmCollectionEntitlementStore();
+    const service = new AuthorizationApplicationService(store, runtime(), entitlements);
+    await service.initialize({
+      realmId: REALM_ID, realmName: "System", rootResourceId: SYSTEM_WORKSPACE_RESOURCE_ID,
+      rootResourceName: "Workspace", ownerSubjectId: OWNER_ID, ownerSubjectName: "Owner",
+    });
+    await service.syncCoreResources(OWNER, {
+      expectedRevision: current(store).revision, collections: [{ id: "posts", name: "Posts" }],
+    });
+    // Even if we "enforce" the system realm, the gate skips it.
+    entitlements.setEnforcement(REALM_ID, WORKSPACE, "enforced");
+    await expect(service.authorize(OWNER, { action: "content.read", resourceId: collectionResourceId("posts") }))
+      .resolves.toMatchObject({ allowed: true });
   });
 });

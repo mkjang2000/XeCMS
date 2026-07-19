@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_NAME, SYSTEM_REALM_ID } from "./migrate.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
+import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
 import { PostgresIdentityAdministrationStore } from "./postgres-identity-administration.js";
 import { PostgresIdentityRealmStore } from "./postgres-identity-realms.js";
 import { PostgresDatabase } from "./postgres.js";
@@ -46,7 +47,7 @@ describe.runIf(RUN)("M4-C1 Identity administration PostgreSQL transaction", () =
     now: () => "2026-07-15T11:00:00.000Z",
     newAuditId: () => `audit_${randomUUID()}`,
     newId: (prefix) => `${prefix}_${randomUUID()}`,
-  });
+  }, new PostgresRealmCollectionEntitlementStore(database.pool, schema));
   const ownerId = "usr_c1_owner";
   const targetId = "usr_c1_target";
   const q = (name: string) => qualifiedName(schema, name);

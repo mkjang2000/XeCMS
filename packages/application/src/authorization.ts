@@ -31,6 +31,17 @@ import {
   type SubjectType,
 } from "@xecms/authorization";
 import { ApplicationError } from "./errors.js";
+import type {
+  RealmCollectionEntitlement,
+  RealmCollectionEntitlementStore,
+} from "./realm-collection-entitlements.js";
+import {
+  applyActionGate,
+  entitlementAllowsReadField,
+  entitlementAllowsWriteField,
+  gateActionFor,
+  resolveEntitlementCollectionId,
+} from "./entitlement-gate.js";
 
 /** Plain records form the stable HTTP/UI and normalized-storage boundary. */
 export interface AuthorizationRealmRecord {
@@ -323,7 +334,7 @@ export interface AuthorizationGrantRecord {
 export interface AuthorizationDecisionRecord {
   readonly allowed: boolean;
   readonly action: string;
-  readonly reasonCode: AccessDecision["reasonCode"] | "ALLOW_REALM_FULL_ACCESS";
+  readonly reasonCode: AccessDecision["reasonCode"] | "ALLOW_REALM_FULL_ACCESS" | "DENY_ENTITLEMENT_GATE";
   readonly matchedGrants: readonly AuthorizationGrantRecord[];
   readonly evaluatedScope?: {
     readonly resourceId: string;
@@ -939,10 +950,22 @@ export class AuthorizationApplicationService {
    * identity boundary by themselves.
    */
   readonly #quarantinedResources = new Set<string>();
+  /**
+   * Per-realm entitlement cache, parallel to #cache. Invalidated by the realm's
+   * entitlement version (a lightweight integer, like getPolicyRevision). `null`
+   * entry means the gate is skipped for this realm (system realm or disabled).
+   */
+  readonly #entitlementCache = new Map<
+    string,
+    { readonly version: number; readonly byCollectionId: Map<string, RealmCollectionEntitlement> } | null
+  >();
 
   public constructor(
     private readonly store: AuthorizationStore,
     private readonly runtime: AuthorizationRuntime,
+    // Required: the collection-entitlement ceiling is read on the judgement path.
+    // A missing store is a wiring error, never a reason to skip the gate.
+    private readonly entitlementStore: RealmCollectionEntitlementStore,
   ) {}
 
   public async initialize(
@@ -1374,8 +1397,13 @@ export class AuthorizationApplicationService {
       now,
       ...toKernelContextProperty(input.context),
     });
-    const fields = Object.keys(input.data);
     this.requireDecision(enclosingDecision);
+    // Entitlement ceiling: action gate (deny → treat as denied), then field intersection.
+    const fieldGate = await this.fieldEntitlementGate(actor, entry, { ...input, action });
+    if (fieldGate === "deny-action") {
+      authorizationDenied({ allowed: false, action, reasonCode: "DENY_ENTITLEMENT_GATE", matchedGrants: [] });
+    }
+    const ceilingEntitlement = fieldGate === "skip" ? undefined : fieldGate.entitlement;
     const output: [string, unknown][] = [];
     for (const [field, value] of Object.entries(input.data)) {
       validateFieldName(field);
@@ -1388,7 +1416,10 @@ export class AuthorizationApplicationService {
         now,
         ...toKernelContextProperty(input.context),
       });
-      if (decision.allowed) {
+      // Field passes only if realm policy allows it AND the ceiling allows it.
+      const ceilingAllows = fieldGate === "skip"
+        || (ceilingEntitlement !== undefined && entitlementAllowsReadField(ceilingEntitlement, field));
+      if (decision.allowed && ceilingAllows) {
         output.push([field, value]);
       }
     }
@@ -1418,9 +1449,15 @@ export class AuthorizationApplicationService {
     });
     const fields = Object.keys(input.data);
     this.requireDecision(enclosingDecision);
+    // Entitlement ceiling: action gate (deny → forbidden), then field intersection.
+    const fieldGate = await this.fieldEntitlementGate(actor, entry, { ...input, action });
+    if (fieldGate === "deny-action") {
+      authorizationDenied({ allowed: false, action, reasonCode: "DENY_ENTITLEMENT_GATE", matchedGrants: [] });
+    }
+    const ceilingEntitlement = fieldGate === "skip" ? undefined : fieldGate.entitlement;
     const decisions = fields.map((field) => {
       validateFieldName(field);
-      return plainFieldDecision(evaluateFieldAccess(entry.snapshot, {
+      const decision = plainFieldDecision(evaluateFieldAccess(entry.snapshot, {
         actorSubjectId: asSubjectId(actor.subjectId),
         resourceId: asResourceId(input.resourceId),
         field,
@@ -1429,6 +1466,10 @@ export class AuthorizationApplicationService {
         now,
         ...toKernelContextProperty(input.context),
       }));
+      // A field is writable only if realm policy AND the ceiling permit it.
+      const ceilingAllows = fieldGate === "skip"
+        || (ceilingEntitlement !== undefined && entitlementAllowsWriteField(ceilingEntitlement, field));
+      return ceilingAllows ? decision : { ...decision, allowed: false };
     });
     const denied = decisions.filter(({ allowed }) => !allowed);
     if (denied.length > 0) {
@@ -2639,6 +2680,119 @@ export class AuthorizationApplicationService {
     return entry;
   }
 
+  /**
+   * Loads the entitlement ceiling for a realm, or `null` when the gate does not
+   * apply (system realm, or enforcement disabled). Fails closed: an `enforced`
+   * realm missing its enforcement/entitlement data throws rather than skipping.
+   * Cache is keyed by the realm's entitlement version (lightweight integer),
+   * independent of the policy #cache.
+   */
+  private async loadEntitlements(
+    realmId: string,
+  ): Promise<{ readonly byCollectionId: Map<string, RealmCollectionEntitlement> } | null> {
+    // The ceiling only applies to Content Realms.
+    if (realmId === SYSTEM_AUTHORIZATION_REALM_ID) return null;
+    const enforcement = await this.entitlementStore.getEnforcement(realmId);
+    // No enforcement row = feature not activated for this realm yet → skip.
+    if (enforcement === null || enforcement.state === "disabled") {
+      this.#entitlementCache.set(realmId, null);
+      return null;
+    }
+    // enforcement.state === "enforced": the ceiling is authoritative from here on.
+    const cached = this.#entitlementCache.get(realmId);
+    if (cached !== undefined && cached !== null && cached.version === enforcement.version) {
+      return cached;
+    }
+    const entitlements = await this.entitlementStore.listByRealm(realmId);
+    const byCollectionId = new Map(entitlements.map((e) => [e.collectionId, e]));
+    const entry = { version: enforcement.version, byCollectionId };
+    this.#entitlementCache.set(realmId, entry);
+    return entry;
+  }
+
+  /**
+   * Resolves the entitlement governing a content resource for an enforced realm.
+   * Returns `"skip"` (gate not applicable) or the entitlement (possibly undefined
+   * = ceiling absent = deny). Throws fail-closed when a content resource cannot be
+   * mapped to a collection.
+   */
+  private resolveEntitlementForResource(
+    ceiling: { readonly byCollectionId: Map<string, RealmCollectionEntitlement> },
+    snapshot: PolicySnapshot,
+    realmId: string,
+    resourceId: string,
+  ): { readonly kind: "skip" } | { readonly kind: "gate"; readonly entitlement: RealmCollectionEntitlement | undefined } {
+    const resolution = resolveEntitlementCollectionId(snapshot, realmId, resourceId);
+    if (resolution.kind === "skip") return { kind: "skip" };
+    if (resolution.kind === "unresolved-content") {
+      // A content resource we cannot tie to a collection: fail closed.
+      throw new ApplicationError(
+        "ENTITLEMENT_RESOURCE_UNRESOLVED",
+        403,
+        "The content resource could not be mapped to a collection for entitlement enforcement.",
+      );
+    }
+    return { kind: "gate", entitlement: ceiling.byCollectionId.get(resolution.collectionId) };
+  }
+
+  /**
+   * Narrows a permission decision by the collection-entitlement ceiling. Only an
+   * allowed decision is narrowed; a denied one is returned unchanged.
+   */
+  private async gateDecision(
+    actor: AuthorizationActor,
+    entry: PolicyCacheEntry,
+    input: { readonly action: string; readonly resourceId: string; readonly context?: AuthorizationEvaluationContext },
+    decision: AuthorizationDecisionRecord,
+  ): Promise<AuthorizationDecisionRecord> {
+    if (!decision.allowed) return decision;
+    const gateAction = gateActionFor(input.action);
+    if (gateAction === undefined) return decision; // non-content action: not gated.
+    const ceiling = await this.loadEntitlements(actor.realmId);
+    if (ceiling === null) return decision; // system realm or enforcement disabled.
+    const resolved = this.resolveEntitlementForResource(ceiling, entry.snapshot, actor.realmId, input.resourceId);
+    if (resolved.kind === "skip") return decision;
+    const verdict = applyActionGate({
+      entitlement: resolved.entitlement,
+      gateAction,
+      actorSubjectId: actor.subjectId,
+      ...(input.context?.ownerSubjectId === undefined ? {} : { ownerSubjectId: input.context.ownerSubjectId }),
+      ...(input.context?.status === undefined ? {} : { status: input.context.status }),
+    });
+    if (verdict.kind === "allow") return decision;
+    return { ...decision, allowed: false, reasonCode: "DENY_ENTITLEMENT_GATE", matchedGrants: [] };
+  }
+
+  /**
+   * Field-path entitlement gate for filterReadableData/assertWritableData.
+   * Returns the field-level ceiling for this (resource, action):
+   * - `"skip"`: gate not applicable (system realm, disabled, non-content action, non-content resource).
+   * - `"deny-action"`: the ceiling forbids the action entirely → caller must deny the enclosing decision.
+   * - `{ entitlement }`: apply per-field intersection (entitlement undefined = ceiling absent = deny all).
+   * Throws fail-closed for an unresolvable content resource.
+   */
+  private async fieldEntitlementGate(
+    actor: AuthorizationActor,
+    entry: PolicyCacheEntry,
+    input: { readonly action: string; readonly resourceId: string; readonly context?: AuthorizationEvaluationContext },
+  ): Promise<"skip" | "deny-action" | { readonly entitlement: RealmCollectionEntitlement | undefined }> {
+    const gateAction = gateActionFor(input.action);
+    if (gateAction === undefined) return "skip";
+    const ceiling = await this.loadEntitlements(actor.realmId);
+    if (ceiling === null) return "skip";
+    const resolved = this.resolveEntitlementForResource(ceiling, entry.snapshot, actor.realmId, input.resourceId);
+    if (resolved.kind === "skip") return "skip";
+    const verdict = applyActionGate({
+      entitlement: resolved.entitlement,
+      gateAction,
+      actorSubjectId: actor.subjectId,
+      ...(input.context?.ownerSubjectId === undefined ? {} : { ownerSubjectId: input.context.ownerSubjectId }),
+      ...(input.context?.status === undefined ? {} : { status: input.context.status }),
+    });
+    if (verdict.kind === "deny") return "deny-action";
+    return { entitlement: resolved.entitlement };
+  }
+
   private async authorizeAt(
     actor: AuthorizationActor,
     input: {
@@ -2659,7 +2813,8 @@ export class AuthorizationApplicationService {
       now,
       ...toKernelContextProperty(input.context),
     });
-    return plainDecision(decision);
+    // Narrow the realm-policy decision by the CMS entitlement ceiling.
+    return this.gateDecision(actor, entry, input, plainDecision(decision));
   }
 
   private async loadForMutation(
@@ -2899,13 +3054,13 @@ export function collectionAuthorizationResourceId(realmId: string, collectionId:
   return realmCollectionResourceId(realmId, collectionId);
 }
 
-function realmCollectionResourcePrefix(realmId: string): string {
+export function realmCollectionResourcePrefix(realmId: string): string {
   return realmId === SYSTEM_AUTHORIZATION_REALM_ID
     ? "resource:collection:"
     : `authorization:${realmId}:resource:collection:`;
 }
 
-function realmDocumentResourcePrefix(realmId: string): string {
+export function realmDocumentResourcePrefix(realmId: string): string {
   return realmId === SYSTEM_AUTHORIZATION_REALM_ID
     ? "resource:document:"
     : `authorization:${realmId}:resource:document:`;

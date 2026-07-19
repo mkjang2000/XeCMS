@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_NAME, SYSTEM_REALM_ID } from "./migrate.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
+import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
 import { PostgresWorkspaceSettingsStore } from "./postgres-site-settings.js";
 import { PostgresSiteStore } from "./postgres-sites.js";
 import { PostgresDatabase } from "./postgres.js";
@@ -31,7 +32,7 @@ describe.runIf(RUN)("M4-C2 Workspace settings and Sites PostgreSQL transactions"
     now: () => "2026-07-15T15:00:00.000Z",
     newAuditId: () => `audit_${randomUUID()}`,
     newId: (prefix) => `${prefix}_${randomUUID()}`,
-  });
+  }, new PostgresRealmCollectionEntitlementStore(database.pool, schema));
   const ownerId = "usr_c2_owner";
   const q = (name: string) => qualifiedName(schema, name);
 

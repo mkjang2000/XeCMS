@@ -163,6 +163,23 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
         { data: { title: "Realm article", body: "Only the Community grant authorizes this." } }, 201,
       );
       expect(created.body.data["title"]).toBe("Realm article");
+
+      // Entitlement gate: the newly created realm is under enforcement, and its
+      // reconciled ceilings preserve access — the member's create above (and the
+      // update below) succeed under the gate, and a full-allow ceiling exists for
+      // the accessed collection.
+      const enforcementRow = await database.pool.query<{ readonly state: string }>(
+        `SELECT state FROM ${qualifiedName(schema, "_xecms_realm_entitlement_enforcement")} WHERE realm_id = $1`,
+        [realm.realmId],
+      );
+      expect(enforcementRow.rows[0]?.state).toBe("enforced");
+      const entitlementRow = await database.pool.query<{ readonly actions: readonly string[] }>(
+        `SELECT actions FROM ${qualifiedName(schema, "_xecms_realm_collection_entitlements")}
+          WHERE realm_id = $1 AND collection_id = 'col_articles'`,
+        [realm.realmId],
+      );
+      expect(entitlementRow.rows[0]?.actions).toEqual(expect.arrayContaining(["read", "create", "update"]));
+
       const updated = await contentJson<{ readonly version: number; readonly data: Readonly<Record<string, unknown>> }>(
         server, member, "PATCH", `/api/content-realms/community/collections/col_articles/documents/${created.body.id}`,
         { expectedVersion: created.body.version, data: { title: "Updated realm article", body: "Scoped update" } }, 200,

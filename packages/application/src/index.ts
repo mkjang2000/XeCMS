@@ -18,5 +18,7 @@ export * from "./plugins.js";
 export * from "./media.js";
 export * from "./relations.js";
 export * from "./realm-authorization-provisioning.js";
+export * from "./realm-collection-entitlements.js";
+export * from "./entitlement-gate.js";
 export * from "./schema-artifacts.js";
 export * from "./schema.js";
