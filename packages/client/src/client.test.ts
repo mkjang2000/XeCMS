@@ -252,6 +252,10 @@ describe("createXeCmsClient", () => {
       .mockResolvedValueOnce(jsonResponse({ membershipId: "membership-created", status: "active" }))
       .mockResolvedValueOnce(jsonResponse({ membershipId: "membership / 1", status: "suspended" }))
       .mockResolvedValueOnce(jsonResponse({ membershipId: "membership / 1", status: "active" }))
+      .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", status: "ownerless", policyRevision: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", status: "healthy", policyRevision: 2 }))
+      .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", status: "healthy", policyRevision: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", status: "healthy", policyRevision: 4 }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ bindingId: "binding-created" }))
       .mockResolvedValueOnce(jsonResponse({ bindingId: "binding / 1", revokedAt: "2026-07-15T01:00:00.000Z" }));
@@ -295,11 +299,31 @@ describe("createXeCmsClient", () => {
     await client.identityRealms.reactivateMembership(realmId, "membership / 1", {
       expectedRevision: 4,
     });
+    await client.identityRealms.getOwner(realmId);
+    await client.identityRealms.assignOwner(realmId, {
+      targetMembershipId: "membership / 1",
+      expectedPolicyRevision: 1,
+      reason: "Initial owner",
+      password: "correct horse battery staple",
+    });
+    await client.identityRealms.transferOwner(realmId, {
+      targetMembershipId: "membership / 2",
+      expectedPolicyRevision: 2,
+      reason: "Handover",
+      password: "correct horse battery staple",
+      revokePreviousSessions: true,
+    });
+    await client.identityRealms.recoverOwner(realmId, {
+      targetMembershipId: "membership / 3",
+      expectedPolicyRevision: 3,
+      reason: "Ownerless recovery",
+      password: "correct horse battery staple",
+    });
     await client.identityRealms.listFullAccess(realmId);
     await client.identityRealms.grantFullAccess(realmId, {
-      subjectId: "subject_member",
       reason: "Emergency recovery",
       password: "correct horse battery staple",
+      validUntil: "2026-07-15T02:00:00.000Z",
     });
     await client.identityRealms.revokeFullAccess(realmId, "binding / 1", {
       password: "correct horse battery staple",
@@ -351,12 +375,24 @@ describe("createXeCmsClient", () => {
     expect(reactivateRequest?.body).toBe(JSON.stringify({ expectedRevision: 4, status: "active" }));
 
     expect(fetch.mock.calls[12]?.[0]).toBe(
-      "/api/identity-realms/realm%20%2F%201/full-access",
+      "/api/identity-realms/realm%20%2F%201/owner",
     );
     expect(fetch.mock.calls[13]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/owner/assign",
+    );
+    expect(fetch.mock.calls[14]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/owner/transfer",
+    );
+    expect(fetch.mock.calls[15]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/owner/recover",
+    );
+    expect(fetch.mock.calls[16]?.[0]).toBe(
       "/api/identity-realms/realm%20%2F%201/full-access",
     );
-    const [revokeUrl, revokeRequest] = fetch.mock.calls[14] ?? [];
+    expect(fetch.mock.calls[17]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/full-access",
+    );
+    const [revokeUrl, revokeRequest] = fetch.mock.calls[18] ?? [];
     expect(revokeUrl).toBe(
       "/api/identity-realms/realm%20%2F%201/full-access/binding%20%2F%201",
     );

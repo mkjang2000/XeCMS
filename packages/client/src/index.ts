@@ -62,6 +62,7 @@ import {
   type TransferOwnerRequest,
   type ApiKeyDto,
   type ApiKeyListDto,
+  type AssignRealmOwnerRequest,
   type CreateApiKeyRequest,
   type CreatedApiKeyDto,
   type CreateServiceIdentityRequest,
@@ -92,10 +93,14 @@ import {
   type RealmMembershipDto,
   type RealmMembershipListDto,
   type RealmMembershipRevisionRequest,
+  type RealmOwnerStatusDto,
+  type RecoverRealmOwnerRequest,
   type ProvisionRealmMembershipRequest,
   type RegisterRealmMembershipRequest,
   type GrantRealmAdministratorRequest,
+  type RevokeRealmAdministratorRequest,
   type RevokeRealmFullAccessRequest,
+  type TransferRealmOwnerRequest,
   type UnpublishDocumentRequest,
   type UpdateAuthorizationBindingRequest,
   type UpdateAuthorizationLevelRequest,
@@ -416,6 +421,11 @@ export interface XeCmsClient {
       membershipId: string,
       input: GrantRealmAdministratorRequest,
     ): Promise<RealmMembershipDto>;
+    revokeRealmAdministrator(
+      realmId: string,
+      membershipId: string,
+      input: RevokeRealmAdministratorRequest,
+    ): Promise<RealmMembershipDto>;
     suspendMembership(
       realmId: string,
       membershipId: string,
@@ -426,6 +436,10 @@ export interface XeCmsClient {
       membershipId: string,
       input: RealmMembershipRevisionRequest,
     ): Promise<RealmMembershipDto>;
+    getOwner(realmId: string): Promise<RealmOwnerStatusDto>;
+    assignOwner(realmId: string, input: AssignRealmOwnerRequest): Promise<RealmOwnerStatusDto>;
+    transferOwner(realmId: string, input: TransferRealmOwnerRequest): Promise<RealmOwnerStatusDto>;
+    recoverOwner(realmId: string, input: RecoverRealmOwnerRequest): Promise<RealmOwnerStatusDto>;
     listFullAccess(realmId: string): Promise<RealmFullAccessListDto>;
     grantFullAccess(
       realmId: string,
@@ -1072,6 +1086,15 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
             csrf: true,
           },
         ),
+      revokeRealmAdministrator: (realmId, membershipId, input) =>
+        request<RealmMembershipDto>(
+          `${identityRealmPath(realmId)}/memberships/${encodeURIComponent(membershipId)}/administrator`,
+          {
+            method: "DELETE",
+            body: json(input),
+            csrf: true,
+          },
+        ),
       suspendMembership: (realmId, membershipId, input) =>
         request<RealmMembershipDto>(
           `${identityRealmPath(realmId)}/memberships/${encodeURIComponent(membershipId)}`,
@@ -1090,6 +1113,26 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
             csrf: true,
           },
         ),
+      getOwner: (realmId) =>
+        request<RealmOwnerStatusDto>(`${identityRealmPath(realmId)}/owner`),
+      assignOwner: (realmId, input) =>
+        request<RealmOwnerStatusDto>(`${identityRealmPath(realmId)}/owner/assign`, {
+          method: "POST",
+          body: json(input),
+          csrf: true,
+        }),
+      transferOwner: (realmId, input) =>
+        request<RealmOwnerStatusDto>(`${identityRealmPath(realmId)}/owner/transfer`, {
+          method: "POST",
+          body: json(input),
+          csrf: true,
+        }),
+      recoverOwner: (realmId, input) =>
+        request<RealmOwnerStatusDto>(`${identityRealmPath(realmId)}/owner/recover`, {
+          method: "POST",
+          body: json(input),
+          csrf: true,
+        }),
       listFullAccess: (realmId) =>
         request<RealmFullAccessListDto>(`${identityRealmPath(realmId)}/full-access`),
       grantFullAccess: (realmId, input) =>

@@ -15,6 +15,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DisplayModeProvider, type DisplayMode } from "../display-mode.js";
 import { IdentityRealmDetailPage, IdentityRealmListPage } from "./identity-realm-pages.js";
 
+Object.defineProperty(globalThis, "CSS", {
+  configurable: true,
+  value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&") },
+});
+
 function contentRealm(overrides: Partial<IdentityRealm> = {}): IdentityRealm {
   return {
     realmId: "rlm_testre",
@@ -64,14 +69,30 @@ function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = []
     profileCollectionId: "col_profile",
   });
   const createProfileField = vi.fn().mockResolvedValue(realm);
-  const listFullAccess = vi.fn().mockResolvedValue({ items: [], nextCursor: undefined });
+  const listFullAccess = vi.fn().mockResolvedValue({ items: [] });
+  const grantFullAccess = vi.fn().mockResolvedValue({});
+  const revokeFullAccess = vi.fn().mockResolvedValue({});
+  const getOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "ownerless", policyRevision: 1 });
+  const assignOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
+  const transferOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
+  const recoverOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
+  const globalIdentities = memberships.flatMap((item) => {
+    const identity = (item as { readonly identity?: unknown }).identity;
+    return identity === undefined ? [] : [identity];
+  });
   const api = {
     identityRealms: {
       get: vi.fn().mockResolvedValue(realm),
       list: vi.fn().mockResolvedValue({ items: [realm], nextCursor: undefined }),
-      listGlobalIdentities: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+      listGlobalIdentities: vi.fn().mockResolvedValue({ items: globalIdentities, nextCursor: undefined }),
       listMemberships: vi.fn().mockResolvedValue({ items: memberships, nextCursor: undefined }),
       listFullAccess,
+      grantFullAccess,
+      revokeFullAccess,
+      getOwner,
+      assignOwner,
+      transferOwner,
+      recoverOwner,
       createProfileSchema,
       createProfileField,
       registerMembership,
@@ -99,7 +120,7 @@ function renderDetail(realm: IdentityRealm, memberships: readonly unknown[] = []
       </QueryClientProvider>
     </DisplayModeProvider>,
   );
-  return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, listFullAccess, router, user: userEvent.setup() };
+  return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, getOwner, listFullAccess, grantFullAccess, assignOwner, router, user: userEvent.setup() };
 }
 
 afterEach(cleanup);
@@ -186,12 +207,13 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       identity: { globalIdentityId: "gid_1", primaryIdentifier: "member@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
     };
-    const { grantRealmAdministrator, user } = renderDetail(
+    const { grantRealmAdministrator, getOwner, user } = renderDetail(
       contentRealm({ status: "active", profileCollectionId: "col_profile" }),
       [membership],
     );
 
     await user.click(await screen.findByRole("tab", { name: "사용자" }));
+    await waitFor(() => expect(getOwner).toHaveBeenCalledTimes(1));
     const promoteButton = await screen.findByRole("button", { name: "관리자로 지정" });
     await user.click(promoteButton);
 
@@ -202,6 +224,44 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
 
     await waitFor(() => expect(grantRealmAdministrator).toHaveBeenCalledTimes(1));
     expect(grantRealmAdministrator).toHaveBeenCalledWith("rlm_testre", "mem_1", { reauthPassword: "admin-pw" });
+    // The promotion advances the policy revision, so the Owner status (and its
+    // cached policyRevision used by the Owner-assign CAS) must be refetched.
+    await waitFor(() => expect(getOwner).toHaveBeenCalledTimes(2));
+  });
+
+  it("assigns an active System operator as the first human Realm Owner", async () => {
+    const membership = {
+      membershipId: "mem_owner_candidate",
+      globalIdentityId: "gid_owner_candidate",
+      realmId: "rlm_testre",
+      subjectId: "subject:user:gid_owner_candidate",
+      status: "active",
+      provisionedBy: "account-link",
+      revision: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      identity: { globalIdentityId: "gid_owner_candidate", kind: "human", primaryIdentifier: "realm.owner@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
+    };
+    const { assignOwner, user } = renderDetail(
+      contentRealm({ status: "active", profileCollectionId: "col_profile" }),
+      [membership],
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "사용자" }));
+    await user.click(await screen.findByRole("button", { name: "Owner 지정" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByLabelText("새 Realm Owner"));
+    await user.click(await screen.findByRole("option", { name: /realm\.owner@example\.com/ }));
+    await user.type(within(dialog).getByLabelText(/변경 사유/), "Initial Realm owner");
+    await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");
+    await user.click(within(dialog).getByRole("button", { name: "Owner 지정" }));
+
+    await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
+    expect(assignOwner).toHaveBeenCalledWith("rlm_testre", {
+      targetMembershipId: "mem_owner_candidate",
+      expectedPolicyRevision: 1,
+      reason: "Initial Realm owner",
+      password: "admin-pw",
+    });
   });
 
   it("drops the provisioning guidance once the Realm is active", async () => {
@@ -224,7 +284,7 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
     await screen.findByText("Realm 설정");
     expect(screen.queryByLabelText("초기 Profile JSON")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
-    expect(listFullAccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(listFullAccess).toHaveBeenCalledWith("rlm_testre"));
 
     await user.click(screen.getByRole("tab", { name: "권한" }));
     await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
@@ -242,19 +302,38 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
     expect(within(dialog).getByLabelText("초기 Profile JSON")).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "취소" }));
     expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
-    expect(listFullAccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(listFullAccess).toHaveBeenCalledWith("rlm_testre"));
 
     await user.click(screen.getByRole("tab", { name: "권한" }));
     await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/roles"));
   });
 
-  it("loads and shows Full Access only in advanced mode", async () => {
+  it("shows Full Access in every display mode while keeping history advanced", async () => {
     const { listFullAccess, user } = renderDetail(activeRealm, [], "advanced");
 
     await user.click(await screen.findByRole("tab", { name: "권한" }));
     expect(await screen.findByRole("heading", { name: "Realm Full Access" })).toBeTruthy();
     expect(listFullAccess).toHaveBeenCalledWith("rlm_testre");
+  });
+
+  it("starts Full Access for the current System Identity without a Realm Subject", async () => {
+    const { grantFullAccess, user } = renderDetail(activeRealm, [], "basic");
+
+    await user.click(await screen.findByRole("tab", { name: "권한" }));
+    await user.click(await screen.findByRole("button", { name: "Full Access 시작" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText(/대상 Realm Subject/)).toBeNull();
+    await user.type(within(dialog).getByLabelText(/접근 사유/), "Owner policy recovery");
+    await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");
+    await user.click(within(dialog).getByRole("button", { name: "Full Access 시작" }));
+
+    await waitFor(() => expect(grantFullAccess).toHaveBeenCalledTimes(1));
+    expect(grantFullAccess).toHaveBeenCalledWith("rlm_testre", {
+      reason: "Owner policy recovery",
+      password: "admin-pw",
+      validUntil: expect.any(String),
+    });
   });
 });
 

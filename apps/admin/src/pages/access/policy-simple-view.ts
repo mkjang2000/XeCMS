@@ -29,12 +29,6 @@ export type SubjectGradeState =
     }
   | { readonly kind: "complex"; readonly reasons: readonly string[] };
 
-/** Full Access(비상 전체 접근) 조회 결과. 기능 미지원과 조회 실패를 구분한다. */
-export type FullAccessInfo =
-  | { readonly kind: "unsupported" }
-  | { readonly kind: "unavailable" }
-  | { readonly kind: "loaded"; readonly subjectIds: readonly string[] };
-
 export function rootResource(policy: AuthorizationPolicy): AuthorizationResource | null {
   const roots = policy.resources.filter((resource) => resource.parentId === undefined);
   return roots.length === 1 ? roots[0]! : null;
@@ -77,16 +71,9 @@ export function ancestorGroupIds(policy: AuthorizationPolicy, subjectId: string)
 export function subjectGradeState(
   policy: AuthorizationPolicy,
   subjectId: string,
-  fullAccess: FullAccessInfo,
 ): SubjectGradeState {
   const reasons: string[] = [];
   const direct = policy.bindings.filter((binding) => binding.subjectId === subjectId);
-
-  if (fullAccess.kind === "unavailable") {
-    reasons.push("권한 정보를 모두 확인할 수 없어요.");
-  } else if (fullAccess.kind === "loaded" && fullAccess.subjectIds.includes(subjectId)) {
-    reasons.push("전체 접근(Full Access) 권한이 함께 부여되어 있어요.");
-  }
 
   const groups = ancestorGroupIds(policy, subjectId);
   if (groups.length > 0 && policy.bindings.some((binding) => groups.includes(binding.subjectId))) {

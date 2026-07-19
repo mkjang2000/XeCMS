@@ -5,6 +5,10 @@ import {
   type ActorContext,
 } from "./errors.js";
 import type { PasswordHasher } from "./auth.js";
+import type {
+  RealmOwnerCommandActor,
+  RealmPrimaryOwnerStatus,
+} from "./authorization.js";
 
 export type IdentityRealmKind = "system" | "content";
 export type IdentityRealmStatus = "provisioning" | "active" | "disabled";
@@ -44,6 +48,9 @@ export interface IdentityRealmRecord {
 export interface GlobalIdentityRecord {
   readonly id: string;
   readonly workspaceId: string;
+  readonly kind: "human" | "service";
+  /** True only for the workspace-wide CMS Owner identity. */
+  readonly isOwner?: boolean;
   readonly primaryIdentifier: string;
   readonly originRealmId: string;
   readonly credentialVersion: number;
@@ -67,6 +74,8 @@ export interface RealmMembershipRecord {
   readonly createdAt: string;
   readonly activatedAt?: string;
   readonly suspendedAt?: string;
+  /** Scoped administration projection; durable stores may omit it. */
+  readonly identity?: GlobalIdentityRecord;
 }
 
 export interface ContentRealmSessionRecord {
@@ -80,14 +89,91 @@ export interface ContentRealmSessionRecord {
 export interface RealmFullAccessBindingRecord {
   readonly id: string;
   readonly realmId: string;
-  readonly subjectId: string;
+  /** System control-plane Identity receiving this temporary access. */
+  readonly systemIdentityId: string;
   readonly grantedByIdentityId: string;
-  readonly grantedBySubjectId: string;
   readonly reason: string;
   readonly createdAt: string;
-  readonly validUntil?: string;
+  readonly validUntil: string;
   readonly revokedAt?: string;
   readonly revokedByIdentityId?: string;
+  readonly terminationReason?: "revoked" | "expired";
+}
+
+export type RealmAdministrationAccessMode =
+  | "realm-actor"
+  | "cms-owner-readonly"
+  | "cms-owner-control-plane"
+  | "realm-full-access";
+
+export type RealmAdministrationAuditEvent =
+  | "REALM_POLICY_OVERSIGHT_ENTERED"
+  | "REALM_POLICY_OVERSIGHT_READ"
+  | "REALM_POLICY_OVERSIGHT_EXITED"
+  | "REALM_OWNER_ASSIGNED"
+  | "REALM_OWNER_TRANSFERRED"
+  | "REALM_OWNER_REPLACED"
+  | "REALM_OWNER_RECOVERED"
+  | "REALM_FULL_ACCESS_ENTERED"
+  | "REALM_FULL_ACCESS_OPERATION";
+
+export interface RealmAdministrationAuditRecord {
+  readonly event: RealmAdministrationAuditEvent;
+  readonly systemIdentityId: string;
+  readonly realmId: string;
+  readonly accessMode: RealmAdministrationAccessMode;
+  readonly occurredAt: string;
+  readonly realmSubjectId?: string;
+  readonly fullAccessBindingId?: string;
+  readonly operation?: string;
+  readonly targetType?: string;
+  readonly targetId?: string;
+  readonly requestId?: string;
+  readonly sessionId?: string;
+  readonly before?: unknown;
+  readonly after?: unknown;
+  readonly result?: string;
+  readonly reason?: string;
+  /** Structured, event-specific facts such as requested cleanup and its result. */
+  readonly details?: Readonly<Record<string, unknown>>;
+}
+
+export interface RealmOwnerStatusRecord {
+  readonly realmId: string;
+  readonly status: "healthy" | "ownerless" | "invalid";
+  readonly policyRevision: number;
+  readonly owner?: {
+    readonly globalIdentityId: string;
+    readonly membershipId: string;
+    readonly subjectId: string;
+    readonly primaryIdentifier: string;
+    readonly identityActive: boolean;
+    readonly membershipStatus: RealmMembershipStatus;
+  };
+  readonly issueCode?: string;
+}
+
+/** Adapter to the protected authorization-policy Owner command boundary. */
+export interface RealmOwnerCoordinator {
+  getPrimaryOwner(realmId: string): Promise<RealmPrimaryOwnerStatus>;
+  setPrimaryOwner(
+    actor: RealmOwnerCommandActor,
+    input: {
+      readonly expectedRevision: number;
+      readonly subjectId: string;
+      readonly operation: "assign" | "transfer" | "recover";
+    },
+  ): Promise<RealmPrimaryOwnerStatus>;
+}
+
+export interface RealmOwnerCommandInput {
+  readonly realmId: string;
+  readonly targetMembershipId: string;
+  readonly expectedPolicyRevision: number;
+  readonly reason: string;
+  readonly reauthenticatedAt: string;
+  readonly requestId?: string;
+  readonly sessionId?: string;
 }
 
 /**
@@ -129,6 +215,12 @@ export interface IdentityRealmStore {
     identityId: string,
   ): Promise<RealmMembershipRecord | null>;
   findMembershipById(membershipId: string): Promise<RealmMembershipRecord | null>;
+  /** Mirrors the durable final eligibility guard used by the Owner CAS. */
+  isEligibleRealmOwner(input: {
+    readonly realmId: string;
+    readonly identityId: string;
+    readonly subjectId: string;
+  }): Promise<boolean>;
   suspendMembership(input: {
     readonly realmId: string;
     readonly membershipId: string;
@@ -166,7 +258,17 @@ export interface IdentityRealmStore {
     now: string,
   ): Promise<boolean>;
   deleteContentSession(tokenHash: string, realmId: string): Promise<void>;
-  listFullAccessBindings(realmId: string): Promise<readonly RealmFullAccessBindingRecord[]>;
+  revokeMembershipSessions(input: {
+    readonly realmId: string;
+    readonly membershipId: string;
+    readonly actorIdentityId: string;
+    readonly now: string;
+    readonly reason: string;
+  }): Promise<number>;
+  listFullAccessBindings(
+    realmId: string,
+    now: string,
+  ): Promise<readonly RealmFullAccessBindingRecord[]>;
   grantFullAccess(input: RealmFullAccessBindingRecord): Promise<RealmFullAccessBindingRecord>;
   revokeFullAccess(input: {
     readonly realmId: string;
@@ -174,7 +276,13 @@ export interface IdentityRealmStore {
     readonly actorIdentityId: string;
     readonly now: string;
   }): Promise<RealmFullAccessBindingRecord>;
-  hasActiveFullAccess(realmId: string, subjectId: string, now: string): Promise<boolean>;
+  findActiveFullAccessBinding(
+    realmId: string,
+    systemIdentityId: string,
+    now: string,
+  ): Promise<RealmFullAccessBindingRecord | null>;
+  hasActiveFullAccess(realmId: string, systemIdentityId: string, now: string): Promise<boolean>;
+  recordRealmAdministrationEvent(input: RealmAdministrationAuditRecord): Promise<void>;
 }
 
 export interface RealmIdentityProvisioner {
@@ -397,11 +505,22 @@ export class IdentityRealmApplicationService {
     >,
     private readonly provisioner?: RealmIdentityProvisioner,
     private readonly passwords?: PasswordHasher,
+    private readonly owners?: RealmOwnerCoordinator,
   ) {}
 
   public async listRealms(actor: ActorContext): Promise<readonly IdentityRealmRecord[]> {
-    await requireRealmAdministration(actor);
-    return this.store.listRealms(actor.workspaceId);
+    const realms = await this.store.listRealms(actor.workspaceId);
+    try {
+      await requireRealmAdministration(actor);
+      return realms;
+    } catch (error: unknown) {
+      if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+      const owned = await Promise.all(realms.map(async (realm) =>
+        realm.kind === "content" && await this.isCurrentPrimaryOwner(actor, realm.id)));
+      const visible = realms.filter((_, index) => owned[index] === true);
+      if (visible.length === 0) throw error;
+      return visible;
+    }
   }
 
   public async listGlobalIdentities(actor: ActorContext): Promise<readonly GlobalIdentityRecord[]> {
@@ -412,6 +531,8 @@ export class IdentityRealmApplicationService {
       .map((identity) => ({
         id: identity.id,
         workspaceId: identity.workspaceId,
+        kind: identity.kind,
+        isOwner: identity.isOwner === true,
         primaryIdentifier: identity.primaryIdentifier,
         originRealmId: identity.originRealmId,
         credentialVersion: identity.credentialVersion,
@@ -457,7 +578,7 @@ export class IdentityRealmApplicationService {
       readonly defaultRoleIds: readonly string[];
     },
   ): Promise<IdentityRealmRecord> {
-    await requireRealmAdministration(actor);
+    await this.requireCmsOwnerOrPrimaryOwner(actor, input.realmId);
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
       invalid("expectedRevision must be a positive safe integer.");
     }
@@ -487,9 +608,17 @@ export class IdentityRealmApplicationService {
     actor: ActorContext,
     realmId: string,
   ): Promise<readonly RealmMembershipRecord[]> {
-    await requireRealmAdministration(actor);
+    await this.requireCmsOwnerOrPrimaryOwner(actor, realmId);
     await this.requireContentRealm(actor.workspaceId, realmId);
-    return this.store.listMemberships(realmId);
+    const [memberships, identities] = await Promise.all([
+      this.store.listMemberships(realmId),
+      this.store.listIdentities(actor.workspaceId),
+    ]);
+    const byId = new Map(identities.map((identity) => [identity.id, identity]));
+    return memberships.map((membership) => {
+      const identity = byId.get(membership.identityId);
+      return identity === undefined ? membership : { ...membership, identity };
+    });
   }
 
   /** Explicitly gives an existing System Identity a Content Realm Membership. */
@@ -502,7 +631,7 @@ export class IdentityRealmApplicationService {
       readonly reauthenticatedAt: string;
     },
   ): Promise<RealmMembershipRecord> {
-    await requireRealmAdministration(actor);
+    await this.requireCmsOwnerOrPrimaryOwner(actor, input.realmId);
     if (actorRealmId(actor) !== SYSTEM_ACTOR_REALM_ID) {
       throw new ApplicationError(
         "SYSTEM_REALM_ACTOR_REQUIRED",
@@ -592,7 +721,7 @@ export class IdentityRealmApplicationService {
       readonly reauthenticatedAt: string;
     },
   ): Promise<RealmMembershipRecord> {
-    await requireRealmAdministration(actor);
+    await this.requireCmsOwnerOrPrimaryOwner(actor, input.realmId);
     if (actorRealmId(actor) !== SYSTEM_ACTOR_REALM_ID) {
       throw new ApplicationError(
         "SYSTEM_REALM_ACTOR_REQUIRED",
@@ -634,8 +763,19 @@ export class IdentityRealmApplicationService {
     actor: ActorContext,
     input: { readonly realmId: string; readonly membershipId: string; readonly expectedRevision: number },
   ): Promise<RealmMembershipRecord> {
-    await requireRealmAdministration(actor);
+    await this.requireCmsOwnerOrPrimaryOwner(actor, input.realmId);
     await this.requireContentRealm(actor.workspaceId, input.realmId);
+    const membership = await this.store.findMembershipById(input.membershipId);
+    if (membership !== null && membership.realmId === input.realmId) {
+      const owner = await this.requireOwners().getPrimaryOwner(input.realmId);
+      if (owner.state === "assigned" && owner.subjectId === membership.subjectId) {
+        throw new ApplicationError(
+          "REALM_PRIMARY_OWNER_MEMBERSHIP_SUSPENSION_FORBIDDEN",
+          409,
+          "Transfer the Primary Realm Owner before suspending their Membership.",
+        );
+      }
+    }
     return this.store.suspendMembership({
       ...input,
       actorIdentityId: actor.identityId ?? actor.subjectId,
@@ -647,7 +787,7 @@ export class IdentityRealmApplicationService {
     actor: ActorContext,
     input: { readonly realmId: string; readonly membershipId: string; readonly expectedRevision: number },
   ): Promise<RealmMembershipRecord> {
-    await requireRealmAdministration(actor);
+    await this.requireCmsOwnerOrPrimaryOwner(actor, input.realmId);
     await this.requireContentRealm(actor.workspaceId, input.realmId);
     return this.store.reactivateMembership({
       ...input,
@@ -656,55 +796,459 @@ export class IdentityRealmApplicationService {
     });
   }
 
+  public async getOwner(
+    actor: ActorContext,
+    realmId: string,
+  ): Promise<RealmOwnerStatusRecord> {
+    await this.requireCmsOwnerOrPrimaryOwner(actor, realmId);
+    await this.requireContentRealm(actor.workspaceId, realmId);
+    return this.resolveOwnerStatus(realmId, await this.requireOwners().getPrimaryOwner(realmId));
+  }
+
+  public async assignOwner(
+    actor: ActorContext,
+    input: RealmOwnerCommandInput,
+  ): Promise<RealmOwnerStatusRecord> {
+    await requireRealmAdministration(actor);
+    return this.changeOwner(actor, input, "assign", true);
+  }
+
+  public async transferOwner(
+    actor: ActorContext,
+    input: RealmOwnerCommandInput & {
+      readonly revokePreviousSessions?: boolean;
+      readonly suspendPreviousMembership?: boolean;
+    },
+  ): Promise<RealmOwnerStatusRecord> {
+    // Normal transfers may be initiated by the current human Realm Owner even
+    // when that operator is not the CMS Owner. The coordinator rechecks the
+    // deterministic current Owner Binding before committing the CAS mutation.
+    let cmsOwner = true;
+    try {
+      await requireRealmAdministration(actor);
+    } catch (error: unknown) {
+      if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+      cmsOwner = false;
+    }
+    return this.changeOwner(actor, input, "transfer", cmsOwner);
+  }
+
+  public async recoverOwner(
+    actor: ActorContext,
+    input: RealmOwnerCommandInput,
+  ): Promise<RealmOwnerStatusRecord> {
+    await requireRealmAdministration(actor);
+    return this.changeOwner(actor, input, "recover", true);
+  }
+
+  private async changeOwner(
+    actor: ActorContext,
+    input: RealmOwnerCommandInput & {
+      readonly revokePreviousSessions?: boolean;
+      readonly suspendPreviousMembership?: boolean;
+    },
+    operation: "assign" | "transfer" | "recover",
+    cmsOwner: boolean,
+  ): Promise<RealmOwnerStatusRecord> {
+    const realm = await this.requireContentRealm(actor.workspaceId, input.realmId);
+    const now = this.runtime.now();
+    requireRecentReauthentication(input.reauthenticatedAt, now);
+    const reason = displayName(input.reason, "Realm Owner change reason");
+    const targetMembership = await this.store.findMembershipById(input.targetMembershipId);
+    if (
+      targetMembership === null
+      || targetMembership.realmId !== realm.id
+      || targetMembership.status !== "active"
+    ) {
+      throw new ApplicationError(
+        "REALM_OWNER_TARGET_MEMBERSHIP_INELIGIBLE",
+        409,
+        "Realm Owner requires an active Membership in the target Realm.",
+      );
+    }
+    const targetIdentity = await this.store.findIdentityById(targetMembership.identityId);
+    if (
+      targetIdentity === null
+      || targetIdentity.workspaceId !== realm.workspaceId
+      || targetIdentity.kind !== "human"
+      || targetIdentity.disabledAt !== undefined
+    ) {
+      throw new ApplicationError(
+        "REALM_OWNER_TARGET_IDENTITY_INELIGIBLE",
+        409,
+        "Realm Owner requires an active System operator Identity.",
+      );
+    }
+    const systemMembership = await this.store.findMembershipByIdentity(
+      SYSTEM_ACTOR_REALM_ID,
+      targetIdentity.id,
+    );
+    if (systemMembership?.status !== "active") {
+      throw new ApplicationError(
+        "REALM_OWNER_TARGET_SYSTEM_OPERATOR_REQUIRED",
+        409,
+        "Realm Owner must be an active System operator.",
+      );
+    }
+    if (!await this.store.isEligibleRealmOwner({
+      realmId: realm.id,
+      identityId: targetIdentity.id,
+      subjectId: targetMembership.subjectId,
+    })) {
+      throw new ApplicationError(
+        "REALM_OWNER_TARGET_SYSTEM_OPERATOR_REQUIRED",
+        409,
+        "Realm Owner must be an active, login-capable human System operator.",
+      );
+    }
+    const systemIdentityId = actor.identityId ?? actor.subjectId;
+    if (targetIdentity.isOwner === true || (cmsOwner && targetIdentity.id === systemIdentityId)) {
+      throw new ApplicationError(
+        "REALM_OWNER_CMS_OWNER_SELF_ASSIGNMENT_FORBIDDEN",
+        403,
+        "The CMS Owner cannot assign their own Identity as Realm Owner.",
+      );
+    }
+    const owners = this.requireOwners();
+    const before = await owners.getPrimaryOwner(realm.id);
+    const previousOwnerMembership = before.state === "assigned"
+      && before.identityId !== undefined
+      && before.subjectId !== targetMembership.subjectId
+      ? await this.store.findMembershipByIdentity(realm.id, before.identityId)
+      : null;
+    const commandActor: RealmOwnerCommandActor = cmsOwner
+      ? {
+          accessMode: "cms-owner-control-plane",
+          realmId: realm.id,
+          systemIdentityId,
+          systemSubjectId: actor.subjectId,
+        }
+      : {
+          accessMode: "realm-actor",
+          realmId: realm.id,
+          subjectId: (await this.requireCurrentOwnerActor(
+            realm.id,
+            systemIdentityId,
+            before,
+          )).subjectId,
+          systemIdentityId,
+        };
+    const changed = await owners.setPrimaryOwner(commandActor, {
+      expectedRevision: input.expectedPolicyRevision,
+      subjectId: targetMembership.subjectId,
+      operation,
+    });
+    const cleanup = operation === "transfer"
+      ? await this.cleanupTransferredOwner({
+          realmId: realm.id,
+          actorIdentityId: systemIdentityId,
+          now,
+          previousOwnerSubjectId: before.subjectId,
+          previousOwnerMembership,
+          targetSubjectId: targetMembership.subjectId,
+          revokePreviousSessions: input.revokePreviousSessions === true,
+          suspendPreviousMembership: input.suspendPreviousMembership === true,
+        })
+      : undefined;
+    await this.store.recordRealmAdministrationEvent({
+      event: operation === "assign"
+        ? "REALM_OWNER_ASSIGNED"
+        : operation === "transfer"
+          ? cmsOwner
+            ? "REALM_OWNER_REPLACED"
+            : "REALM_OWNER_TRANSFERRED"
+          : "REALM_OWNER_RECOVERED",
+      systemIdentityId,
+      realmId: realm.id,
+      accessMode: cmsOwner ? "cms-owner-control-plane" : "realm-actor",
+      occurredAt: now,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(commandActor.accessMode === "realm-actor"
+        ? { realmSubjectId: commandActor.subjectId }
+        : {}),
+      operation,
+      targetType: "primary-realm-owner",
+      targetId: targetMembership.subjectId,
+      before,
+      after: changed,
+      reason,
+      result: cleanup?.error === undefined ? "success" : "owner-changed-cleanup-failed",
+      details: {
+        reauthenticatedAt: input.reauthenticatedAt,
+        forcedByCmsOwner: cmsOwner,
+        ...(cleanup === undefined ? {} : { previousOwnerCleanup: cleanup.audit }),
+      },
+    });
+    if (cleanup?.error !== undefined) {
+      throw new ApplicationError(
+        "REALM_OWNER_TRANSFER_CLEANUP_FAILED",
+        409,
+        "The Realm Owner changed, but the previous Owner cleanup did not complete.",
+        {
+          details: {
+            ownerTransferCommitted: true,
+            policyRevision: changed.policyRevision,
+            previousOwnerCleanup: cleanup.audit,
+          },
+        },
+      );
+    }
+    return this.resolveOwnerStatus(realm.id, changed);
+  }
+
+  private async cleanupTransferredOwner(input: {
+    readonly realmId: string;
+    readonly actorIdentityId: string;
+    readonly now: string;
+    readonly previousOwnerSubjectId: string | undefined;
+    readonly previousOwnerMembership: RealmMembershipRecord | null;
+    readonly targetSubjectId: string;
+    readonly revokePreviousSessions: boolean;
+    readonly suspendPreviousMembership: boolean;
+  }): Promise<{
+    readonly audit: Readonly<Record<string, unknown>>;
+    readonly error?: unknown;
+  }> {
+    const requested = {
+      revokePreviousSessions: input.revokePreviousSessions,
+      suspendPreviousMembership: input.suspendPreviousMembership,
+    };
+    if (input.previousOwnerSubjectId === input.targetSubjectId) {
+      return { audit: { requested, outcome: "skipped-same-owner" } };
+    }
+    if (input.previousOwnerMembership === null) {
+      return { audit: { requested, outcome: "skipped-no-previous-membership" } };
+    }
+    if (!input.revokePreviousSessions && !input.suspendPreviousMembership) {
+      return {
+        audit: {
+          requested,
+          outcome: "not-requested",
+          previousMembershipId: input.previousOwnerMembership.id,
+        },
+      };
+    }
+
+    try {
+      if (input.suspendPreviousMembership) {
+        if (input.previousOwnerMembership.status !== "suspended") {
+          const suspended = await this.store.suspendMembership({
+            realmId: input.realmId,
+            membershipId: input.previousOwnerMembership.id,
+            expectedRevision: input.previousOwnerMembership.revision,
+            actorIdentityId: input.actorIdentityId,
+            now: input.now,
+          });
+          return {
+            audit: {
+              requested,
+              outcome: "completed",
+              previousMembershipId: suspended.id,
+              membershipSuspended: true,
+              sessionsCleared: true,
+              resultingMembershipRevision: suspended.revision,
+            },
+          };
+        }
+        const revokedSessions = await this.store.revokeMembershipSessions({
+          realmId: input.realmId,
+          membershipId: input.previousOwnerMembership.id,
+          actorIdentityId: input.actorIdentityId,
+          now: input.now,
+          reason: "realm-owner-transferred",
+        });
+        return {
+          audit: {
+            requested,
+            outcome: "completed",
+            previousMembershipId: input.previousOwnerMembership.id,
+            membershipAlreadySuspended: true,
+            sessionsCleared: true,
+            revokedSessions,
+          },
+        };
+      }
+
+      const revokedSessions = await this.store.revokeMembershipSessions({
+        realmId: input.realmId,
+        membershipId: input.previousOwnerMembership.id,
+        actorIdentityId: input.actorIdentityId,
+        now: input.now,
+        reason: "realm-owner-transferred",
+      });
+      return {
+        audit: {
+          requested,
+          outcome: "completed",
+          previousMembershipId: input.previousOwnerMembership.id,
+          membershipSuspended: false,
+          sessionsCleared: true,
+          revokedSessions,
+        },
+      };
+    } catch (error: unknown) {
+      return {
+        audit: {
+          requested,
+          outcome: "failed",
+          previousMembershipId: input.previousOwnerMembership.id,
+          errorCode: error instanceof ApplicationError ? error.code : "REALM_OWNER_CLEANUP_INTERNAL_ERROR",
+        },
+        error,
+      };
+    }
+  }
+
+  private async requireCurrentOwnerActor(
+    realmId: string,
+    systemIdentityId: string,
+    owner: RealmPrimaryOwnerStatus,
+  ): Promise<{ readonly subjectId: string }> {
+    const membership = await this.store.findMembershipByIdentity(realmId, systemIdentityId);
+    if (
+      owner.state !== "assigned"
+      || owner.subjectId === undefined
+      || membership?.status !== "active"
+      || membership.subjectId !== owner.subjectId
+    ) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_REQUIRED",
+        403,
+        "Only the current Primary Realm Owner can transfer ownership.",
+      );
+    }
+    return { subjectId: membership.subjectId };
+  }
+
+  private async resolveOwnerStatus(
+    realmId: string,
+    owner: RealmPrimaryOwnerStatus,
+  ): Promise<RealmOwnerStatusRecord> {
+    if (owner.state === "unassigned") {
+      return {
+        realmId,
+        status: "ownerless",
+        policyRevision: owner.policyRevision,
+        issueCode: "REALM_PRIMARY_OWNER_MISSING",
+      };
+    }
+    if (owner.state === "invalid" || owner.subjectId === undefined || owner.identityId === undefined) {
+      return {
+        realmId,
+        status: "invalid",
+        policyRevision: owner.policyRevision,
+        issueCode: owner.issues[0] ?? "REALM_PRIMARY_OWNER_POLICY_INVALID",
+      };
+    }
+    const memberships = await this.store.listMemberships(realmId);
+    const membership = memberships.find(({ subjectId }) => subjectId === owner.subjectId);
+    const identity = await this.store.findIdentityById(owner.identityId);
+    if (membership === undefined || identity === null) {
+      return {
+        realmId,
+        status: "invalid",
+        policyRevision: owner.policyRevision,
+        issueCode: "REALM_PRIMARY_OWNER_IDENTITY_LINK_INVALID",
+      };
+    }
+    const healthy = await this.store.isEligibleRealmOwner({
+      realmId,
+      identityId: owner.identityId,
+      subjectId: owner.subjectId,
+    });
+    return {
+      realmId,
+      status: healthy ? "healthy" : "invalid",
+      policyRevision: owner.policyRevision,
+      owner: {
+        globalIdentityId: identity.id,
+        membershipId: membership.id,
+        subjectId: membership.subjectId,
+        primaryIdentifier: identity.primaryIdentifier,
+        identityActive: identity.disabledAt === undefined,
+        membershipStatus: membership.status,
+      },
+      ...(healthy ? {} : { issueCode: "REALM_PRIMARY_OWNER_INACTIVE" }),
+    };
+  }
+
+  private async requireCmsOwnerOrPrimaryOwner(
+    actor: ActorContext,
+    realmId: string,
+  ): Promise<void> {
+    try {
+      await requireRealmAdministration(actor);
+      return;
+    } catch (error: unknown) {
+      if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+      if (await this.isCurrentPrimaryOwner(actor, realmId)) return;
+      throw error;
+    }
+  }
+
+  private async isCurrentPrimaryOwner(actor: ActorContext, realmId: string): Promise<boolean> {
+    if (this.owners === undefined || actorRealmId(actor) !== SYSTEM_ACTOR_REALM_ID) return false;
+    const systemIdentityId = actor.identityId ?? actor.subjectId;
+    const membership = await this.store.findMembershipByIdentity(realmId, systemIdentityId);
+    if (membership?.status !== "active") return false;
+    const owner = await this.owners.getPrimaryOwner(realmId);
+    return owner.state === "assigned"
+      && owner.subjectId !== undefined
+      && membership.subjectId === owner.subjectId;
+  }
+
+  private requireOwners(): RealmOwnerCoordinator {
+    if (this.owners === undefined) {
+      throw new ApplicationError(
+        "REALM_OWNER_COORDINATOR_UNAVAILABLE",
+        503,
+        "Realm Owner management is not configured.",
+      );
+    }
+    return this.owners;
+  }
+
   public async listFullAccessBindings(
     actor: ActorContext,
     realmId: string,
   ): Promise<readonly RealmFullAccessBindingRecord[]> {
     await requireRealmAdministration(actor);
     await this.requireContentRealm(actor.workspaceId, realmId);
-    return this.store.listFullAccessBindings(realmId);
+    return this.store.listFullAccessBindings(realmId, this.runtime.now());
   }
 
   public async grantFullAccess(
     actor: ActorContext,
     input: {
       readonly realmId: string;
-      readonly subjectId: string;
       readonly reason: string;
       readonly reauthenticatedAt: string;
-      readonly validUntil?: string;
+      readonly validUntil: string;
     },
   ): Promise<RealmFullAccessBindingRecord> {
     await requireRealmAdministration(actor);
     await this.requireContentRealm(actor.workspaceId, input.realmId);
     const now = this.runtime.now();
     requireRecentReauthentication(input.reauthenticatedAt, now);
-    const membership = (await this.store.listMemberships(input.realmId)).find(
-      (candidate) => candidate.subjectId === input.subjectId,
-    );
-    if (membership?.status !== "active") {
-      throw new ApplicationError(
-        "REALM_MEMBERSHIP_NOT_ACTIVE",
-        409,
-        "Realm Full Access requires an active Membership.",
-      );
-    }
     const reason = displayName(input.reason, "Full Access reason");
-    if (input.validUntil !== undefined) {
-      const timestamp = Date.parse(input.validUntil);
-      if (!Number.isFinite(timestamp) || timestamp <= Date.parse(now)) {
-        invalid("validUntil must be a future ISO timestamp.");
-      }
+    const timestamp = Date.parse(input.validUntil);
+    const nowTimestamp = Date.parse(now);
+    if (!Number.isFinite(timestamp) || timestamp <= nowTimestamp) {
+      invalid("validUntil must be a future ISO timestamp.");
     }
+    if (timestamp > nowTimestamp + 4 * 60 * 60 * 1000) {
+      invalid("validUntil cannot be more than 4 hours in the future.");
+    }
+    const systemIdentityId = actor.identityId ?? actor.subjectId;
     return this.store.grantFullAccess({
       id: this.runtime.newFullAccessId(),
       realmId: input.realmId,
-      subjectId: input.subjectId,
-      grantedByIdentityId: actor.identityId ?? actor.subjectId,
-      grantedBySubjectId: actor.subjectId,
+      systemIdentityId,
+      grantedByIdentityId: systemIdentityId,
       reason,
       createdAt: now,
-      ...(input.validUntil === undefined ? {} : { validUntil: input.validUntil }),
+      validUntil: input.validUntil,
     });
   }
 

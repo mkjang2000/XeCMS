@@ -112,6 +112,12 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      if (input.mutation.type === "binding.replace-primary-owner") {
+        // Lock eligibility rows before the policy state. Identity disable and
+        // Membership suspension take those rows first as well; a consistent
+        // order avoids deadlocks and closes the validation/CAS race.
+        await this.lockEligiblePrimaryOwner(client, input.mutation.value);
+      }
       const current = await this.lockPolicyState(client, input.realmId);
       if (current === 0) {
         throw new ApplicationError(
@@ -182,7 +188,8 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
       }
     }
     const result = await this.pool.query<AuditRow>(
-      `SELECT id, realm_id, policy_revision, actor_subject_id, action, target_type,
+      `SELECT id, realm_id, policy_revision, actor_subject_id, actor_identity_id,
+              access_mode, full_access_binding_id, action, target_type,
               target_id, before_state, after_state, decision, occurred_at
        FROM ${this.q("_xecms_auth_audit_log")}
        WHERE realm_id = $1
@@ -431,6 +438,10 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
       case "binding.delete":
         await this.deleteById(client, "_xecms_auth_role_bindings", realmId, mutation.id);
         return;
+      case "binding.replace-primary-owner":
+        assertRealm(realmId, mutation.value.realmId);
+        await this.replacePrimaryOwnerBinding(client, mutation.value, audit);
+        return;
       case "group-membership.create":
         assertRealm(realmId, mutation.value.realmId);
         await this.insertGroupMembership(client, mutation.value, audit);
@@ -464,7 +475,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
         value.protected === true,
         value.disabled === true ? audit.occurredAt : null,
         audit.occurredAt,
-        audit.actorSubjectId,
+        auditActorStorageId(audit),
       ],
     );
   }
@@ -481,7 +492,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
            updated_at = $8, updated_by = $9
        WHERE realm_id = $1 AND id = $2`,
       [value.realmId, value.id, value.type, value.name, value.identityId ?? null,
-        value.protected === true, value.disabled === true, audit.occurredAt, audit.actorSubjectId],
+        value.protected === true, value.disabled === true, audit.occurredAt, auditActorStorageId(audit)],
     );
     assertChanged(result.rowCount, "subject", value.id);
   }
@@ -495,7 +506,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
       `INSERT INTO ${this.q("_xecms_auth_resources")}
          (id, realm_id, name, resource_type, parent_id, protected, created_at, created_by, updated_at, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8)`,
-      [value.id, value.realmId, value.name, value.type, value.parentId ?? null, value.protected === true, audit.occurredAt, audit.actorSubjectId],
+      [value.id, value.realmId, value.name, value.type, value.parentId ?? null, value.protected === true, audit.occurredAt, auditActorStorageId(audit)],
     );
   }
 
@@ -516,7 +527,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
          updated_at = EXCLUDED.updated_at,
          updated_by = EXCLUDED.updated_by
        WHERE ${this.q("_xecms_auth_resources")}.realm_id = EXCLUDED.realm_id`,
-      [value.id, value.realmId, value.name, value.type, value.parentId ?? null, value.protected === true, audit.occurredAt, audit.actorSubjectId],
+      [value.id, value.realmId, value.name, value.type, value.parentId ?? null, value.protected === true, audit.occurredAt, auditActorStorageId(audit)],
     );
     assertChanged(result.rowCount, "resource", value.id);
   }
@@ -530,7 +541,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
       `INSERT INTO ${this.q("_xecms_auth_authority_levels")}
          (id, realm_id, name, rank, protected, created_at, created_by, updated_at, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $6, $7)`,
-      [value.id, value.realmId, value.name, value.rank, value.protected === true, audit.occurredAt, audit.actorSubjectId],
+      [value.id, value.realmId, value.name, value.rank, value.protected === true, audit.occurredAt, auditActorStorageId(audit)],
     );
   }
 
@@ -543,7 +554,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
       `UPDATE ${this.q("_xecms_auth_authority_levels")}
        SET name = $3, rank = $4, protected = $5, updated_at = $6, updated_by = $7
        WHERE realm_id = $1 AND id = $2`,
-      [value.realmId, value.id, value.name, value.rank, value.protected === true, audit.occurredAt, audit.actorSubjectId],
+      [value.realmId, value.id, value.name, value.rank, value.protected === true, audit.occurredAt, auditActorStorageId(audit)],
     );
     assertChanged(result.rowCount, "authority level", value.id);
   }
@@ -558,7 +569,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
          (id, realm_id, level_id, name, description, protected, field_access_restricted,
           created_at, created_by, updated_at, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9)`,
-      [value.id, value.realmId, value.levelId, value.name, value.description ?? null, value.protected === true, value.fieldAccess !== undefined, audit.occurredAt, audit.actorSubjectId],
+      [value.id, value.realmId, value.levelId, value.name, value.description ?? null, value.protected === true, value.fieldAccess !== undefined, audit.occurredAt, auditActorStorageId(audit)],
     );
     await this.replaceRoleRelations(client, value);
   }
@@ -573,7 +584,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
        SET level_id = $3, name = $4, description = $5, protected = $6, field_access_restricted = $7,
            updated_at = $8, updated_by = $9
        WHERE realm_id = $1 AND id = $2`,
-      [value.realmId, value.id, value.levelId, value.name, value.description ?? null, value.protected === true, value.fieldAccess !== undefined, audit.occurredAt, audit.actorSubjectId],
+      [value.realmId, value.id, value.levelId, value.name, value.description ?? null, value.protected === true, value.fieldAccess !== undefined, audit.occurredAt, auditActorStorageId(audit)],
     );
     assertChanged(result.rowCount, "role", value.id);
     await this.replaceRoleRelations(client, value);
@@ -633,7 +644,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $11, $12)`,
       [value.id, value.realmId, value.subjectId, value.roleId, value.resourceId, value.propagation,
         value.validFrom ?? null, value.validUntil ?? null, json(value.constraints ?? {}), value.protected === true,
-        audit.occurredAt, audit.actorSubjectId],
+        audit.occurredAt, auditActorStorageId(audit)],
     );
   }
 
@@ -650,9 +661,93 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
        WHERE realm_id = $1 AND id = $2`,
       [value.realmId, value.id, value.subjectId, value.roleId, value.resourceId, value.propagation,
         value.validFrom ?? null, value.validUntil ?? null, json(value.constraints ?? {}), value.protected === true,
-        audit.occurredAt, audit.actorSubjectId],
+        audit.occurredAt, auditActorStorageId(audit)],
     );
     assertChanged(result.rowCount, "binding", value.id);
+  }
+
+  private async replacePrimaryOwnerBinding(
+    client: PoolClient,
+    value: AuthorizationBindingRecord,
+    audit: AuthorizationAuditDraft,
+  ): Promise<void> {
+    const prefix = `authorization:${value.realmId}`;
+    if (
+      value.id !== `${prefix}:binding:primary-owner`
+      || value.roleId !== `${prefix}:role:owner`
+      || value.protected !== true
+      || value.validFrom !== undefined
+      || value.validUntil !== undefined
+      || value.constraints !== undefined
+      || value.propagation !== "self-and-children"
+    ) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_BINDING_INVALID",
+        409,
+        "The trusted Primary Owner Binding shape is invalid.",
+      );
+    }
+
+    await client.query(
+      `DELETE FROM ${this.q("_xecms_auth_role_bindings")}
+        WHERE realm_id = $1 AND role_id = $2`,
+      [value.realmId, value.roleId],
+    );
+    await this.insertBinding(client, value, audit);
+  }
+
+  private async lockEligiblePrimaryOwner(
+    client: PoolClient,
+    value: AuthorizationBindingRecord,
+  ): Promise<void> {
+    // Recheck and lock every durable eligibility row in the same transaction
+    // that switches the protected Binding. Concurrent suspension/disable waits
+    // until this command commits, so a stale application precheck cannot make
+    // an inactive identity the Realm Owner.
+    const eligible = await client.query(
+      `SELECT 1
+         FROM ${this.q("_xecms_auth_subjects")} subject
+         JOIN ${this.q("_xecms_realm_memberships")} membership
+           ON membership.realm_id = subject.realm_id
+          AND membership.subject_id = subject.id
+          AND membership.identity_id = subject.identity_id
+         JOIN ${this.q("_xecms_identities")} identity
+           ON identity.id = membership.identity_id
+          AND identity.workspace_id = membership.workspace_id
+         JOIN ${this.q("_xecms_realms")} realm
+           ON realm.id = membership.realm_id
+          AND realm.workspace_id = membership.workspace_id
+         JOIN ${this.q("_xecms_realm_memberships")} system_membership
+           ON system_membership.identity_id = identity.id
+          AND system_membership.workspace_id = identity.workspace_id
+         JOIN ${this.q("_xecms_realms")} system_realm
+           ON system_realm.id = system_membership.realm_id
+          AND system_realm.workspace_id = system_membership.workspace_id
+         JOIN ${this.q("_xecms_auth_subjects")} system_subject
+           ON system_subject.realm_id = system_realm.id
+          AND system_subject.id = system_membership.subject_id
+          AND system_subject.identity_id = identity.id
+        WHERE subject.realm_id = $1 AND subject.id = $2
+          AND subject.subject_type = 'user' AND subject.identity_id IS NOT NULL
+          AND subject.protected = false AND subject.disabled_at IS NULL
+          AND membership.status = 'active'
+          AND identity.disabled_at IS NULL AND identity.identity_kind = 'human'
+          AND identity.is_owner = false
+          AND realm.kind = 'content' AND realm.status = 'active'
+          AND system_realm.kind = 'system' AND system_realm.status = 'active'
+          AND system_membership.status = 'active'
+          AND system_subject.subject_type = 'user'
+          AND system_subject.disabled_at IS NULL
+        FOR UPDATE OF subject, membership, identity, system_membership, system_subject`,
+      [value.realmId, value.subjectId],
+    );
+    if (eligible.rowCount !== 1) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_SUBJECT_INELIGIBLE",
+        409,
+        "A Primary Realm Owner must be an active identity-linked System operator.",
+      );
+    }
   }
 
   private async insertGroupMembership(
@@ -665,7 +760,7 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
       `INSERT INTO ${this.q("_xecms_auth_group_members")}
          (id, realm_id, group_subject_id, member_subject_id, created_at, created_by)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [value.id, value.realmId, value.groupSubjectId, value.memberSubjectId, audit.occurredAt, audit.actorSubjectId],
+      [value.id, value.realmId, value.groupSubjectId, value.memberSubjectId, audit.occurredAt, auditActorStorageId(audit)],
     );
   }
 
@@ -838,30 +933,40 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
   ): Promise<void> {
     await client.query(
       `INSERT INTO ${this.q("_xecms_auth_policy_revisions")}
-         (realm_id, revision, actor_subject_id, change_kind, target_type, target_id, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [realmId, revision, audit.actorSubjectId, changeKind, audit.targetType, audit.targetId, audit.occurredAt],
+         (realm_id, revision, actor_subject_id, actor_identity_id, access_mode,
+          full_access_binding_id, change_kind, target_type, target_id, occurred_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [realmId, revision, audit.actorSubjectId ?? null, audit.actorIdentityId ?? null,
+        audit.accessMode ?? null, audit.fullAccessBindingId ?? null, changeKind,
+        audit.targetType, audit.targetId, audit.occurredAt],
     );
     await client.query(
       `INSERT INTO ${this.q("_xecms_auth_audit_log")}
-         (id, realm_id, policy_revision, actor_subject_id, action, target_type, target_id,
+         (id, realm_id, policy_revision, actor_subject_id, actor_identity_id,
+          access_mode, full_access_binding_id, action, target_type, target_id,
           before_state, after_state, decision, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11)`,
-      [audit.id, realmId, revision, audit.actorSubjectId, audit.action, audit.targetType, audit.targetId,
-        nullableJson(audit.before), nullableJson(audit.after), nullableJson(audit.decision), audit.occurredAt],
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+               $11::jsonb, $12::jsonb, $13::jsonb, $14)`,
+      [audit.id, realmId, revision, audit.actorSubjectId ?? null,
+        audit.actorIdentityId ?? null, audit.accessMode ?? null,
+        audit.fullAccessBindingId ?? null, audit.action, audit.targetType, audit.targetId,
+        nullableJson(audit.before), nullableJson(audit.after), nullableJson(audit.decision),
+        audit.occurredAt],
     );
     const topic = audit.targetType === "binding" ? "role.binding.changed" : `authorization.${audit.action}`;
     await client.query(
       `INSERT INTO ${this.q("_xecms_outbox_events")}
          (id, workspace_id, realm_id, topic, aggregate_type, aggregate_id,
-          aggregate_version, actor_subject_id, occurred_at, payload, created_at)
-       SELECT $1, realm.workspace_id, $2, $3, 'authorization', $4, $5, $6, $7, $8::jsonb, $7
+          aggregate_version, actor_subject_id, actor_identity_id, occurred_at, payload, created_at)
+       SELECT $1, realm.workspace_id, $2, $3, 'authorization', $4, $5, $6, $7, $8, $9::jsonb, $8
          FROM ${this.q("_xecms_realms")} realm WHERE realm.id = $2`,
       [`outbox_authorization_${audit.id}`, realmId, topic, audit.targetId, revision,
-        audit.actorSubjectId, audit.occurredAt, JSON.stringify({
+        audit.actorSubjectId ?? null, audit.actorIdentityId ?? null, audit.occurredAt, JSON.stringify({
           action: audit.action,
           targetType: audit.targetType,
           targetId: audit.targetId,
+          accessMode: audit.accessMode,
+          fullAccessBindingId: audit.fullAccessBindingId,
           before: audit.before,
           after: audit.after,
         })],
@@ -1065,7 +1170,10 @@ interface AuditRow extends QueryResultRow {
   readonly id: string;
   readonly realm_id: string;
   readonly policy_revision: string | number;
-  readonly actor_subject_id: string;
+  readonly actor_subject_id: string | null;
+  readonly actor_identity_id: string | null;
+  readonly access_mode: NonNullable<AuthorizationAuditRecord["accessMode"]> | null;
+  readonly full_access_binding_id: string | null;
   readonly action: string;
   readonly target_type: AuthorizationAuditRecord["targetType"];
   readonly target_id: string;
@@ -1175,7 +1283,12 @@ function auditFromRow(row: AuditRow): AuthorizationAuditRecord {
     id: row.id,
     realmId: row.realm_id,
     revision: Number(row.policy_revision),
-    actorSubjectId: row.actor_subject_id,
+    ...(row.actor_subject_id === null ? {} : { actorSubjectId: row.actor_subject_id }),
+    ...(row.actor_identity_id === null ? {} : { actorIdentityId: row.actor_identity_id }),
+    ...(row.access_mode === null ? {} : { accessMode: row.access_mode }),
+    ...(row.full_access_binding_id === null
+      ? {}
+      : { fullAccessBindingId: row.full_access_binding_id }),
     action: row.action,
     targetType: row.target_type,
     targetId: row.target_id,
@@ -1226,6 +1339,18 @@ function json(value: unknown): string {
 
 function nullableJson(value: unknown | null): string | null {
   return value === null || value === undefined ? null : json(value);
+}
+
+function auditActorStorageId(audit: AuthorizationAuditDraft): string {
+  const actorId = audit.actorSubjectId ?? audit.actorIdentityId;
+  if (actorId === undefined) {
+    throw new ApplicationError(
+      "AUTHORIZATION_AUDIT_ACTOR_REQUIRED",
+      500,
+      "Authorization mutations require a Realm Subject or System Identity audit actor.",
+    );
+  }
+  return actorId;
 }
 
 interface PostgresLikeError {

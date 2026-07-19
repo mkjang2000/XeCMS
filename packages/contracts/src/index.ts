@@ -722,6 +722,14 @@ export interface AuthorizationRoleBindingDto {
 export interface AuthorizationPolicyDto {
   readonly realmId: string;
   readonly revision: number;
+  /** Present on Content Realm administration routes; omitted on legacy/System policy routes. */
+  readonly administration?: {
+    readonly accessMode: "realm-actor" | "cms-owner-readonly" | "realm-full-access";
+    readonly systemIdentityId?: string;
+    readonly realmSubjectId?: string;
+    readonly fullAccessBindingId?: string;
+    readonly fullAccessValidUntil?: string;
+  };
   readonly subjects: readonly AuthorizationSubjectDto[];
   readonly groupMemberships: readonly AuthorizationGroupMembershipDto[];
   readonly resources: readonly AuthorizationResourceDto[];
@@ -821,7 +829,10 @@ export interface AuthorizationAuditEntryDto {
   readonly id: string;
   readonly realmId: string;
   readonly policyRevision: number;
-  readonly actorSubjectId: string;
+  readonly actorSubjectId?: string;
+  readonly actorIdentityId?: string;
+  readonly accessMode?: "realm-actor" | "cms-owner-readonly" | "realm-full-access" | "cms-owner-control-plane" | "system-provisioner";
+  readonly fullAccessBindingId?: string;
   readonly action: string;
   readonly targetType: string;
   readonly targetId: string;
@@ -923,6 +934,8 @@ export interface RealmAuthenticationPolicyDto {
 /** Public-safe Global Identity information used by Realm administration. */
 export interface GlobalIdentityDto {
   readonly globalIdentityId: string;
+  readonly kind: "human" | "service";
+  readonly isOwner?: boolean;
   readonly primaryIdentifier: string;
   readonly originRealmId: string;
   readonly credentialVersion: number;
@@ -1108,6 +1121,8 @@ export interface RealmMembershipDto {
   readonly activatedAt?: string;
   readonly suspendedAt?: string;
   readonly identity?: GlobalIdentityDto;
+  /** True only for the trusted canonical content-administrator binding. */
+  readonly realmAdministrator?: boolean;
 }
 
 export interface RealmMembershipListDto {
@@ -1117,18 +1132,51 @@ export interface RealmMembershipListDto {
 export interface RealmFullAccessBindingDto {
   readonly bindingId: string;
   readonly realmId: string;
-  readonly subjectId: string;
+  readonly systemIdentityId: string;
   readonly grantedByGlobalIdentityId: string;
-  readonly grantedBySubjectId: string;
   readonly reason: string;
   readonly createdAt: string;
-  readonly validUntil?: string;
+  readonly validUntil: string;
   readonly revokedAt?: string;
   readonly revokedByGlobalIdentityId?: string;
+  readonly terminationReason?: "revoked" | "expired";
 }
 
 export interface RealmFullAccessListDto {
   readonly items: readonly RealmFullAccessBindingDto[];
+  /** The current System Identity's active grant, when one exists. */
+  readonly activeBinding?: RealmFullAccessBindingDto;
+}
+
+export interface RealmOwnerStatusDto {
+  readonly realmId: string;
+  readonly status: "healthy" | "ownerless" | "invalid";
+  readonly policyRevision: number;
+  readonly owner?: {
+    readonly globalIdentityId: string;
+    readonly membershipId: string;
+    readonly subjectId: string;
+    readonly primaryIdentifier: string;
+    readonly identityActive: boolean;
+    readonly membershipStatus: RealmMembershipStatusDto;
+  };
+  readonly issueCode?: string;
+}
+
+export interface RealmOwnerCommandRequest {
+  readonly targetMembershipId: string;
+  readonly expectedPolicyRevision: number;
+  readonly reason: string;
+  /** Current System account password; never persisted or returned. */
+  readonly password: string;
+}
+
+export type AssignRealmOwnerRequest = RealmOwnerCommandRequest;
+export type RecoverRealmOwnerRequest = RealmOwnerCommandRequest;
+
+export interface TransferRealmOwnerRequest extends RealmOwnerCommandRequest {
+  readonly revokePreviousSessions?: boolean;
+  readonly suspendPreviousMembership?: boolean;
 }
 
 export interface CreateIdentityRealmRequest {
@@ -1194,12 +1242,16 @@ export interface GrantRealmAdministratorRequest {
   readonly reauthPassword: string;
 }
 
+export interface RevokeRealmAdministratorRequest {
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly reauthPassword: string;
+}
+
 export interface GrantRealmFullAccessRequest {
-  readonly subjectId: string;
   readonly reason: string;
   /** Current System account password; never persisted or returned. */
   readonly password: string;
-  readonly validUntil?: string;
+  readonly validUntil: string;
 }
 
 export interface RevokeRealmFullAccessRequest {

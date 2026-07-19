@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyIdentityRealmMigration, IDENTITY_REALM_MIGRATION_ID } from "./identity-realm-migration.js";
+import {
+  applyIdentityRealmMigration,
+  applyRealmControlPlaneAccessMigration,
+  IDENTITY_REALM_MIGRATION_ID,
+} from "./identity-realm-migration.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, SYSTEM_REALM_ID, migrateCore } from "./migrate.js";
 import { PostgresIdentityRealmStore } from "./postgres-identity-realms.js";
@@ -26,6 +30,7 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
   const schema = `xecms_identity_realm_${randomUUID().replaceAll("-", "_")}`;
   const legacySchema = `xecms_identity_legacy_${randomUUID().replaceAll("-", "_")}`;
   const bootstrapSchema = `xecms_identity_bootstrap_${randomUUID().replaceAll("-", "_")}`;
+  const fullAccessMigrationSchema = `xecms_fa_${randomUUID().replaceAll("-", "_")}`;
   const pool = new Pool({ connectionString: DATABASE_URL });
   const store = new PostgresIdentityRealmStore(pool, schema);
   const q = (name: string): string => qualifiedName(schema, name);
@@ -60,11 +65,23 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
        VALUES ($1, $2, 'user', 'Realm owner', $3, true, $4, $3, $4, $3)`,
       [ownerSubjectId, SYSTEM_REALM_ID, ownerIdentityId, now],
     );
+    await store.createMembership({
+      id: "membership_identity_realm_owner",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      identityId: ownerIdentityId,
+      realmId: SYSTEM_REALM_ID,
+      subjectId: ownerSubjectId,
+      status: "active",
+      provisionedBy: "explicit",
+      actorIdentityId: ownerIdentityId,
+      now,
+    });
   });
 
   afterAll(async () => {
     await pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`);
     await pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(legacySchema)} CASCADE`);
+    await pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(fullAccessMigrationSchema)} CASCADE`);
     await pool.end();
   });
 
@@ -442,13 +459,153 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
     })).resolves.toMatchObject({ status: "active", revision: 3 });
   });
 
+  it("protects the Primary Owner Membership at the DB boundary and permits cleanup after transfer", async () => {
+    const ownerBindingId = "authorization:rlm_community:binding:primary-owner";
+    const ownerLevelId = "authorization:rlm_community:level:test-owner";
+    const ownerRoleId = "authorization:rlm_community:role:test-owner";
+    const rootResourceId = "authorization:rlm_community:resource:test-root";
+    await pool.query(
+      `INSERT INTO ${q("_xecms_auth_resources")}
+         (id, realm_id, name, resource_type, protected, created_at, created_by, updated_at, updated_by)
+       VALUES ($1, 'rlm_community', 'Test root', 'authorization-root', true, $2, $3, $2, $3)`,
+      [rootResourceId, now, ownerIdentityId],
+    );
+    await pool.query(
+      `INSERT INTO ${q("_xecms_auth_authority_levels")}
+         (id, realm_id, name, rank, protected, created_at, created_by, updated_at, updated_by)
+       VALUES ($1, 'rlm_community', 'Test Owner', 100, true, $2, $3, $2, $3)`,
+      [ownerLevelId, now, ownerIdentityId],
+    );
+    await pool.query(
+      `INSERT INTO ${q("_xecms_auth_roles")}
+         (id, realm_id, level_id, name, protected, created_at, created_by, updated_at, updated_by)
+       VALUES ($1, 'rlm_community', $2, 'Test Owner', true, $3, $4, $3, $4)`,
+      [ownerRoleId, ownerLevelId, now, ownerIdentityId],
+    );
+    await pool.query(
+      `INSERT INTO ${q("_xecms_auth_role_bindings")}
+         (id, realm_id, subject_id, role_id, resource_id, propagation, protected,
+          created_at, created_by, updated_at, updated_by)
+       VALUES ($1, 'rlm_community', 'subject_community_member', $2, $3,
+               'self-and-children', true, $4, $5, $4, $5)`,
+      [ownerBindingId, ownerRoleId, rootResourceId, now, ownerIdentityId],
+    );
+    await store.createContentSession({
+      tokenHash: "primary_owner_session_hash",
+      csrfTokenHash: "primary_owner_csrf_hash",
+      identityId: "usr_community_member",
+      realmId: "rlm_community",
+      membershipId: "membership_community_member",
+      subjectId: "subject_community_member",
+      credentialVersion: 1,
+      authenticatedAt: "2026-07-15T11:04:00.000Z",
+      expiresAt: "2026-07-15T18:00:00.000Z",
+    });
+    const membership = await store.findMembershipById("membership_community_member");
+    expect(membership).not.toBeNull();
+
+    await expect(store.suspendMembership({
+      realmId: "rlm_community",
+      membershipId: "membership_community_member",
+      expectedRevision: membership!.revision,
+      actorIdentityId: ownerIdentityId,
+      now: "2026-07-15T11:05:00.000Z",
+    })).rejects.toMatchObject({
+      code: "REALM_PRIMARY_OWNER_MEMBERSHIP_SUSPENSION_FORBIDDEN",
+      status: 409,
+    });
+    await expect(store.findContentSession(
+      "primary_owner_session_hash",
+      "rlm_community",
+      "2026-07-15T11:06:00.000Z",
+    )).resolves.not.toBeNull();
+
+    // This retarget is the policy CAS result. Once the old Subject is no longer
+    // Primary Owner, the same Membership cleanup is permitted and clears sessions.
+    await pool.query(
+      `UPDATE ${q("_xecms_auth_role_bindings")}
+          SET subject_id = 'subject_provisioned_member', updated_at = $2, updated_by = $3
+        WHERE realm_id = 'rlm_community' AND id = $1`,
+      [ownerBindingId, "2026-07-15T11:07:00.000Z", ownerIdentityId],
+    );
+    const suspended = await store.suspendMembership({
+      realmId: "rlm_community",
+      membershipId: "membership_community_member",
+      expectedRevision: membership!.revision,
+      actorIdentityId: ownerIdentityId,
+      now: "2026-07-15T11:08:00.000Z",
+    });
+    expect(suspended.status).toBe("suspended");
+    await expect(store.findContentSession(
+      "primary_owner_session_hash",
+      "rlm_community",
+      "2026-07-15T11:09:00.000Z",
+    )).resolves.toBeNull();
+    const active = await store.reactivateMembership({
+      realmId: "rlm_community",
+      membershipId: suspended.id,
+      expectedRevision: suspended.revision,
+      actorIdentityId: ownerIdentityId,
+      now: "2026-07-15T11:10:00.000Z",
+    });
+
+    await store.createContentSession({
+      tokenHash: "former_owner_session_hash",
+      csrfTokenHash: "former_owner_csrf_hash",
+      identityId: "usr_community_member",
+      realmId: "rlm_community",
+      membershipId: active.id,
+      subjectId: active.subjectId,
+      credentialVersion: 1,
+      authenticatedAt: "2026-07-15T11:11:00.000Z",
+      expiresAt: "2026-07-15T18:00:00.000Z",
+    });
+    await expect(store.revokeMembershipSessions({
+      realmId: "rlm_community",
+      membershipId: active.id,
+      actorIdentityId: ownerIdentityId,
+      now: "2026-07-15T11:12:00.000Z",
+      reason: "realm-owner-transferred",
+    })).resolves.toBe(1);
+    await expect(store.findContentSession(
+      "former_owner_session_hash",
+      "rlm_community",
+      "2026-07-15T11:13:00.000Z",
+    )).resolves.toBeNull();
+    await expect(store.findMembershipById(active.id)).resolves.toMatchObject({ status: "active" });
+    const audit = await pool.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM ${q("_xecms_audit_log")}
+        WHERE event_type = 'realm.membership.sessions-revoked'
+        ORDER BY occurred_at DESC LIMIT 1`,
+    );
+    expect(audit.rows[0]?.metadata).toMatchObject({
+      realmId: "rlm_community",
+      membershipId: active.id,
+      reason: "realm-owner-transferred",
+      revokedSessions: 1,
+    });
+
+    await pool.query(
+      `DELETE FROM ${q("_xecms_auth_role_bindings")} WHERE id = $1`,
+      [ownerBindingId],
+    );
+    await pool.query(`DELETE FROM ${q("_xecms_auth_roles")} WHERE id = $1`, [ownerRoleId]);
+    await pool.query(
+      `DELETE FROM ${q("_xecms_auth_authority_levels")} WHERE id = $1`,
+      [ownerLevelId],
+    );
+    await pool.query(
+      `DELETE FROM ${q("_xecms_auth_resources")} WHERE id = $1`,
+      [rootResourceId],
+    );
+  });
+
   it("honors Full Access expiry, uniqueness and revocation", async () => {
     const grant = await store.grantFullAccess({
-      id: "full_access_community_member",
+      id: "full_access_system_owner",
       realmId: "rlm_community",
-      subjectId: "subject_community_member",
+      systemIdentityId: ownerIdentityId,
       grantedByIdentityId: ownerIdentityId,
-      grantedBySubjectId: ownerSubjectId,
       reason: "Acceptance recovery grant",
       createdAt: "2026-07-15T12:00:00.000Z",
       validUntil: "2026-07-15T13:00:00.000Z",
@@ -456,12 +613,30 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
     expect(grant.revokedAt).toBeUndefined();
     await expect(store.hasActiveFullAccess(
       "rlm_community",
-      "subject_community_member",
+      ownerIdentityId,
       "2026-07-15T12:59:59.000Z",
     )).resolves.toBe(true);
+    await expect(store.findActiveFullAccessBinding(
+      "rlm_community",
+      ownerIdentityId,
+      "2026-07-15T12:59:59.000Z",
+    )).resolves.toMatchObject({
+      id: grant.id,
+      systemIdentityId: ownerIdentityId,
+      validUntil: "2026-07-15T13:00:00.000Z",
+    });
+    await expect(store.grantFullAccess({
+      id: "full_access_content_identity_forbidden",
+      realmId: "rlm_community",
+      systemIdentityId: "usr_community_member",
+      grantedByIdentityId: "usr_community_member",
+      reason: "Must not cross from the Content data plane",
+      createdAt: "2026-07-15T12:00:00.000Z",
+      validUntil: "2026-07-15T12:30:00.000Z",
+    })).rejects.toMatchObject({ code: "FULL_ACCESS_GRANT_INVALID", status: 409 });
     await expect(store.hasActiveFullAccess(
       "rlm_community",
-      "subject_community_member",
+      ownerIdentityId,
       "2026-07-15T13:00:00.000Z",
     )).resolves.toBe(false);
     await expect(store.grantFullAccess({
@@ -480,9 +655,8 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
     await store.grantFullAccess({
       id: "full_access_short_lived",
       realmId: "rlm_community",
-      subjectId: "subject_community_member",
+      systemIdentityId: ownerIdentityId,
       grantedByIdentityId: ownerIdentityId,
-      grantedBySubjectId: ownerSubjectId,
       reason: "Short recovery window",
       createdAt: "2026-07-15T12:31:00.000Z",
       validUntil: "2026-07-15T12:40:00.000Z",
@@ -490,9 +664,8 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
     await expect(store.grantFullAccess({
       id: "full_access_after_expiry",
       realmId: "rlm_community",
-      subjectId: "subject_community_member",
+      systemIdentityId: ownerIdentityId,
       grantedByIdentityId: ownerIdentityId,
-      grantedBySubjectId: ownerSubjectId,
       reason: "Renewed recovery window",
       createdAt: "2026-07-15T12:41:00.000Z",
       validUntil: "2026-07-15T13:41:00.000Z",
@@ -503,6 +676,79 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
     );
     expect(new Date(expired.rows[0]!.revoked_at!).toISOString())
       .toBe("2026-07-15T12:41:00.000Z");
+  });
+
+  it("records explicit Realm administration access-mode audit metadata", async () => {
+    await store.recordRealmAdministrationEvent({
+      event: "REALM_POLICY_OVERSIGHT_ENTERED",
+      systemIdentityId: ownerIdentityId,
+      realmId: "rlm_community",
+      accessMode: "cms-owner-readonly",
+      occurredAt: "2026-07-15T14:00:00.000Z",
+      requestId: "request_oversight_1",
+      sessionId: "session_owner_1",
+    });
+    const audit = await pool.query<{
+      readonly event_type: string;
+      readonly identity_id: string;
+      readonly metadata: Record<string, unknown>;
+    }>(
+      `SELECT event_type, identity_id, metadata
+         FROM ${q("_xecms_audit_log")}
+        WHERE event_type = 'REALM_POLICY_OVERSIGHT_ENTERED'`,
+    );
+    expect(audit.rows[0]).toMatchObject({
+      event_type: "REALM_POLICY_OVERSIGHT_ENTERED",
+      identity_id: ownerIdentityId,
+      metadata: {
+        targetRealmId: "rlm_community",
+        systemIdentityId: ownerIdentityId,
+        accessMode: "cms-owner-readonly",
+        requestId: "request_oversight_1",
+      },
+    });
+  });
+
+  it("archives legacy Subject grants without promoting them to control-plane access", async () => {
+    await migrateCore(pool, fullAccessMigrationSchema);
+    const migrationQ = (name: string): string => qualifiedName(fullAccessMigrationSchema, name);
+    await pool.query(`
+      DROP TABLE ${migrationQ("_xecms_realm_full_access_bindings")};
+      CREATE TABLE ${migrationQ("_xecms_realm_full_access_bindings")} (
+        id text PRIMARY KEY,
+        realm_id text NOT NULL,
+        subject_id text NOT NULL,
+        granted_by_identity_id text NOT NULL,
+        granted_by_subject_id text NOT NULL,
+        reason text NOT NULL,
+        created_at timestamptz NOT NULL,
+        valid_until timestamptz,
+        revoked_at timestamptz,
+        revoked_by_identity_id text
+      );
+      INSERT INTO ${migrationQ("_xecms_realm_full_access_bindings")}
+        (id, realm_id, subject_id, granted_by_identity_id, granted_by_subject_id,
+         reason, created_at, valid_until)
+      VALUES ('legacy_subject_grant', 'rlm_legacy', 'subject_legacy', 'identity_grantor',
+              'subject_grantor', 'Legacy data access',
+              '2026-07-15T10:00:00.000Z', '2026-07-15T11:00:00.000Z');
+    `);
+    await applyRealmControlPlaneAccessMigration(pool, fullAccessMigrationSchema);
+    await applyRealmControlPlaneAccessMigration(pool, fullAccessMigrationSchema);
+
+    const archived = await pool.query<{
+      readonly id: string;
+      readonly archive_reason: string;
+    }>(`SELECT id, archive_reason
+          FROM ${migrationQ("_xecms_realm_full_access_legacy_subject_bindings")}`);
+    expect(archived.rows).toEqual([{
+      id: "legacy_subject_grant",
+      archive_reason: "content-data-plane-full-access-retired",
+    }]);
+    const active = await pool.query(
+      `SELECT system_identity_id FROM ${migrationQ("_xecms_realm_full_access_bindings")}`,
+    );
+    expect(active.rowCount).toBe(0);
   });
 
   it("upgrades legacy complete sessions and deletes incomplete principals fail-closed", async () => {

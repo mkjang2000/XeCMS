@@ -10,6 +10,7 @@ import {
 } from "@xecms/application";
 import type {
   CollectionListDto,
+  AssignRealmOwnerRequest,
   ContentAnonymousSessionDto,
   ContentAuthenticatedSessionDto,
   ContentRealmLoginRequest,
@@ -32,13 +33,17 @@ import type {
   RealmFullAccessListDto,
   RealmMembershipDto,
   RealmMembershipListDto,
+  RealmOwnerStatusDto,
+  RecoverRealmOwnerRequest,
   GrantRealmAdministratorRequest,
+  RevokeRealmAdministratorRequest,
   ProvisionRealmMembershipRequest,
   RegisterRealmMembershipRequest,
   UpdateContentRealmProfileRequest,
   UpdateDocumentRequest,
   UpdateIdentityRealmRequest,
   UpdateRealmMembershipRequest,
+  TransferRealmOwnerRequest,
 } from "@xecms/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { parseDocumentQueryRequest } from "./document-query-request.js";
@@ -72,7 +77,7 @@ export interface IdentityRealmAdministrationRouteService {
   listMemberships(
     actor: ActorContext,
     realmId: string,
-  ): Promise<readonly RealmMembershipRecord[]>;
+  ): Promise<readonly RealmAdministrationMembershipRecord[]>;
   provisionMembership(
     actor: ActorContext,
     input: {
@@ -100,6 +105,14 @@ export interface IdentityRealmAdministrationRouteService {
       readonly reauthenticatedAt: string;
     },
   ): Promise<RealmMembershipRecord>;
+  revokeRealmAdministrator(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly membershipId: string;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmMembershipRecord>;
   suspendMembership(
     actor: ActorContext,
     input: {
@@ -116,6 +129,28 @@ export interface IdentityRealmAdministrationRouteService {
       readonly expectedRevision: number;
     },
   ): Promise<RealmMembershipRecord>;
+  getOwner(actor: ActorContext, realmId: string): Promise<RealmOwnerStatusDto>;
+  assignOwner(
+    actor: ActorContext,
+    input: Omit<AssignRealmOwnerRequest, "password"> & {
+      readonly realmId: string;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmOwnerStatusDto>;
+  transferOwner(
+    actor: ActorContext,
+    input: Omit<TransferRealmOwnerRequest, "password"> & {
+      readonly realmId: string;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmOwnerStatusDto>;
+  recoverOwner(
+    actor: ActorContext,
+    input: Omit<RecoverRealmOwnerRequest, "password"> & {
+      readonly realmId: string;
+      readonly reauthenticatedAt: string;
+    },
+  ): Promise<RealmOwnerStatusDto>;
   listFullAccessBindings(
     actor: ActorContext,
     realmId: string,
@@ -124,10 +159,9 @@ export interface IdentityRealmAdministrationRouteService {
     actor: ActorContext,
     input: {
       readonly realmId: string;
-      readonly subjectId: string;
       readonly reason: string;
       readonly reauthenticatedAt: string;
-      readonly validUntil?: string;
+      readonly validUntil: string;
     },
   ): Promise<RealmFullAccessBindingRecord>;
   revokeFullAccess(
@@ -138,6 +172,11 @@ export interface IdentityRealmAdministrationRouteService {
       readonly reauthenticatedAt: string;
     },
   ): Promise<RealmFullAccessBindingRecord>;
+}
+
+export interface RealmAdministrationMembershipRecord extends RealmMembershipRecord {
+  /** True only for the trusted canonical content-administrator binding. */
+  readonly realmAdministrator?: boolean;
 }
 
 export interface ContentRealmAuthenticationRouteService {
@@ -301,6 +340,8 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
     items: (await administration.listGlobalIdentities(await systemActor(request, false)))
       .map((identity) => ({
         globalIdentityId: identity.id,
+        kind: identity.kind,
+        isOwner: identity.isOwner === true,
         primaryIdentifier: identity.primaryIdentifier,
         originRealmId: identity.originRealmId,
         credentialVersion: identity.credentialVersion,
@@ -396,6 +437,22 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
     },
   );
 
+  app.delete(
+    "/api/identity-realms/:realmId/memberships/:membershipId/administrator",
+    async (request): Promise<RealmMembershipDto> => {
+      const actor = await systemActor(request, true);
+      const { realmId, membershipId } = pathParams(request.params, ["realmId", "membershipId"]);
+      const body = parseRevokeAdministrator(request.body);
+      const verified = await actors.verifySystemReauthentication(request, actor, body.reauthPassword);
+      const membership = await administration.revokeRealmAdministrator(actor, {
+        realmId,
+        membershipId,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+      });
+      return toMembershipDto(membership);
+    },
+  );
+
   app.post(
     "/api/identity-realms/:realmId/memberships",
     async (request, reply): Promise<RealmMembershipDto> => {
@@ -467,14 +524,63 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
   );
 
   app.get(
+    "/api/identity-realms/:realmId/owner",
+    async (request): Promise<RealmOwnerStatusDto> => {
+      const actor = await systemActor(request, false);
+      const { realmId } = pathParams(request.params, ["realmId"]);
+      return administration.getOwner(actor, realmId);
+    },
+  );
+
+  const ownerCommand = (
+    operation: "assign" | "transfer" | "recover",
+  ) => async (request: FastifyRequest): Promise<RealmOwnerStatusDto> => {
+    const actor = await systemActor(request, true);
+    const { realmId } = pathParams(request.params, ["realmId"]);
+    const body = parseOwnerCommand(request.body, operation === "transfer");
+    const verified = await actors.verifySystemReauthentication(request, actor, body.password);
+    const common = {
+      realmId,
+      targetMembershipId: body.targetMembershipId,
+      expectedPolicyRevision: body.expectedPolicyRevision,
+      reason: body.reason,
+      reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+      requestId: request.id,
+    };
+    if (operation === "assign") return administration.assignOwner(actor, common);
+    if (operation === "recover") return administration.recoverOwner(actor, common);
+    return administration.transferOwner(actor, {
+      ...common,
+      ...(body.revokePreviousSessions === undefined
+        ? {}
+        : { revokePreviousSessions: body.revokePreviousSessions }),
+      ...(body.suspendPreviousMembership === undefined
+        ? {}
+        : { suspendPreviousMembership: body.suspendPreviousMembership }),
+    });
+  };
+
+  app.post("/api/identity-realms/:realmId/owner/assign", ownerCommand("assign"));
+  app.post("/api/identity-realms/:realmId/owner/transfer", ownerCommand("transfer"));
+  app.post("/api/identity-realms/:realmId/owner/recover", ownerCommand("recover"));
+
+  app.get(
     "/api/identity-realms/:realmId/full-access",
     async (request): Promise<RealmFullAccessListDto> => {
       const actor = await systemActor(request, false);
       const { realmId } = pathParams(request.params, ["realmId"]);
+      const items = (await administration.listFullAccessBindings(actor, realmId)).map(
+        toFullAccessDto,
+      );
+      const systemIdentityId = actor.identityId ?? actor.subjectId;
+      const now = Date.now();
+      const activeBinding = items.find((binding) =>
+        binding.systemIdentityId === systemIdentityId
+        && binding.revokedAt === undefined
+        && Date.parse(binding.validUntil) > now);
       return {
-        items: (await administration.listFullAccessBindings(actor, realmId)).map(
-          toFullAccessDto,
-        ),
+        items,
+        ...(activeBinding === undefined ? {} : { activeBinding }),
       };
     },
   );
@@ -488,9 +594,8 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
       const verified = await actors.verifySystemReauthentication(request, actor, body.password);
       const binding = await administration.grantFullAccess(actor, {
         realmId,
-        subjectId: body.subjectId,
         reason: body.reason,
-        ...(body.validUntil === undefined ? {} : { validUntil: body.validUntil }),
+        validUntil: body.validUntil,
         reauthenticatedAt: trustedReauthenticationTimestamp(verified),
       });
       reply.code(201);
@@ -1004,26 +1109,60 @@ function parseGrantAdministrator(value: unknown): GrantRealmAdministratorRequest
   };
 }
 
+function parseRevokeAdministrator(value: unknown): RevokeRealmAdministratorRequest {
+  const body = exactObject(value, ["reauthPassword"], "Revoke administrator request");
+  return {
+    reauthPassword: requiredString(body, "reauthPassword"),
+  };
+}
+
+function parseOwnerCommand(
+  value: unknown,
+  allowTransferOptions: boolean,
+): TransferRealmOwnerRequest {
+  const body = exactObject(value, allowTransferOptions
+    ? [
+        "targetMembershipId",
+        "expectedPolicyRevision",
+        "reason",
+        "password",
+        "revokePreviousSessions",
+        "suspendPreviousMembership",
+      ]
+    : ["targetMembershipId", "expectedPolicyRevision", "reason", "password"],
+  "Realm Owner command request");
+  const revokePreviousSessions = allowTransferOptions
+    ? optionalBoolean(body, "revokePreviousSessions")
+    : undefined;
+  const suspendPreviousMembership = allowTransferOptions
+    ? optionalBoolean(body, "suspendPreviousMembership")
+    : undefined;
+  return {
+    targetMembershipId: requiredString(body, "targetMembershipId"),
+    expectedPolicyRevision: positiveRevision(body, "expectedPolicyRevision"),
+    reason: requiredString(body, "reason"),
+    password: requiredString(body, "password"),
+    ...(revokePreviousSessions === undefined ? {} : { revokePreviousSessions }),
+    ...(suspendPreviousMembership === undefined ? {} : { suspendPreviousMembership }),
+  };
+}
+
 interface ParsedFullAccessGrant {
-  readonly subjectId: string;
   readonly reason: string;
   readonly password: string;
-  readonly validUntil?: string;
+  readonly validUntil: string;
 }
 
 function parseFullAccessGrant(value: unknown): ParsedFullAccessGrant {
   const body = exactObject(value, [
-    "subjectId",
     "reason",
     "password",
     "validUntil",
   ], "Full Access grant request");
-  const validUntil = optionalString(body, "validUntil");
   return {
-    subjectId: requiredString(body, "subjectId"),
     reason: requiredString(body, "reason"),
     password: requiredString(body, "password"),
-    ...(validUntil === undefined ? {} : { validUntil }),
+    validUntil: requiredString(body, "validUntil"),
   };
 }
 
@@ -1140,6 +1279,27 @@ function toMembershipDto(membership: RealmMembershipRecord): RealmMembershipDto 
     createdAt: membership.createdAt,
     ...(membership.activatedAt === undefined ? {} : { activatedAt: membership.activatedAt }),
     ...(membership.suspendedAt === undefined ? {} : { suspendedAt: membership.suspendedAt }),
+    ...((membership as RealmAdministrationMembershipRecord).realmAdministrator === undefined
+      ? {}
+      : {
+          realmAdministrator:
+            (membership as RealmAdministrationMembershipRecord).realmAdministrator === true,
+        }),
+    ...(membership.identity === undefined
+      ? {}
+      : {
+          identity: {
+            globalIdentityId: membership.identity.id,
+            kind: membership.identity.kind,
+            isOwner: membership.identity.isOwner === true,
+            primaryIdentifier: membership.identity.primaryIdentifier,
+            originRealmId: membership.identity.originRealmId,
+            credentialVersion: membership.identity.credentialVersion,
+            ...(membership.identity.disabledAt === undefined
+              ? {}
+              : { disabledAt: membership.identity.disabledAt }),
+          },
+        }),
   };
 }
 
@@ -1147,16 +1307,18 @@ function toFullAccessDto(binding: RealmFullAccessBindingRecord): RealmFullAccess
   return {
     bindingId: binding.id,
     realmId: binding.realmId,
-    subjectId: binding.subjectId,
+    systemIdentityId: binding.systemIdentityId,
     grantedByGlobalIdentityId: binding.grantedByIdentityId,
-    grantedBySubjectId: binding.grantedBySubjectId,
     reason: binding.reason,
     createdAt: binding.createdAt,
-    ...(binding.validUntil === undefined ? {} : { validUntil: binding.validUntil }),
+    validUntil: binding.validUntil,
     ...(binding.revokedAt === undefined ? {} : { revokedAt: binding.revokedAt }),
     ...(binding.revokedByIdentityId === undefined
       ? {}
       : { revokedByGlobalIdentityId: binding.revokedByIdentityId }),
+    ...(binding.terminationReason === undefined
+      ? {}
+      : { terminationReason: binding.terminationReason }),
   };
 }
 

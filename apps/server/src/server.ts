@@ -35,15 +35,18 @@ import {
   SchemaArtifactApplicationService,
   SchemaApplicationService,
   SYSTEM_AUTHORIZATION_REALM_ID,
+  SYSTEM_AUTHORIZATION_RESOURCE_ID,
   SYSTEM_PUBLIC_SUBJECT_ID,
   SYSTEM_WORKSPACE_RESOURCE_ID,
   collectionResourceId,
   type AuthorizationActor,
+  type AuthorizationPolicyManagementActor,
   type ActorContext,
   type AuthenticatedSession,
   type ContentHierarchyQueryResult,
   type DocumentRecord,
   type MediaRecord,
+  type RealmAdministrationActor,
   type RealmProfileProvisioner,
 } from "@xecms/application";
 import type {
@@ -285,10 +288,6 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     now: () => new Date().toISOString(),
     newAuditId: () => `audit_${randomUUID()}`,
     newId: (prefix) => `${prefix}_${randomUUID()}`,
-  }, {
-    hasActiveFullAccess: (realmId, subjectId, at) =>
-      identityRealmStore.hasActiveFullAccess(realmId, subjectId, at),
-    recordUse: (input) => identityRealmStore.recordFullAccessUse(input),
   });
   const realmAuthorization = new ContentRealmAuthorizationProvisioner(authorization);
   const hierarchyStore = new PostgresContentHierarchyStore(database.pool, database.schema);
@@ -466,6 +465,22 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     realmRuntime,
     realmIdentityProvisioner,
     passwordHasher,
+    {
+      getPrimaryOwner: async (realmId) => {
+        const realm = await identityRealmStore.getRealmById(realmId);
+        if (realm === null) {
+          throw new ApplicationError("IDENTITY_REALM_NOT_FOUND", 404, "The Content Realm does not exist.");
+        }
+        return realmAuthorization.getPrimaryOwner(realm);
+      },
+      setPrimaryOwner: async (actor, input) => {
+        const realm = await identityRealmStore.getRealmById(actor.realmId);
+        if (realm === null) {
+          throw new ApplicationError("IDENTITY_REALM_NOT_FOUND", 404, "The Content Realm does not exist.");
+        }
+        return realmAuthorization.setPrimaryOwner({ realm, actor, ...input });
+      },
+    },
   );
   const contentRealmAuthentication = new ContentRealmAuthenticationService(
     identityRealmStore,
@@ -1019,6 +1034,52 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   app.addHook("onError", async (request) => releaseAuthorizationMutationLock(request));
   app.addHook("onResponse", async (request) => releaseAuthorizationMutationLock(request));
 
+  const recordedRealmOversightEntries = new Set<string>();
+  const recordedRealmFullAccessEntries = new Set<string>();
+  const resolveActiveRealmFullAccessActor = async (
+    request: FastifyRequest,
+    authenticated: Awaited<ReturnType<typeof requireSession>>,
+    realmId: string,
+    readOnlyOperation: boolean,
+  ): Promise<Extract<RealmAdministrationActor, { readonly accessMode: "realm-full-access" }> | null> => {
+    const now = new Date().toISOString();
+    const activeFullAccess = await identityRealmStore.findActiveFullAccessBinding(
+      realmId,
+      authenticated.session.identity.id,
+      now,
+    );
+    if (activeFullAccess === null) return null;
+    const auditedRead = isIndividuallyAuditedRealmAdministrationRead(request);
+    const sessionId = `session_${createHash("md5")
+      .update(securityRuntime.hashToken(authenticated.sessionToken))
+      .digest("hex")}`;
+    const route = request.routeOptions.url ?? request.url.split("?", 1)[0] ?? "unknown";
+    const entryKey = `${sessionId}\0${realmId}\0${activeFullAccess.id}`;
+    if (!readOnlyOperation || auditedRead || !recordedRealmFullAccessEntries.has(entryKey)) {
+      await identityRealmStore.recordRealmAdministrationEvent({
+        event: !readOnlyOperation || auditedRead
+          ? "REALM_FULL_ACCESS_OPERATION"
+          : "REALM_FULL_ACCESS_ENTERED",
+        systemIdentityId: authenticated.session.identity.id,
+        realmId,
+        accessMode: "realm-full-access",
+        fullAccessBindingId: activeFullAccess.id,
+        operation: `${request.method} ${route}`,
+        requestId: request.id,
+        sessionId,
+        occurredAt: now,
+        result: "authorized",
+      });
+      if (readOnlyOperation && !auditedRead) recordedRealmFullAccessEntries.add(entryKey);
+    }
+    return {
+      accessMode: "realm-full-access",
+      realmId,
+      systemIdentityId: authenticated.session.identity.id,
+      fullAccessBindingId: activeFullAccess.id,
+      fullAccessValidUntil: activeFullAccess.validUntil,
+    };
+  };
   registerAuthorizationRoutes({
     app,
     authorization,
@@ -1138,7 +1199,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     authorization,
     basePath: "/api/identity-realms/:realmId/authorization",
     resolveRealmId: authorizationRealmIdFromRequest,
-    requireAuthorizationActor: async (request, requireCsrf) => {
+    requireAuthorizationActor: async (
+      request,
+      requireCsrf,
+    ): Promise<AuthorizationPolicyManagementActor> => {
       const authenticated = authorizationMutationSessions.get(request) ??
         await requireSession(request, auth, config, requireCsrf);
       const realmId = authorizationRealmIdFromRequest(request);
@@ -1155,14 +1219,113 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         realmId,
         authenticated.session.identity.id,
       );
-      if (membership === null) {
+      const readOnlyOperation = isRealmAdministrationReadOperation(request);
+      let localDenial: ApplicationError | undefined;
+      let localAdministrationActor:
+        | Extract<RealmAdministrationActor, { readonly accessMode: "realm-actor" }>
+        | undefined;
+      if (membership !== null) {
+        const localActor = { realmId, subjectId: membership.subjectId };
+        localAdministrationActor = {
+          accessMode: "realm-actor",
+          realmId,
+          subjectId: membership.subjectId,
+          systemIdentityId: authenticated.session.identity.id,
+        };
+        try {
+          await requireLocalRealmAdministrationRouteAccess(authorization, localActor, request);
+          if (readOnlyOperation) return localAdministrationActor;
+        } catch (error: unknown) {
+          if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+          localDenial = error;
+        }
+        // Mutation preflight cannot see target rank/scope. Always execute the
+        // concrete command as the ordinary Realm Subject first. The route's
+        // fallback hook may use Full Access only for an actual policy denial.
+        if (!readOnlyOperation) return localAdministrationActor;
+      }
+
+      // Only the System CMS Owner may cross the Realm boundary. Revalidate the
+      // System policy on every request so a revoked CMS Owner immediately loses
+      // both oversight and an otherwise-unexpired Full Access grant.
+      try {
+        await authorization.require(
+          authorizationActor(authenticated.session.identity.id),
+          { action: "authorization.manage", resourceId: SYSTEM_AUTHORIZATION_RESOURCE_ID },
+        );
+      } catch (error: unknown) {
+        if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+        // A non-CMS local administrator still receives the ordinary Realm actor;
+        // the concrete application command performs the final target/rank check.
+        if (localAdministrationActor !== undefined) return localAdministrationActor;
+        if (localDenial !== undefined) throw localDenial;
+        throw error;
+      }
+      const auditedRead = isIndividuallyAuditedRealmAdministrationRead(request);
+      const sessionId = `session_${createHash("md5")
+        .update(securityRuntime.hashToken(authenticated.sessionToken))
+        .digest("hex")}`;
+      const route = request.routeOptions.url ?? request.url.split("?", 1)[0] ?? "unknown";
+      const activeFullAccessActor = await resolveActiveRealmFullAccessActor(
+        request,
+        authenticated,
+        realmId,
+        readOnlyOperation,
+      );
+      if (activeFullAccessActor !== null) return activeFullAccessActor;
+      if (!readOnlyOperation) {
+        if (localDenial !== undefined) throw localDenial;
         throw new ApplicationError(
-          "REALM_MEMBERSHIP_REQUIRED",
+          "REALM_FULL_ACCESS_REQUIRED",
           403,
-          "An active Content Realm Membership is required to manage its authorization policy.",
+          "An active Realm Full Access grant is required for this policy change.",
         );
       }
-      return { realmId, subjectId: membership.subjectId };
+      const oversightKey = `${sessionId}\0${realmId}`;
+      if (auditedRead || !recordedRealmOversightEntries.has(oversightKey)) {
+        await identityRealmStore.recordRealmAdministrationEvent({
+          event: auditedRead ? "REALM_POLICY_OVERSIGHT_READ" : "REALM_POLICY_OVERSIGHT_ENTERED",
+          systemIdentityId: authenticated.session.identity.id,
+          realmId,
+          accessMode: "cms-owner-readonly",
+          operation: `${request.method} ${route}`,
+          requestId: request.id,
+          sessionId,
+          occurredAt: new Date().toISOString(),
+          result: "authorized",
+        });
+        if (!auditedRead) recordedRealmOversightEntries.add(oversightKey);
+      }
+      return {
+        accessMode: "cms-owner-readonly",
+        realmId,
+        systemIdentityId: authenticated.session.identity.id,
+      };
+    },
+    resolveAuthorizationMutationFallback: async (request, actor, error) => {
+      if (
+        !(error instanceof ApplicationError)
+        || (error.code !== "AUTHORIZATION_DENIED" && error.code !== "OWNER_AUTHORIZATION_REQUIRED")
+        || !("accessMode" in actor)
+        || actor.accessMode !== "realm-actor"
+      ) {
+        return null;
+      }
+      const authenticated = authorizationMutationSessions.get(request) ??
+        await requireSession(request, auth, config, true);
+      if (authenticated.session.identity.id !== actor.systemIdentityId) return null;
+      try {
+        // Revalidate the CMS Owner boundary at fallback time. The local command
+        // ran without this privilege, and revocation must take effect instantly.
+        await authorization.require(
+          authorizationActor(authenticated.session.identity.id),
+          { action: "authorization.manage", resourceId: SYSTEM_AUTHORIZATION_RESOURCE_ID },
+        );
+      } catch (fallbackError: unknown) {
+        if (fallbackError instanceof ApplicationError && fallbackError.status === 403) return null;
+        throw fallbackError;
+      }
+      return resolveActiveRealmFullAccessActor(request, authenticated, actor.realmId, false);
     },
   });
 
@@ -1203,6 +1366,31 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
             "The Content Realm is not active.",
           );
         }
+        const actorIdentityId = actor.identityId ?? actor.subjectId;
+        try {
+          // CMS Owner may appoint Realm administrators from the System control
+          // plane without becoming a local Realm Subject.
+          await authorization.require(
+            authorizationActor(actorIdentityId),
+            { action: "authorization.manage", resourceId: SYSTEM_AUTHORIZATION_RESOURCE_ID },
+          );
+        } catch (error: unknown) {
+          if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+          // A human Primary Realm Owner may perform the same operation, but a
+          // generic System operator or Content Administrator may not use this
+          // trusted provisioner path.
+          const [owner, actorMembership] = await Promise.all([
+            realmAuthorization.getPrimaryOwner(realm),
+            identityRealmStore.resolveActiveMembership(realm.id, actorIdentityId),
+          ]);
+          if (
+            owner.state !== "assigned"
+            || owner.subjectId === undefined
+            || actorMembership?.subjectId !== owner.subjectId
+          ) {
+            throw error;
+          }
+        }
         const membership = await identityRealmStore.findMembershipById(input.membershipId);
         if (
           membership === null ||
@@ -1223,8 +1411,71 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         });
         return membership;
       },
+      revokeRealmAdministrator: async (actor, input) => {
+        const realm = await identityRealmStore.getRealmById(input.realmId);
+        if (
+          realm === null ||
+          realm.kind !== "content" ||
+          realm.status !== "active" ||
+          realm.workspaceId !== actor.workspaceId
+        ) {
+          throw new ApplicationError(
+            "CONTENT_REALM_UNAVAILABLE",
+            409,
+            "The Content Realm is not active.",
+          );
+        }
+        const actorIdentityId = actor.identityId ?? actor.subjectId;
+        try {
+          // CMS Owner may revoke Realm administrators from the System control
+          // plane without becoming a local Realm Subject.
+          await authorization.require(
+            authorizationActor(actorIdentityId),
+            { action: "authorization.manage", resourceId: SYSTEM_AUTHORIZATION_RESOURCE_ID },
+          );
+        } catch (error: unknown) {
+          if (!(error instanceof ApplicationError) || error.status !== 403) throw error;
+          // A human Primary Realm Owner may perform the same operation, but a
+          // generic System operator or Content Administrator may not use this
+          // trusted provisioner path.
+          const [owner, actorMembership] = await Promise.all([
+            realmAuthorization.getPrimaryOwner(realm),
+            identityRealmStore.resolveActiveMembership(realm.id, actorIdentityId),
+          ]);
+          if (
+            owner.state !== "assigned"
+            || owner.subjectId === undefined
+            || actorMembership?.subjectId !== owner.subjectId
+          ) {
+            throw error;
+          }
+        }
+        const membership = await identityRealmStore.findMembershipById(input.membershipId);
+        if (
+          membership === null ||
+          membership.realmId !== realm.id ||
+          membership.status !== "active"
+        ) {
+          throw new ApplicationError(
+            "REALM_MEMBERSHIP_NOT_ACTIVE",
+            409,
+            "An active Realm Membership is required to revoke administration.",
+          );
+        }
+        // Trusted path: removes only the canonical Content Administrator Binding
+        // held by the protected provisioner Subject. Idempotent otherwise.
+        await realmAuthorization.revokeRealmAdministrator({
+          realm,
+          subjectId: membership.subjectId,
+        });
+        return membership;
+      },
       suspendMembership: (actor, input) => identityRealms.suspendMembership(actor, input),
       reactivateMembership: (actor, input) => identityRealms.reactivateMembership(actor, input),
+      getOwner: (actor, realmId) => identityRealms.getOwner(actor, realmId),
+      assignOwner: (actor, input) => identityRealms.assignOwner(actor, input),
+      transferOwner: (actor, input) => identityRealms.transferOwner(actor, input),
+      recoverOwner: (actor, input) => identityRealms.recoverOwner(actor, input),
       listFullAccessBindings: (actor, realmId) =>
         identityRealms.listFullAccessBindings(actor, realmId),
       grantFullAccess: (actor, input) => identityRealms.grantFullAccess(actor, input),
@@ -2567,6 +2818,49 @@ function authorizationRealmIdFromRequest(request: FastifyRequest): string {
 
 function authorizationActor(subjectId: string): AuthorizationActor {
   return { subjectId, realmId: SYSTEM_AUTHORIZATION_REALM_ID };
+}
+
+function isRealmAdministrationReadOperation(request: FastifyRequest): boolean {
+  const route = request.routeOptions.url ?? request.url.split("?", 1)[0] ?? "";
+  return request.method === "GET"
+    || request.method === "HEAD"
+    || route.endsWith("/simulate");
+}
+
+function isIndividuallyAuditedRealmAdministrationRead(request: FastifyRequest): boolean {
+  const route = request.routeOptions.url ?? request.url.split("?", 1)[0] ?? "";
+  return route.endsWith("/audit") || route.endsWith("/simulate");
+}
+
+async function requireLocalRealmAdministrationRouteAccess(
+  authorization: AuthorizationApplicationService,
+  actor: AuthorizationActor,
+  request: FastifyRequest,
+): Promise<void> {
+  const route = request.routeOptions.url ?? request.url.split("?", 1)[0] ?? "";
+  if (route.endsWith("/policy") || route.endsWith("/simulate")) {
+    await authorization.getPolicy(actor);
+    return;
+  }
+  // Role and Binding mutations need target hierarchy/rank context that is only
+  // available inside the application command.  A root-only preflight would
+  // incorrectly reject valid assignments with HIERARCHY_CONTEXT_REQUIRED.
+  if (route.includes("/roles") || route.includes("/bindings")) {
+    await authorization.getPolicy(actor);
+    return;
+  }
+  const rootResourceId = `authorization:${actor.realmId}:resource:workspace`;
+  if (route.endsWith("/audit")) {
+    await authorization.require(actor, { action: "audit.read", resourceId: rootResourceId });
+    return;
+  }
+  let action: string;
+  if (route.includes("/levels") || route.includes("/subjects") || route.includes("/group-memberships")) {
+    action = "authorization.manage";
+  } else {
+    action = "authorization.manage";
+  }
+  await authorization.require(actor, { action, resourceId: rootResourceId });
 }
 
 function authorizationGateway(

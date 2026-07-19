@@ -780,13 +780,23 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
         client.identityRealms.registerMembership(realmId, input)),
       grantRealmAdministrator: (realmId, membershipId, input) => call(() =>
         client.identityRealms.grantRealmAdministrator(realmId, membershipId, input)),
+      revokeRealmAdministrator: (realmId, membershipId, input) => call(() =>
+        client.identityRealms.revokeRealmAdministrator(realmId, membershipId, input)),
       suspendMembership: (realmId, membershipId, expectedRevision) => call(() =>
         client.identityRealms.suspendMembership(realmId, membershipId, { expectedRevision })),
       reactivateMembership: (realmId, membershipId, expectedRevision) => call(() =>
         client.identityRealms.reactivateMembership(realmId, membershipId, { expectedRevision })),
-      listFullAccess: (realmId) => call(async () => ({
-        items: (await client.identityRealms.listFullAccess(realmId)).items,
-      })),
+      getOwner: (realmId) => call(() => client.identityRealms.getOwner(realmId)),
+      assignOwner: (realmId, input) => call(() => client.identityRealms.assignOwner(realmId, input)),
+      transferOwner: (realmId, input) => call(() => client.identityRealms.transferOwner(realmId, input)),
+      recoverOwner: (realmId, input) => call(() => client.identityRealms.recoverOwner(realmId, input)),
+      listFullAccess: (realmId) => call(async () => {
+        const result = await client.identityRealms.listFullAccess(realmId);
+        return {
+          items: result.items,
+          ...(result.activeBinding === undefined ? {} : { activeBinding: result.activeBinding }),
+        };
+      }),
       grantFullAccess: (realmId, input) => call(() =>
         client.identityRealms.grantFullAccess(realmId, input)),
       revokeFullAccess: (realmId, bindingId, password) => call(() =>

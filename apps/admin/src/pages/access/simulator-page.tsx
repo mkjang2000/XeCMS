@@ -59,7 +59,7 @@ export function AccessSimulatorPage() {
   };
   return <Page>
     <PageHeader eyebrow={realmId ? "Content Realm authorization" : "Explainable authorization"} title="사용자 권한 확인" description="사용자와 영역을 선택하면 실제로 가능한 업무와 그 이유를 한눈에 확인할 수 있습니다." />
-    <AccessWorkspaceNav />
+    <AccessWorkspaceNav policy={policy.data} />
     <div className={styles.guideBanner}>
       <span className={styles.guideNumber}>?</span>
       <div><strong>설정을 바꾸지 않고 현재 권한만 안전하게 확인합니다.</strong><p>{advanced ? "특정 권한의 상세 판정은 아래 고급 진단에서 별도로 실행할 수 있습니다." : "사용자와 영역을 고르면 가능한 업무를 평이한 이름으로 보여 드립니다."}</p></div>

@@ -1,1 +1,1 @@
-{"version":3,"file":"access-workspace-nav.d.ts","sourceRoot":"","sources":["../../src/components/access-workspace-nav.tsx"],"names":[],"mappings":"AAWA,wBAAgB,kBAAkB,gCAajC"}
+{"version":3,"file":"access-workspace-nav.d.ts","sourceRoot":"","sources":["../../src/components/access-workspace-nav.tsx"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,mBAAmB,EAAE,MAAM,cAAc,CAAC;AAcxD,wBAAgB,kBAAkB,CAAC,EAAE,MAAM,EAAE,EAAE;IAAE,QAAQ,CAAC,MAAM,EAAE,mBAAmB,CAAA;CAAE,+BActF"}

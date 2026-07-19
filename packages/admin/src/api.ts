@@ -88,6 +88,7 @@ export type RealmMembershipStatus = "pending" | "active" | "suspended";
 
 export interface GlobalIdentity {
   readonly globalIdentityId: string;
+  readonly kind: "human" | "service";
   readonly primaryIdentifier: string;
   readonly originRealmId: string;
   readonly credentialVersion: number;
@@ -199,19 +200,56 @@ export interface RealmMembership {
   readonly activatedAt?: string;
   readonly suspendedAt?: string;
   readonly identity?: GlobalIdentity;
+  /** True only for the trusted canonical content-administrator binding. */
+  readonly realmAdministrator?: boolean;
 }
+
+export type RealmOwnerStatusKind = "healthy" | "ownerless" | "invalid";
+
+export interface RealmOwnerStatus {
+  readonly realmId: string;
+  readonly status: RealmOwnerStatusKind;
+  readonly policyRevision: number;
+  readonly owner?: {
+    readonly globalIdentityId: string;
+    readonly membershipId: string;
+    readonly subjectId: string;
+    readonly primaryIdentifier: string;
+    readonly identityActive: boolean;
+    readonly membershipStatus: RealmMembershipStatus;
+  };
+  readonly issueCode?: string;
+}
+
+export interface AssignRealmOwnerInput {
+  readonly targetMembershipId: string;
+  readonly expectedPolicyRevision: number;
+  readonly reason: string;
+  readonly password: string;
+}
+
+export interface TransferRealmOwnerInput extends AssignRealmOwnerInput {
+  readonly revokePreviousSessions?: boolean;
+  readonly suspendPreviousMembership?: boolean;
+}
+
+export type RecoverRealmOwnerInput = AssignRealmOwnerInput;
 
 export interface RealmFullAccessBinding {
   readonly bindingId: string;
   readonly realmId: string;
-  readonly subjectId: string;
+  readonly systemIdentityId: string;
   readonly grantedByGlobalIdentityId: string;
-  readonly grantedBySubjectId: string;
   readonly reason: string;
   readonly createdAt: string;
-  readonly validUntil?: string;
+  readonly validUntil: string;
   readonly revokedAt?: string;
   readonly revokedByGlobalIdentityId?: string;
+  readonly terminationReason?: "revoked" | "expired";
+}
+
+export interface RealmFullAccessPage extends PageResult<RealmFullAccessBinding> {
+  readonly activeBinding?: RealmFullAccessBinding;
 }
 
 export interface CreateIdentityRealmInput {
@@ -264,11 +302,15 @@ export interface GrantRealmAdministratorInput {
   readonly reauthPassword: string;
 }
 
+export interface RevokeRealmAdministratorInput {
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly reauthPassword: string;
+}
+
 export interface GrantRealmFullAccessInput {
-  readonly subjectId: string;
   readonly reason: string;
   readonly password: string;
-  readonly validUntil?: string;
+  readonly validUntil: string;
 }
 
 export interface CollectionField {
@@ -677,6 +719,14 @@ export interface AuthorizationPolicy {
   readonly permissions: readonly AuthorizationPermission[];
   readonly roles: readonly AuthorizationRole[];
   readonly bindings: readonly AuthorizationRoleBinding[];
+  /** Present for Content Realm administration responses. */
+  readonly administration?: {
+    readonly accessMode: "realm-actor" | "cms-owner-readonly" | "realm-full-access";
+    readonly systemIdentityId?: string;
+    readonly realmSubjectId?: string;
+    readonly fullAccessBindingId?: string;
+    readonly fullAccessValidUntil?: string;
+  };
 }
 
 export interface AuthorizationMatchedGrant {
@@ -705,7 +755,10 @@ export interface AuthorizationAuditEntry {
   readonly id: string;
   readonly realmId: string;
   readonly policyRevision: number;
-  readonly actorSubjectId: string;
+  readonly actorSubjectId?: string;
+  readonly actorIdentityId?: string;
+  readonly accessMode?: "realm-actor" | "cms-owner-readonly" | "realm-full-access" | "cms-owner-control-plane" | "system-provisioner";
+  readonly fullAccessBindingId?: string;
   readonly action: string;
   readonly targetType: string;
   readonly targetId: string;
@@ -1053,6 +1106,11 @@ export interface AdminApi {
       membershipId: string,
       input: GrantRealmAdministratorInput,
     ): Promise<RealmMembership>;
+    revokeRealmAdministrator(
+      realmId: string,
+      membershipId: string,
+      input: RevokeRealmAdministratorInput,
+    ): Promise<RealmMembership>;
     suspendMembership(
       realmId: string,
       membershipId: string,
@@ -1063,7 +1121,11 @@ export interface AdminApi {
       membershipId: string,
       expectedRevision: number,
     ): Promise<RealmMembership>;
-    listFullAccess(realmId: string): Promise<PageResult<RealmFullAccessBinding>>;
+    getOwner(realmId: string): Promise<RealmOwnerStatus>;
+    assignOwner(realmId: string, input: AssignRealmOwnerInput): Promise<RealmOwnerStatus>;
+    transferOwner(realmId: string, input: TransferRealmOwnerInput): Promise<RealmOwnerStatus>;
+    recoverOwner(realmId: string, input: RecoverRealmOwnerInput): Promise<RealmOwnerStatus>;
+    listFullAccess(realmId: string): Promise<RealmFullAccessPage>;
     grantFullAccess(
       realmId: string,
       input: GrantRealmFullAccessInput,

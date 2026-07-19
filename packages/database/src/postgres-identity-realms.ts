@@ -1,15 +1,16 @@
 import {
   ApplicationError,
+  authorizationPrimaryOwnerBindingId,
   type ContentRealmSessionRecord,
   type GlobalIdentityCredentialRecord,
   type GlobalIdentityRecord,
   type IdentityRealmRecord,
   type IdentityRealmStatus,
   type IdentityRealmStore,
+  type RealmAdministrationAuditRecord,
   type RealmAuthenticationPolicyRecord,
   type RealmFullAccessBindingRecord,
   type RealmIdentityProvisioningStore,
-  type RealmFullAccessUse,
   type RealmMembershipProvisionedBy,
   type RealmMembershipRecord,
   type RealmMembershipStatus,
@@ -261,6 +262,51 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
       [identityId],
     );
     return result.rows[0] === undefined ? null : identityFromRow(result.rows[0]);
+  }
+
+  public async isEligibleRealmOwner(input: {
+    readonly realmId: string;
+    readonly identityId: string;
+    readonly subjectId: string;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT 1
+         FROM ${this.q("_xecms_auth_subjects")} subject
+         JOIN ${this.q("_xecms_realm_memberships")} membership
+           ON membership.realm_id = subject.realm_id
+          AND membership.subject_id = subject.id
+          AND membership.identity_id = subject.identity_id
+         JOIN ${this.q("_xecms_identities")} identity
+           ON identity.id = membership.identity_id
+          AND identity.workspace_id = membership.workspace_id
+         JOIN ${this.q("_xecms_realms")} realm
+           ON realm.id = membership.realm_id
+          AND realm.workspace_id = membership.workspace_id
+         JOIN ${this.q("_xecms_realm_memberships")} system_membership
+           ON system_membership.identity_id = identity.id
+          AND system_membership.workspace_id = identity.workspace_id
+         JOIN ${this.q("_xecms_realms")} system_realm
+           ON system_realm.id = system_membership.realm_id
+          AND system_realm.workspace_id = system_membership.workspace_id
+         JOIN ${this.q("_xecms_auth_subjects")} system_subject
+           ON system_subject.realm_id = system_realm.id
+          AND system_subject.id = system_membership.subject_id
+          AND system_subject.identity_id = identity.id
+        WHERE subject.realm_id = $1 AND subject.id = $3
+          AND identity.id = $2
+          AND subject.subject_type = 'user'
+          AND subject.protected = false AND subject.disabled_at IS NULL
+          AND membership.status = 'active'
+          AND identity.identity_kind = 'human' AND identity.is_owner = false
+          AND identity.disabled_at IS NULL
+          AND realm.kind = 'content' AND realm.status = 'active'
+          AND system_realm.kind = 'system' AND system_realm.status = 'active'
+          AND system_membership.status = 'active'
+          AND system_subject.subject_type = 'user'
+          AND system_subject.disabled_at IS NULL`,
+      [input.realmId, input.identityId, input.subjectId],
+    );
+    return result.rowCount === 1;
   }
 
   public async findIdentityCredentialByIdentifier(
@@ -777,24 +823,73 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
     );
   }
 
-  public async revokeMembershipSessions(membershipId: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE ${this.q("_xecms_sessions")}
-          SET revoked_at = now(), revoke_reason = 'membership-suspended'
-        WHERE membership_id = $1 AND revoked_at IS NULL`,
-      [membershipId],
-    );
+  public async revokeMembershipSessions(input: {
+    readonly realmId: string;
+    readonly membershipId: string;
+    readonly actorIdentityId: string;
+    readonly now: string;
+    readonly reason: string;
+  }): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE ${this.q("_xecms_sessions")} AS session
+            SET revoked_at = $4, revoked_by_identity_id = $3, revoke_reason = $5
+          WHERE session.realm_id = $1 AND session.membership_id = $2
+            AND session.audience = 'content' AND session.revoked_at IS NULL
+            AND EXISTS (
+              SELECT 1
+                FROM ${this.q("_xecms_realm_memberships")} AS membership
+                JOIN ${this.q("_xecms_identities")} AS actor
+                  ON actor.id = $3 AND actor.workspace_id = membership.workspace_id
+                 AND actor.disabled_at IS NULL
+               WHERE membership.id = $2 AND membership.realm_id = $1
+            )`,
+        [input.realmId, input.membershipId, input.actorIdentityId, input.now, input.reason],
+      );
+      await this.recordSecurityEvent(client, {
+        event: "realm.membership.sessions-revoked",
+        identityId: input.actorIdentityId,
+        occurredAt: input.now,
+        metadata: {
+          realmId: input.realmId,
+          membershipId: input.membershipId,
+          reason: input.reason,
+          revokedSessions: result.rowCount ?? 0,
+        },
+      });
+      await client.query("COMMIT");
+      return result.rowCount ?? 0;
+    } catch (error: unknown) {
+      await client.query("ROLLBACK");
+      throw mapIdentityRealmError(error);
+    } finally {
+      client.release();
+    }
   }
 
   public async listFullAccessBindings(
     realmId: string,
+    now: string,
   ): Promise<readonly RealmFullAccessBindingRecord[]> {
-    const result = await this.pool.query<FullAccessRow>(
-      `${FULL_ACCESS_SELECT(this.q.bind(this))}
-       WHERE binding.realm_id = $1 ORDER BY binding.created_at DESC, binding.id`,
-      [realmId],
-    );
-    return result.rows.map(fullAccessFromRow);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.expireFullAccessBindings(client, realmId, now);
+      const result = await client.query<FullAccessRow>(
+        `${FULL_ACCESS_SELECT(this.q.bind(this))}
+         WHERE binding.realm_id = $1 ORDER BY binding.created_at DESC, binding.id`,
+        [realmId],
+      );
+      await client.query("COMMIT");
+      return result.rows.map(fullAccessFromRow);
+    } catch (error: unknown) {
+      await client.query("ROLLBACK");
+      throw mapIdentityRealmError(error);
+    } finally {
+      client.release();
+    }
   }
 
   public async grantFullAccess(
@@ -810,39 +905,38 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // An expired temporal grant is inactive even before an explicit cleanup
-      // job runs. Close it in the same transaction so a new grant can be made.
-      await client.query(
-        `UPDATE ${this.q("_xecms_realm_full_access_bindings")}
-         SET revoked_at = $3, revoked_by_identity_id = $4
-         WHERE realm_id = $1 AND subject_id = $2 AND revoked_at IS NULL
-           AND valid_until IS NOT NULL AND valid_until <= $3`,
-        [input.realmId, input.subjectId, input.createdAt, input.grantedByIdentityId],
+      // Close expired grants and emit their lifecycle events before the unique
+      // active-grant constraint is evaluated for the replacement.
+      await this.expireFullAccessBindings(
+        client,
+        input.realmId,
+        input.createdAt,
+        input.systemIdentityId,
       );
       const result = await client.query<FullAccessRow>(
         `INSERT INTO ${this.q("_xecms_realm_full_access_bindings")} AS binding
-           (id, realm_id, subject_id, granted_by_identity_id, granted_by_subject_id,
+           (id, realm_id, system_identity_id, granted_by_identity_id,
             reason, created_at, valid_until)
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8
+         SELECT $1, $2, $3, $4, $5, $6, $7
          FROM ${this.q("_xecms_realms")} AS realm
-         JOIN ${this.q("_xecms_realm_memberships")} AS membership
-           ON membership.realm_id = realm.id AND membership.subject_id = $3
-          AND membership.status = 'active'
-         JOIN ${this.q("_xecms_identities")} AS member_identity
-           ON member_identity.id = membership.identity_id AND member_identity.disabled_at IS NULL
-         JOIN ${this.q("_xecms_auth_subjects")} AS member_subject
-           ON member_subject.realm_id = realm.id AND member_subject.id = membership.subject_id
-          AND member_subject.disabled_at IS NULL
-         JOIN ${this.q("_xecms_identities")} AS grantor_identity
-           ON grantor_identity.id = $4 AND grantor_identity.workspace_id = realm.workspace_id
-          AND grantor_identity.disabled_at IS NULL
-         JOIN ${this.q("_xecms_auth_subjects")} AS grantor_subject
-           ON grantor_subject.id = $5 AND grantor_subject.identity_id = grantor_identity.id
-          AND grantor_subject.disabled_at IS NULL
+         JOIN ${this.q("_xecms_identities")} AS system_identity
+           ON system_identity.id = $3 AND system_identity.workspace_id = realm.workspace_id
+          AND system_identity.disabled_at IS NULL
          WHERE realm.id = $2 AND realm.kind = 'content' AND realm.status = 'active'
+           AND $3::text = $4::text
+           AND EXISTS (
+             SELECT 1
+               FROM ${this.q("_xecms_realm_memberships")} AS system_membership
+               JOIN ${this.q("_xecms_realms")} AS system_realm
+                 ON system_realm.id = system_membership.realm_id
+                AND system_realm.workspace_id = realm.workspace_id
+                AND system_realm.kind = 'system' AND system_realm.status = 'active'
+              WHERE system_membership.identity_id = system_identity.id
+                AND system_membership.status = 'active'
+           )
          RETURNING binding.*`,
-        [input.id, input.realmId, input.subjectId, input.grantedByIdentityId,
-          input.grantedBySubjectId, input.reason, input.createdAt, input.validUntil ?? null],
+        [input.id, input.realmId, input.systemIdentityId, input.grantedByIdentityId,
+          input.reason, input.createdAt, input.validUntil],
       );
       if (result.rowCount !== 1) {
         throw new ApplicationError("FULL_ACCESS_GRANT_INVALID", 409, "The Full Access grant is invalid.");
@@ -853,9 +947,12 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
         occurredAt: input.createdAt,
         metadata: {
           realmId: input.realmId,
-          subjectId: input.subjectId,
+          targetRealmId: input.realmId,
+          systemIdentityId: input.systemIdentityId,
           bindingId: input.id,
-          validUntil: input.validUntil ?? null,
+          grantReason: input.reason,
+          grantValidUntil: input.validUntil,
+          accessMode: "realm-full-access",
         },
       });
       await client.query("COMMIT");
@@ -877,9 +974,10 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.expireFullAccessBindings(client, input.realmId, input.now);
       const result = await client.query<FullAccessRow>(
         `UPDATE ${this.q("_xecms_realm_full_access_bindings")} AS binding
-         SET revoked_at = $3, revoked_by_identity_id = $4
+         SET revoked_at = $3, revoked_by_identity_id = $4, termination_reason = 'revoked'
          WHERE binding.realm_id = $1 AND binding.id = $2 AND binding.revoked_at IS NULL
            AND binding.created_at <= $3
            AND EXISTS (
@@ -904,7 +1002,13 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
         event: "realm.full-access.revoked",
         identityId: input.actorIdentityId,
         occurredAt: input.now,
-        metadata: { realmId: input.realmId, subjectId: revoked.subject_id, bindingId: input.bindingId },
+        metadata: {
+          realmId: input.realmId,
+          targetRealmId: input.realmId,
+          systemIdentityId: revoked.system_identity_id,
+          bindingId: input.bindingId,
+          accessMode: "realm-full-access",
+        },
       });
       await client.query("COMMIT");
       return fullAccessFromRow(revoked);
@@ -916,77 +1020,125 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
     }
   }
 
-  public async hasActiveFullAccess(
+  public async findActiveFullAccessBinding(
     realmId: string,
-    subjectId: string,
+    systemIdentityId: string,
     now: string,
-  ): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT 1
-       FROM ${this.q("_xecms_realm_full_access_bindings")} binding
+  ): Promise<RealmFullAccessBindingRecord | null> {
+    // Access-mode resolution is a read-only judgement on every Realm
+    // administration request. It must never write: expiring a grant here would
+    // clear the partial-unique guard (a "still active" grant would silently make
+    // room for a duplicate) and would put a write transaction on the hot path.
+    // The `revoked_at IS NULL AND valid_until > now` predicate already excludes
+    // expired grants; the expiry lifecycle audit is emitted from the mutation
+    // paths (grant/revoke) and from listFullAccessBindings when the UI loads.
+    const result = await this.pool.query<FullAccessRow>(
+      `${FULL_ACCESS_SELECT(this.q.bind(this))}
        JOIN ${this.q("_xecms_realms")} realm ON realm.id = binding.realm_id
-       JOIN ${this.q("_xecms_realm_memberships")} membership
-         ON membership.realm_id = binding.realm_id AND membership.subject_id = binding.subject_id
-        AND membership.status = 'active'
        JOIN ${this.q("_xecms_identities")} identity
-         ON identity.id = membership.identity_id AND identity.disabled_at IS NULL
-       JOIN ${this.q("_xecms_auth_subjects")} subject
-         ON subject.realm_id = binding.realm_id AND subject.id = binding.subject_id
-       WHERE binding.realm_id = $1 AND binding.subject_id = $2
+         ON identity.id = binding.system_identity_id AND identity.disabled_at IS NULL
+       WHERE binding.realm_id = $1 AND binding.system_identity_id = $2
          AND binding.revoked_at IS NULL
-         AND (binding.valid_until IS NULL OR binding.valid_until > $3)
-         AND realm.kind = 'content' AND realm.status = 'active' AND subject.disabled_at IS NULL`,
-      [realmId, subjectId, now],
+         AND binding.valid_until > $3
+         AND realm.kind = 'content' AND realm.status = 'active'
+         AND EXISTS (
+           SELECT 1
+             FROM ${this.q("_xecms_realm_memberships")} system_membership
+             JOIN ${this.q("_xecms_realms")} system_realm
+               ON system_realm.id = system_membership.realm_id
+              AND system_realm.workspace_id = realm.workspace_id
+              AND system_realm.kind = 'system' AND system_realm.status = 'active'
+            WHERE system_membership.identity_id = identity.id
+              AND system_membership.status = 'active'
+         )`,
+      [realmId, systemIdentityId, now],
     );
-    return result.rowCount === 1;
+    return result.rows[0] === undefined ? null : fullAccessFromRow(result.rows[0]);
   }
 
-  /** Revalidates the grant while durably recording each successful bypass. */
-  public async recordFullAccessUse(input: RealmFullAccessUse): Promise<void> {
+  public async hasActiveFullAccess(
+    realmId: string,
+    systemIdentityId: string,
+    now: string,
+  ): Promise<boolean> {
+    return await this.findActiveFullAccessBinding(realmId, systemIdentityId, now) !== null;
+  }
+
+  private async expireFullAccessBindings(
+    client: PoolClient,
+    realmId: string,
+    now: string,
+    systemIdentityId?: string,
+  ): Promise<void> {
+    // revoked_at records when expiry was detected and recorded (the request's
+    // `now`), not the grant's valid_until. The lifecycle audit keeps both the
+    // original grantValidUntil and this detectedAt so neither is lost.
+    const expired = await client.query<FullAccessRow>(
+      `UPDATE ${this.q("_xecms_realm_full_access_bindings")}
+          SET revoked_at = $2, revoked_by_identity_id = NULL,
+              termination_reason = 'expired'
+        WHERE realm_id = $1 AND revoked_at IS NULL AND valid_until <= $2
+          AND ($3::text IS NULL OR system_identity_id = $3)
+      RETURNING *`,
+      [realmId, now, systemIdentityId ?? null],
+    );
+    for (const binding of expired.rows) {
+      await this.recordSecurityEvent(client, {
+        event: "realm.full-access.expired",
+        identityId: binding.system_identity_id,
+        occurredAt: now,
+        metadata: {
+          realmId: binding.realm_id,
+          targetRealmId: binding.realm_id,
+          systemIdentityId: binding.system_identity_id,
+          bindingId: binding.id,
+          grantValidUntil: instant(binding.valid_until),
+          detectedAt: now,
+          accessMode: "realm-full-access",
+        },
+      });
+    }
+  }
+
+  public async recordRealmAdministrationEvent(
+    input: RealmAdministrationAuditRecord,
+  ): Promise<void> {
+    const metadata = {
+      targetRealmId: input.realmId,
+      accessMode: input.accessMode,
+      systemIdentityId: input.systemIdentityId,
+      ...(input.realmSubjectId === undefined ? {} : { realmSubjectId: input.realmSubjectId }),
+      ...(input.fullAccessBindingId === undefined
+        ? {}
+        : { fullAccessBindingId: input.fullAccessBindingId }),
+      ...(input.operation === undefined ? {} : { operation: input.operation }),
+      ...(input.targetType === undefined ? {} : { targetType: input.targetType }),
+      ...(input.targetId === undefined ? {} : { targetId: input.targetId }),
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.before === undefined ? {} : { before: input.before }),
+      ...(input.after === undefined ? {} : { after: input.after }),
+      ...(input.result === undefined ? {} : { result: input.result }),
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+      ...(input.details === undefined ? {} : { details: input.details }),
+    };
     const result = await this.pool.query(
       `INSERT INTO ${this.q("_xecms_audit_log")}
          (event_type, identity_id, occurred_at, metadata)
-       SELECT 'realm.full-access.used', membership.identity_id, $5,
-              jsonb_build_object(
-                'realmId', $1::text,
-                'subjectId', $2::text,
-                'action', $3::text,
-                'resourceId', $4::text,
-                'operation', $6::text,
-                'field', $7::text,
-                'fields', $8::jsonb
-              )
-       FROM ${this.q("_xecms_realm_full_access_bindings")} binding
-       JOIN ${this.q("_xecms_realm_memberships")} membership
-         ON membership.realm_id = binding.realm_id
-        AND membership.subject_id = binding.subject_id
-       JOIN ${this.q("_xecms_identities")} identity
-         ON identity.id = membership.identity_id
-       JOIN ${this.q("_xecms_auth_subjects")} subject
-         ON subject.realm_id = binding.realm_id AND subject.id = binding.subject_id
-       JOIN ${this.q("_xecms_realms")} realm ON realm.id = binding.realm_id
-       WHERE binding.realm_id = $1 AND binding.subject_id = $2
-         AND binding.revoked_at IS NULL
-         AND (binding.valid_until IS NULL OR binding.valid_until > $5)
-         AND membership.status = 'active' AND identity.disabled_at IS NULL
-         AND subject.disabled_at IS NULL AND realm.status = 'active'
-         AND realm.kind = 'content'`,
-      [
-        input.realmId,
-        input.subjectId,
-        input.action,
-        input.resourceId,
-        input.at,
-        input.operation,
-        input.field ?? null,
-        JSON.stringify(input.fields ?? null),
-      ],
+       SELECT $1, identity.id, $4, $5::jsonb
+         FROM ${this.q("_xecms_identities")} identity
+         JOIN ${this.q("_xecms_realms")} realm
+           ON realm.id = $3 AND realm.workspace_id = identity.workspace_id
+        WHERE identity.id = $2 AND identity.disabled_at IS NULL
+          AND realm.kind = 'content'`,
+      [input.event, input.systemIdentityId, input.realmId, input.occurredAt,
+        JSON.stringify(metadata)],
     );
     if (result.rowCount !== 1) {
       throw new ApplicationError(
-        "REALM_FULL_ACCESS_NO_LONGER_ACTIVE",
-        403,
-        "Realm Full Access is no longer active.",
+        "REALM_ADMINISTRATION_AUDIT_ACTOR_INVALID",
+        409,
+        "The Realm administration audit actor or target is invalid.",
       );
     }
   }
@@ -1127,6 +1279,50 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const locked = await client.query<MembershipRow>(
+        `SELECT * FROM ${this.q("_xecms_realm_memberships")}
+          WHERE realm_id = $1 AND id = $2
+          FOR UPDATE`,
+        [input.realmId, input.membershipId],
+      );
+      const lockedMembership = locked.rows[0] ?? await this.throwMembershipWriteConflict(
+          client,
+          input.realmId,
+          input.membershipId,
+          input.expectedRevision,
+        );
+      if (
+        Number(lockedMembership.revision) !== input.expectedRevision
+        || lockedMembership.status === input.status
+      ) {
+        await this.throwMembershipWriteConflict(
+          client,
+          input.realmId,
+          input.membershipId,
+          input.expectedRevision,
+        );
+      }
+      if (input.status === "suspended") {
+        // This is deliberately a new statement after the Membership row lock.
+        // Owner assignment takes the same row first, so the latest committed
+        // Binding is observed and neither race can suspend the new last Owner.
+        const owner = await client.query(
+          `SELECT 1 FROM ${this.q("_xecms_auth_role_bindings")}
+            WHERE realm_id = $1 AND id = $2 AND subject_id = $3`,
+          [
+            input.realmId,
+            authorizationPrimaryOwnerBindingId(input.realmId),
+            lockedMembership.subject_id,
+          ],
+        );
+        if (owner.rowCount === 1) {
+          throw new ApplicationError(
+            "REALM_PRIMARY_OWNER_MEMBERSHIP_SUSPENSION_FORBIDDEN",
+            409,
+            "Transfer the Primary Realm Owner before suspending their Membership.",
+          );
+        }
+      }
       const result = await client.query<MembershipRow>(
         `UPDATE ${this.q("_xecms_realm_memberships")} membership
          SET status = $4, revision = revision + 1,
@@ -1268,6 +1464,7 @@ function REALM_SELECT(q: (name: string) => string): string {
 
 function IDENTITY_SELECT(q: (name: string) => string): string {
   return `SELECT identity.id, identity.workspace_id, identity.username,
+                 identity.identity_kind, identity.is_owner,
                  identity.origin_realm_id, identity.credential_version,
                  identity.disabled_at
           FROM ${q("_xecms_identities")} identity`;
@@ -1275,6 +1472,7 @@ function IDENTITY_SELECT(q: (name: string) => string): string {
 
 function IDENTITY_CREDENTIAL_SELECT(q: (name: string) => string): string {
   return `SELECT identity.id, identity.workspace_id, identity.username,
+                 identity.identity_kind, identity.is_owner,
                  identity.origin_realm_id, identity.credential_version,
                  identity.disabled_at, identity.password_hash
           FROM ${q("_xecms_identities")} identity`;
@@ -1294,6 +1492,8 @@ function CONTENT_SESSION_SELECT(q: (name: string) => string): string {
             identity.id AS identity_record_id,
             identity.workspace_id AS identity_workspace_id,
             identity.username AS identity_username,
+            identity.identity_kind AS identity_identity_kind,
+            identity.is_owner AS identity_is_owner,
             identity.origin_realm_id AS identity_origin_realm_id,
             identity.credential_version AS identity_credential_version,
             identity.disabled_at AS identity_disabled_at,
@@ -1329,10 +1529,11 @@ function CONTENT_SESSION_SELECT(q: (name: string) => string): string {
 }
 
 function FULL_ACCESS_SELECT(q: (name: string) => string): string {
-  return `SELECT binding.id, binding.realm_id, binding.subject_id,
-                 binding.granted_by_identity_id, binding.granted_by_subject_id,
+  return `SELECT binding.id, binding.realm_id, binding.system_identity_id,
+                 binding.granted_by_identity_id,
                  binding.reason, binding.created_at, binding.valid_until,
-                 binding.revoked_at, binding.revoked_by_identity_id
+                 binding.revoked_at, binding.revoked_by_identity_id,
+                 binding.termination_reason
           FROM ${q("_xecms_realm_full_access_bindings")} binding`;
 }
 
@@ -1366,6 +1567,8 @@ interface IdentityRow extends QueryResultRow {
   readonly id: string;
   readonly workspace_id: string;
   readonly username: string;
+  readonly identity_kind: "human" | "service";
+  readonly is_owner: boolean;
   readonly origin_realm_id: string;
   readonly credential_version: string | number;
   readonly disabled_at: Date | string | null;
@@ -1415,6 +1618,8 @@ interface ContentSessionRow extends QueryResultRow {
   readonly identity_record_id: string;
   readonly identity_workspace_id: string;
   readonly identity_username: string;
+  readonly identity_identity_kind: "human" | "service";
+  readonly identity_is_owner: boolean;
   readonly identity_origin_realm_id: string;
   readonly identity_credential_version: string | number;
   readonly identity_disabled_at: Date | string | null;
@@ -1453,14 +1658,14 @@ interface ContentSessionRow extends QueryResultRow {
 interface FullAccessRow extends QueryResultRow {
   readonly id: string;
   readonly realm_id: string;
-  readonly subject_id: string;
+  readonly system_identity_id: string;
   readonly granted_by_identity_id: string;
-  readonly granted_by_subject_id: string;
   readonly reason: string;
   readonly created_at: Date | string;
-  readonly valid_until: Date | string | null;
+  readonly valid_until: Date | string;
   readonly revoked_at: Date | string | null;
   readonly revoked_by_identity_id: string | null;
+  readonly termination_reason: "revoked" | "expired" | null;
 }
 
 interface AuthCollectionConfigRow extends QueryResultRow {
@@ -1502,6 +1707,8 @@ function identityFromRow(row: IdentityRow): GlobalIdentityRecord {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    kind: row.identity_kind,
+    isOwner: row.is_owner,
     primaryIdentifier: row.username,
     originRealmId: row.origin_realm_id,
     credentialVersion: Number(row.credential_version),
@@ -1567,6 +1774,8 @@ function contentSessionFromRow(row: ContentSessionRow): ContentRealmSessionRecor
     id: row.identity_record_id,
     workspace_id: row.identity_workspace_id,
     username: row.identity_username,
+    identity_kind: row.identity_identity_kind,
+    is_owner: row.identity_is_owner,
     origin_realm_id: row.identity_origin_realm_id,
     credential_version: row.identity_credential_version,
     disabled_at: row.identity_disabled_at,
@@ -1598,14 +1807,14 @@ function fullAccessFromRow(row: FullAccessRow): RealmFullAccessBindingRecord {
   return {
     id: row.id,
     realmId: row.realm_id,
-    subjectId: row.subject_id,
+    systemIdentityId: row.system_identity_id,
     grantedByIdentityId: row.granted_by_identity_id,
-    grantedBySubjectId: row.granted_by_subject_id,
     reason: row.reason,
     createdAt: instant(row.created_at),
-    ...(row.valid_until === null ? {} : { validUntil: instant(row.valid_until) }),
+    validUntil: instant(row.valid_until),
     ...(row.revoked_at === null ? {} : { revokedAt: instant(row.revoked_at) }),
     ...(row.revoked_by_identity_id === null ? {} : { revokedByIdentityId: row.revoked_by_identity_id }),
+    ...(row.termination_reason === null ? {} : { terminationReason: row.termination_reason }),
   };
 }
 
@@ -1657,8 +1866,12 @@ function mapIdentityRealmError(error: unknown): unknown {
     if (pg.constraint?.includes("realm_memberships") === true) {
       return new ApplicationError("REALM_MEMBERSHIP_CONFLICT", 409, "That Realm Membership already exists.");
     }
-    if (pg.constraint === "_xecms_realm_full_access_active_subject") {
-      return new ApplicationError("FULL_ACCESS_ALREADY_GRANTED", 409, "The Subject already has active Full Access.");
+    if (pg.constraint === "_xecms_realm_full_access_active_system_identity") {
+      return new ApplicationError(
+        "FULL_ACCESS_ALREADY_GRANTED",
+        409,
+        "The System Identity already has active Full Access for this Realm.",
+      );
     }
     return new ApplicationError("IDENTITY_REALM_CONFLICT", 409, "The Identity Realm record already exists.");
   }

@@ -18,7 +18,7 @@ import {
   type LevelSimpleState,
 } from "./policy-simple-view.js";
 import { permissionCategoryName, permissionTaskName } from "./vocabulary.js";
-import { accessBasePath, useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
+import { accessBasePath, canMutateAuthorization, useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
 
 type SheetState =
   | { readonly kind: "edit"; readonly levelId: string }
@@ -52,6 +52,7 @@ export function AccessGradesPage() {
 
   const levels = sortedLevels(policy.data);
   const counts = memberCountByLevel(policy.data);
+  const writable = canMutateAuthorization(policy.data, realmId);
   const closeSheet = () => setSheet(null);
   const editingLevel = sheet?.kind === "edit"
     ? levels.find(({ id }) => id === sheet.levelId) ?? null
@@ -63,9 +64,9 @@ export function AccessGradesPage() {
         eyebrow={realmId ? "Content Realm" : "Workspace"}
         title="등급 관리"
         description="멤버 등급마다 할 수 있는 일을 정합니다. 위에 있는 등급이 아래 등급을 관리합니다."
-        actions={<Button onPress={() => setSheet({ kind: "create" })}>새 등급</Button>}
+        actions={writable ? <Button onPress={() => setSheet({ kind: "create" })}>새 등급</Button> : undefined}
       />
-      <AccessWorkspaceNav />
+      <AccessWorkspaceNav policy={policy.data} />
       <div className={`${styles.layout} ${styles.rolesLayout}`}>
         <div className={gradeStyles.gradeList}>
           {levels.map((level) => (
@@ -77,6 +78,7 @@ export function AccessGradesPage() {
               onEdit={() => setSheet({ kind: "edit", levelId: level.id })}
               onDefine={() => ensureRole.mutate(level)}
               definePending={ensureRole.isPending}
+              readOnly={!writable}
             />
           ))}
           <PolicyMutationError error={ensureRole.error} policyKey={policyKey} />
@@ -94,13 +96,14 @@ export function AccessGradesPage() {
               <EmptyState title="등급을 선택하세요" description="등급 카드에서 권한 편집을 누르면 이곳에서 할 수 있는 일을 정할 수 있습니다." />
             </section>
           ) : sheet.kind === "create" ? (
-            <GradeCreator policy={policy.data} onClose={closeSheet} onCreated={(levelId) => setSheet({ kind: "edit", levelId })} />
+            writable ? <GradeCreator policy={policy.data} onClose={closeSheet} onCreated={(levelId) => setSheet({ kind: "edit", levelId })} /> : null
           ) : editingLevel === null ? null : (
             <GradePermissionSheet
               key={editingLevel.id}
               policy={policy.data}
               level={editingLevel}
               basePath={basePath}
+              forcedReadOnly={!writable}
               onClose={closeSheet}
             />
           )}
@@ -118,13 +121,14 @@ function roleCategorySummary(policy: AuthorizationPolicy, role: AuthorizationRol
   return categories.length === 0 ? "아직 정해진 업무 없음" : categories.map(permissionCategoryName).join(" · ") + " 담당";
 }
 
-function GradeCard({ policy, level, memberCount, onEdit, onDefine, definePending }: {
+function GradeCard({ policy, level, memberCount, onEdit, onDefine, definePending, readOnly }: {
   readonly policy: AuthorizationPolicy;
   readonly level: AuthorizationLevel;
   readonly memberCount: number;
   readonly onEdit: () => void;
   readonly onDefine: () => void;
   readonly definePending: boolean;
+  readonly readOnly: boolean;
 }) {
   const state = levelSimpleState(policy, level);
   const permissionCount = state.kind === "editable"
@@ -150,9 +154,9 @@ function GradeCard({ policy, level, memberCount, onEdit, onDefine, definePending
               <Button size="small" variant="quiet" onPress={onEdit}>구성 보기</Button>
             </>
           ) : state.kind === "editable" ? (
-            <Button size="small" variant="secondary" onPress={onEdit}>권한 편집</Button>
+            <Button size="small" variant="secondary" onPress={onEdit}>{readOnly ? "구성 보기" : "권한 편집"}</Button>
           ) : state.kind === "empty" ? (
-            <Button size="small" variant="secondary" onPress={onDefine} isDisabled={definePending}>이 등급의 권한 정하기</Button>
+            readOnly ? <Badge tone="info">읽기 전용</Badge> : <Button size="small" variant="secondary" onPress={onDefine} isDisabled={definePending}>이 등급의 권한 정하기</Button>
           ) : (
             <Button size="small" variant="quiet" onPress={onEdit}>구성 보기</Button>
           )}
@@ -178,16 +182,17 @@ function GradeCard({ policy, level, memberCount, onEdit, onDefine, definePending
   );
 }
 
-function GradePermissionSheet({ policy, level, basePath, onClose }: {
+function GradePermissionSheet({ policy, level, basePath, forcedReadOnly, onClose }: {
   readonly policy: AuthorizationPolicy;
   readonly level: AuthorizationLevel;
   readonly basePath: string;
+  readonly forcedReadOnly: boolean;
   readonly onClose: () => void;
 }) {
   const { authorization, policyKey } = useAuthorizationWorkspace();
   const queryClient = useQueryClient();
   const state = levelSimpleState(policy, level);
-  const readOnly = state.kind !== "editable";
+  const readOnly = forcedReadOnly || state.kind !== "editable";
   const role = state.kind === "editable" ? state.role : null;
   const unionPermissions = useMemo(() => state.kind === "editable"
     ? state.role.permissions

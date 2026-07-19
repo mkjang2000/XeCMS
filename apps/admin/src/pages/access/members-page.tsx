@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { useAdminApi, type AuthorizationPolicy, type AuthorizationSubject } from "@xecms/admin";
+import type { AuthorizationPolicy, AuthorizationSubject } from "@xecms/admin";
 import { Badge, Button, ConfirmDialog, EmptyState } from "@xecms/ui";
 import gradeStyles from "../../access-grades.module.css";
 import styles from "../../authorization.module.css";
@@ -9,42 +9,17 @@ import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
 import { Page, PageHeader, SectionHeader } from "../../components/page.js";
 import { useDisplayMode } from "../../display-mode.js";
-import { queryKeys } from "../../queries.js";
 import { roleNameOf } from "./common.js";
 import { PolicyMutationError } from "./guardrails.js";
 import {
   gradeOptions,
   rootResource,
   subjectGradeState,
-  type FullAccessInfo,
   type GradeOption,
   type SubjectGradeState,
 } from "./policy-simple-view.js";
 import { EffectivePermissionList } from "./simulator-page.js";
-import { accessBasePath, useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
-
-function useFullAccessInfo(realmId: string | undefined): {
-  readonly info: FullAccessInfo;
-  readonly pending: boolean;
-} {
-  const api = useAdminApi();
-  const query = useQuery({
-    queryKey: queryKeys.realmFullAccess(realmId ?? ""),
-    queryFn: () => api.identityRealms.listFullAccess(realmId!),
-    enabled: realmId !== undefined,
-    retry: false,
-  });
-  // 시스템 워크스페이스는 Full Access 개념 자체가 없다(기능 미지원 ≠ 조회 실패).
-  if (realmId === undefined) return { info: { kind: "unsupported" }, pending: false };
-  if (query.isPending) return { info: { kind: "unavailable" }, pending: true };
-  if (query.isError) return { info: { kind: "unavailable" }, pending: false };
-  const now = Date.now();
-  const active = query.data.items
-    .filter((item) => item.revokedAt === undefined
-      && (item.validUntil === undefined || Date.parse(item.validUntil) > now))
-    .map((item) => item.subjectId);
-  return { info: { kind: "loaded", subjectIds: active }, pending: false };
-}
+import { accessBasePath, canMutateAuthorization, useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
 
 interface PendingGradeChange {
   readonly subject: AuthorizationSubject;
@@ -56,7 +31,6 @@ export function AccessMembersPage() {
   const { authorization, policyKey, realmId } = useAuthorizationWorkspace();
   const queryClient = useQueryClient();
   const policy = useAuthorizationPolicy();
-  const fullAccess = useFullAccessInfo(realmId);
   const [newMemberName, setNewMemberName] = useState("");
   const [pendingChange, setPendingChange] = useState<PendingGradeChange | null>(null);
 
@@ -102,7 +76,7 @@ export function AccessMembersPage() {
     onError: () => setPendingChange(null),
   });
 
-  if (policy.isPending || (fullAccess.pending && !policy.isError)) {
+  if (policy.isPending) {
     return <Page><PageLoading label="멤버 정보를 불러오는 중" /></Page>;
   }
   if (policy.isError) return <Page><RealmAuthorizationError error={policy.error} context="policy" realmId={realmId} onRetry={() => void policy.refetch()} /></Page>;
@@ -111,6 +85,7 @@ export function AccessMembersPage() {
   const options = gradeOptions(policy.data);
   const members = policy.data.subjects.filter(({ type }) => type === "user");
   const basePath = accessBasePath(realmId);
+  const writable = canMutateAuthorization(policy.data, realmId);
   const levelName = (levelId: string) => policy.data.levels.find(({ id }) => id === levelId)?.name ?? levelId;
 
   return (
@@ -120,8 +95,8 @@ export function AccessMembersPage() {
         title="멤버"
         description="멤버마다 등급 하나만 고르면 그 등급의 권한이 그대로 적용됩니다."
       />
-      <AccessWorkspaceNav />
-      <section className={styles.panel}>
+      <AccessWorkspaceNav policy={policy.data} />
+      {writable ? <section className={styles.panel}>
         <SectionHeader title="새 멤버 추가" description="이름만 입력하면 바로 등급을 정할 수 있어요." />
         <div className={gradeStyles.memberAdd}>
           <label>
@@ -131,7 +106,7 @@ export function AccessMembersPage() {
           <Button onPress={() => createSubject.mutate()} isDisabled={!newMemberName.trim() || createSubject.isPending}>추가</Button>
         </div>
         <PolicyMutationError error={createSubject.error} policyKey={policyKey} />
-      </section>
+      </section> : null}
       <section className={styles.panel}>
         <SectionHeader title="멤버 등급" description="등급을 바꾸면 확인 후 바로 적용됩니다." />
         {members.length === 0 ? (
@@ -143,11 +118,11 @@ export function AccessMembersPage() {
                 key={subject.id}
                 policy={policy.data}
                 subject={subject}
-                fullAccess={fullAccess.info}
                 options={options}
                 rootMissing={root === null}
                 levelName={levelName}
                 basePath={basePath}
+                readOnly={!writable}
                 onChange={(state, option) => setPendingChange({ subject, state, option })}
                 changePending={applyGrade.isPending}
               />
@@ -156,7 +131,7 @@ export function AccessMembersPage() {
         )}
         <PolicyMutationError error={applyGrade.error} policyKey={policyKey} />
       </section>
-      {pendingChange !== null ? (
+      {writable && pendingChange !== null ? (
         <ConfirmDialog
           title="멤버 등급 변경"
           confirmLabel={pendingChange.option === null ? "등급 해제" : "등급 적용"}
@@ -176,20 +151,20 @@ export function AccessMembersPage() {
   );
 }
 
-function MemberRow({ policy, subject, fullAccess, options, rootMissing, levelName, basePath, onChange, changePending }: {
+function MemberRow({ policy, subject, options, rootMissing, levelName, basePath, readOnly, onChange, changePending }: {
   readonly policy: AuthorizationPolicy;
   readonly subject: AuthorizationSubject;
-  readonly fullAccess: FullAccessInfo;
   readonly options: readonly GradeOption[];
   readonly rootMissing: boolean;
   readonly levelName: (levelId: string) => string;
   readonly basePath: string;
+  readonly readOnly: boolean;
   readonly onChange: (state: SubjectGradeState, option: GradeOption | null) => void;
   readonly changePending: boolean;
 }) {
-  const state = subjectGradeState(policy, subject.id, fullAccess);
+  const state = subjectGradeState(policy, subject.id);
   const [expanded, setExpanded] = useState(false);
-  const locked = (state.kind === "simple" && state.locked) || subject.protected;
+  const locked = readOnly || (state.kind === "simple" && state.locked) || subject.protected;
 
   return (
     <article className={gradeStyles.memberRow} aria-label={`${subject.name} 멤버`}>
@@ -203,7 +178,7 @@ function MemberRow({ policy, subject, fullAccess, options, rootMissing, levelNam
         ) : locked ? (
           <div className={gradeStyles.memberChips}>
             <Badge>{state.kind === "simple" ? levelName(state.levelId) : "등급 없음"}</Badge>
-            <Badge tone="info">기본 제공 · 잠김</Badge>
+            <Badge tone="info">{readOnly ? "CMS Owner · 읽기 전용" : "기본 제공 · 잠김"}</Badge>
           </div>
         ) : rootMissing ? (
           <span className={styles.hint}>영역 구조가 복잡해 표준 모드에서 관리해 주세요.</span>
@@ -212,7 +187,7 @@ function MemberRow({ policy, subject, fullAccess, options, rootMissing, levelNam
             <span className={styles.visuallyHidden}>{subject.name} 등급</span>
             <select
               value={state.kind === "simple" ? state.levelId : ""}
-              disabled={changePending}
+              disabled={changePending || readOnly}
               onChange={(event) => {
                 const levelId = event.target.value;
                 onChange(state, levelId === "" ? null : options.find((option) => option.levelId === levelId) ?? null);

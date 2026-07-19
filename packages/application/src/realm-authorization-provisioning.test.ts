@@ -5,6 +5,10 @@ import {
   SYSTEM_AUTHORIZATION_REALM_ID,
   SYSTEM_WORKSPACE_RESOURCE_ID,
   applyPolicyMutation,
+  authorizationOwnerRoleId,
+  authorizationPrimaryOwnerBindingId,
+  authorizationSystemPolicyRootBindingId,
+  authorizationSystemPolicyRootRoleId,
   realmCollectionResourceId,
   type AuthorizationAuditDraft,
   type AuthorizationAuditPage,
@@ -148,6 +152,7 @@ function identity(id = "identity:global-member"): GlobalIdentityRecord {
   return {
     id,
     workspaceId: "wrk_default",
+    kind: "human",
     primaryIdentifier: "member@example.test",
     originRealmId: SYSTEM_AUTHORIZATION_REALM_ID,
     credentialVersion: 1,
@@ -226,6 +231,14 @@ describe("ContentRealmAuthorizationProvisioner", () => {
     expect(initialized.roles.every(({ id, realmId }) =>
       id.startsWith(`authorization:${realm.id}:`) && realmId === realm.id)).toBe(true);
     expect(initialized.bindings.some(({ realmId }) => realmId === SYSTEM_AUTHORIZATION_REALM_ID))
+      .toBe(false);
+    expect(initialized.bindings).toContainEqual(expect.objectContaining({
+      id: authorizationSystemPolicyRootBindingId(realm.id),
+      subjectId: realmAuthorizationBootstrapSubjectId(realm.id),
+      roleId: authorizationSystemPolicyRootRoleId(realm.id),
+      protected: true,
+    }));
+    expect(initialized.bindings.some(({ roleId }) => roleId === authorizationOwnerRoleId(realm.id)))
       .toBe(false);
     expect(store.audits.filter(({ realmId }) => realmId === realm.id)).toHaveLength(1);
 
@@ -365,6 +378,187 @@ describe("ContentRealmAuthorizationProvisioner", () => {
     expect(adminRole?.permissions).toEqual(expect.arrayContaining([
       "authorization.read", "role.assign", "role.create", "role.update",
     ]));
+
+    await expect(provisioner.listRealmAdministratorSubjectIds(realm))
+      .resolves.toEqual([subjectId]);
+    const revisionBeforeRevoke = policy(store, realm.id).revision;
+    await provisioner.revokeRealmAdministrator({ realm, subjectId });
+    expect(policy(store, realm.id).revision).toBe(revisionBeforeRevoke + 1);
+    expect(policy(store, realm.id).bindings).not.toContainEqual(expect.objectContaining({
+      id: bindingId,
+    }));
+    await expect(provisioner.listRealmAdministratorSubjectIds(realm)).resolves.toEqual([]);
+    await expect(authorization.authorize(
+      { realmId: realm.id, subjectId },
+      { action: "authorization.read", resourceId: realmAuthorizationRootResourceId(realm.id) },
+    )).resolves.toMatchObject({ allowed: false, reasonCode: "NO_PERMISSION" });
+    expect(store.audits.at(-1)).toMatchObject({
+      realmId: realm.id,
+      action: "binding.delete",
+      targetId: bindingId,
+    });
+
+    // A repeated lifecycle request is idempotent and does not create an empty
+    // policy revision or audit entry.
+    const auditCount = store.audits.length;
+    await provisioner.revokeRealmAdministrator({ realm, subjectId });
+    expect(policy(store, realm.id).revision).toBe(revisionBeforeRevoke + 1);
+    expect(store.audits).toHaveLength(auditCount);
+  });
+
+  it("assigns and atomically transfers the protected human Primary Owner binding", async () => {
+    const { store, authorization, provisioner } = await setup();
+    const realm = contentRealm();
+    const first = "subject:primary-owner-one";
+    const second = "subject:primary-owner-two";
+    await provisioner.ensureIdentitySubject({
+      realm,
+      identity: identity("identity:primary-owner-one"),
+      subjectId: first,
+      displayName: "Primary owner one",
+    });
+    await provisioner.ensureIdentitySubject({
+      realm,
+      identity: identity("identity:primary-owner-two"),
+      subjectId: second,
+      displayName: "Primary owner two",
+    });
+    const before = await provisioner.getPrimaryOwner(realm);
+    expect(before).toMatchObject({ state: "unassigned", issues: [] });
+
+    const assigned = await provisioner.setPrimaryOwner({
+      realm,
+      actor: {
+        accessMode: "cms-owner-control-plane",
+        realmId: realm.id,
+        systemIdentityId: "identity:cms-owner",
+        systemSubjectId: "subject:system-owner",
+      },
+      expectedRevision: before.policyRevision,
+      subjectId: first,
+      operation: "assign",
+    });
+    expect(assigned).toMatchObject({
+      state: "assigned",
+      subjectId: first,
+      identityId: "identity:primary-owner-one",
+      issues: [],
+    });
+    const revisionAfterAssign = assigned.policyRevision;
+    await expect(authorization.createSubject(
+      { realmId: realm.id, subjectId: first },
+      {
+        expectedRevision: revisionAfterAssign,
+        subject: { id: "subject:owner-created", realmId: realm.id, name: "Owner created", type: "user" },
+      },
+    )).resolves.toMatchObject({ revision: revisionAfterAssign + 1 });
+
+    const revisionBeforeTransfer = policy(store, realm.id).revision;
+    const transferred = await provisioner.setPrimaryOwner({
+      realm,
+      actor: {
+        accessMode: "realm-actor",
+        realmId: realm.id,
+        subjectId: first,
+        systemIdentityId: "identity:primary-owner-one",
+      },
+      expectedRevision: revisionBeforeTransfer,
+      subjectId: second,
+      operation: "transfer",
+    });
+    expect(transferred).toMatchObject({ state: "assigned", subjectId: second });
+    expect(transferred.policyRevision).toBe(revisionBeforeTransfer + 1);
+    expect(policy(store, realm.id).bindings.filter(
+      ({ roleId }) => roleId === authorizationOwnerRoleId(realm.id),
+    )).toEqual([expect.objectContaining({
+      id: authorizationPrimaryOwnerBindingId(realm.id),
+      subjectId: second,
+      protected: true,
+    })]);
+  });
+
+  it("recovers malformed human Owner bindings without weakening the System Policy Root", async () => {
+    const { store, provisioner } = await setup();
+    const realm = contentRealm();
+    const first = "subject:recover-owner-one";
+    const second = "subject:recover-owner-two";
+    await provisioner.ensureIdentitySubject({
+      realm,
+      identity: identity("identity:recover-owner-one"),
+      subjectId: first,
+      displayName: "Recover owner one",
+    });
+    await provisioner.ensureIdentitySubject({
+      realm,
+      identity: identity("identity:recover-owner-two"),
+      subjectId: second,
+      displayName: "Recover owner two",
+    });
+    const unassigned = await provisioner.getPrimaryOwner(realm);
+    const assigned = await provisioner.setPrimaryOwner({
+      realm,
+      actor: {
+        accessMode: "cms-owner-control-plane",
+        realmId: realm.id,
+        systemIdentityId: "identity:cms-owner",
+      },
+      expectedRevision: unassigned.policyRevision,
+      subjectId: first,
+      operation: "assign",
+    });
+    await store.mutatePolicy({
+      realmId: realm.id,
+      expectedRevision: assigned.policyRevision,
+      mutation: {
+        type: "binding.create",
+        value: {
+          id: `authorization:${realm.id}:binding:corrupt-owner-copy`,
+          realmId: realm.id,
+          subjectId: first,
+          roleId: authorizationOwnerRoleId(realm.id),
+          resourceId: realmAuthorizationRootResourceId(realm.id),
+          propagation: "self-and-children",
+          protected: true,
+        },
+      },
+      audit: {
+        id: "audit:corrupt-owner-copy",
+        actorSubjectId: realmAuthorizationBootstrapSubjectId(realm.id),
+        action: "test.corrupt-owner-copy",
+        targetType: "binding",
+        targetId: `authorization:${realm.id}:binding:corrupt-owner-copy`,
+        before: null,
+        after: null,
+        decision: null,
+        occurredAt: NOW,
+      },
+    });
+
+    const invalid = await provisioner.getPrimaryOwner(realm);
+    expect(invalid).toMatchObject({ state: "invalid" });
+    expect(invalid.issues).toContain("multiple-primary-owner-bindings");
+    const recovered = await provisioner.setPrimaryOwner({
+      realm,
+      actor: {
+        accessMode: "cms-owner-control-plane",
+        realmId: realm.id,
+        systemIdentityId: "identity:cms-owner",
+      },
+      expectedRevision: invalid.policyRevision,
+      subjectId: second,
+      operation: "recover",
+    });
+    expect(recovered).toMatchObject({ state: "assigned", subjectId: second, issues: [] });
+    expect(policy(store, realm.id).bindings.filter(
+      ({ roleId }) => roleId === authorizationOwnerRoleId(realm.id),
+    )).toEqual([expect.objectContaining({
+      id: authorizationPrimaryOwnerBindingId(realm.id),
+      subjectId: second,
+    })]);
+    expect(policy(store, realm.id).bindings).toContainEqual(expect.objectContaining({
+      id: authorizationSystemPolicyRootBindingId(realm.id),
+      protected: true,
+    }));
   });
 
   it("refuses to grant administration to a Subject that is not an active member", async () => {

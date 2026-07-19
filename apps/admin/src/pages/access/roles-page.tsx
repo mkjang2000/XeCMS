@@ -15,7 +15,7 @@ import { useDisplayMode } from "../../display-mode.js";
 import { ScopeTreeSelector } from "../../components/resource-scope-tree.js";
 import { MutationError, PolicySummary, textList } from "./common.js";
 import { PermissionEditor } from "./permission-editor.js";
-import { useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
+import { canMutateAuthorization, useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
 
 export function AccessRolesPage() {
   const { authorization, policyKey, realmId } = useAuthorizationWorkspace();
@@ -55,6 +55,7 @@ export function AccessRolesPage() {
 
   if (policy.isPending) return <Page><PageLoading label="권한 정책을 불러오는 중" /></Page>;
   if (policy.isError) return <Page><RealmAuthorizationError error={policy.error} context="policy" realmId={realmId} onRetry={() => void policy.refetch()} /></Page>;
+  const writable = canMutateAuthorization(policy.data, realmId);
   const levels = [...policy.data.levels].sort((left, right) => right.rank - left.rank);
   const selectRole = (role: AuthorizationRole) => {
     setEditingLevel(null);
@@ -89,9 +90,9 @@ export function AccessRolesPage() {
         eyebrow={realmId ? "Content Realm authorization" : "System authorization"}
         title={advanced ? "레벨과 역할" : "등급과 역할"}
         description={advanced ? "위쪽 레벨이 아래쪽 역할을 관리합니다. 같은 레벨에서는 책임만 나누고 서로를 관리하지 않습니다." : "등급별 역할과 맡은 업무를 관리합니다. 등급 순서 변경은 고급 모드에서 할 수 있습니다."}
-        actions={advanced ? <Button onPress={() => selectLevel(null)}>새 레벨</Button> : undefined}
+        actions={advanced && writable ? <Button onPress={() => selectLevel(null)}>새 레벨</Button> : undefined}
       />
-      <AccessWorkspaceNav />
+      <AccessWorkspaceNav policy={policy.data} />
       <div className={styles.guideBanner}>
         <span className={styles.guideNumber}>1</span>
         <div><strong>{advanced ? "먼저 관리 서열을 정하고, 같은 높이에 필요한 역할을 나누세요." : "등급 안에서 담당 업무별 역할을 나눌 수 있습니다."}</strong><p>{advanced ? "역할을 선택하면 오른쪽에서 실제 업무와 위임 범위를 설정할 수 있습니다." : "고급 위임·필드 제한이 있는 역할도 값을 유지한 채 기본 업무만 편집합니다."}</p></div>
@@ -112,8 +113,8 @@ export function AccessRolesPage() {
                     </div>
                   </div>
                   <div className={styles.levelActions}>
-                    <Button size="small" variant="secondary" onPress={() => createRoleAt(level)}>동일 레벨 역할 추가</Button>
-                    {advanced && !level.protected
+                    {writable ? <Button size="small" variant="secondary" onPress={() => createRoleAt(level)}>동일 레벨 역할 추가</Button> : null}
+                    {advanced && writable && !level.protected
                       ? <Button size="small" variant="quiet" onPress={() => selectLevel(level)}>레벨 편집</Button>
                       : level.protected ? <Badge>보호됨</Badge> : null}
                   </div>
@@ -144,7 +145,7 @@ export function AccessRolesPage() {
                   {roles.length === 0 ? (
                     <div className={styles.emptyRoleRow}>
                       <span>아직 역할이 없습니다.</span>
-                      <Button size="small" variant="quiet" onPress={() => createRoleAt(level)}>첫 역할 추가</Button>
+                      {writable ? <Button size="small" variant="quiet" onPress={() => createRoleAt(level)}>첫 역할 추가</Button> : null}
                     </div>
                   ) : null}
                 </div>
@@ -156,10 +157,10 @@ export function AccessRolesPage() {
         <div className={styles.detailPane} data-open={inspectorOpen}>
           {inspectorOpen ? <div className={styles.drawerHeader}><strong>{levelEditorOpen ? editingLevel ? "레벨 편집" : "새 레벨" : editingRole?.name || "새 역할"}</strong><Button size="small" variant="quiet" onPress={closeInspector}>닫기</Button></div> : null}
           {levelEditorOpen ? (
-            <>
+            writable ? <>
               <LevelEditor level={editingLevel} onCancel={closeInspector} onSave={(input) => saveLevel.mutate(input)} isPending={saveLevel.isPending} />
               <MutationError error={saveLevel.error} />
-            </>
+            </> : <section className={styles.panel}><Callout tone="info">Full Access가 종료되어 레벨 편집을 닫았습니다. 현재 정책은 읽기 전용입니다.</Callout></section>
           ) : (
             <>
               <RoleEditor
@@ -167,9 +168,10 @@ export function AccessRolesPage() {
                 role={editingRole}
                 onCancel={() => setEditingRole(null)}
                 onSave={(input) => saveRole.mutate(input)}
-                onDelete={editingRole?.id && !editingRole.protected ? () => deleteRole.mutate(editingRole.id) : undefined}
+                onDelete={writable && editingRole?.id && !editingRole.protected ? () => deleteRole.mutate(editingRole.id) : undefined}
                 isPending={saveRole.isPending || deleteRole.isPending}
                 advanced={advanced}
+                forcedReadOnly={!writable}
               />
               <MutationError error={saveRole.error ?? deleteRole.error} />
             </>
@@ -207,7 +209,7 @@ function LevelEditor({ level, onSave, onCancel, isPending }: {
   );
 }
 
-function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending, advanced }: {
+function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending, advanced, forcedReadOnly }: {
   readonly policy: AuthorizationPolicy;
   readonly role: AuthorizationRole | null;
   readonly onSave: (input: AuthorizationRoleInput) => void;
@@ -215,6 +217,7 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending, advan
   readonly onCancel: () => void;
   readonly isPending: boolean;
   readonly advanced: boolean;
+  readonly forcedReadOnly: boolean;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -248,7 +251,7 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending, advan
   if (role === null) {
     return <section className={`${styles.panel} ${styles.inspectorEmpty}`}><EmptyState title="편집할 항목을 선택하세요" description="목록에서 역할을 선택하거나 새 레벨·동일 레벨 역할을 추가하세요." /></section>;
   }
-  const readOnly = role.protected;
+  const readOnly = forcedReadOnly || role.protected;
   const availablePermissions = readOnly
     ? policy.permissions
     : policy.permissions.filter((permission) =>
@@ -263,10 +266,10 @@ function RoleEditor({ policy, role, onSave, onDelete, onCancel, isPending, advan
     <section className={styles.panel} aria-label="역할 편집기">
       <SectionHeader
         title={readOnly ? "보호 역할 상세" : role.id ? "역할 편집" : "동일 레벨 역할 추가"}
-        description={readOnly ? "시스템 보호 역할은 구성을 확인할 수 있지만 수정할 수 없습니다." : advanced ? "사용 권한과 하위 역할에 위임할 수 있는 범위를 분리합니다." : "역할이 맡을 기본 업무를 선택합니다. 숨은 고급 설정은 그대로 유지됩니다."}
+        description={forcedReadOnly ? "CMS Owner 감독 모드에서는 구성을 확인할 수 있지만 수정할 수 없습니다." : readOnly ? "시스템 보호 역할은 구성을 확인할 수 있지만 수정할 수 없습니다." : advanced ? "사용 권한과 하위 역할에 위임할 수 있는 범위를 분리합니다." : "역할이 맡을 기본 업무를 선택합니다. 숨은 고급 설정은 그대로 유지됩니다."}
         actions={readOnly ? <Badge>읽기 전용</Badge> : undefined}
       />
-      {readOnly ? <Callout tone="info">이 역할은 시스템 동작에 필요하므로 이름, 레벨, 권한 구성이 보호됩니다.</Callout> : null}
+      {readOnly ? <Callout tone="info">{forcedReadOnly ? "Full Access를 시작하기 전에는 Realm 정책을 읽기만 할 수 있습니다." : "이 역할은 시스템 동작에 필요하므로 이름, 레벨, 권한 구성이 보호됩니다."}</Callout> : null}
       {!advanced && (role.delegatablePermissions.length > 0 || role.fieldAccess.length > 0) ? <Callout tone="info"><strong>고급 설정 있음</strong> 위임 또는 필드 접근 제한은 이 화면에서 바뀌지 않으며 저장해도 그대로 유지됩니다.</Callout> : null}
       <div className={styles.form}>
         <div className={styles.editorSection}>

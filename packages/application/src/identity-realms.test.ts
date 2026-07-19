@@ -12,8 +12,10 @@ import {
   type IdentityRealmRecord,
   type IdentityRealmStore,
   type RealmFullAccessBindingRecord,
+  type RealmAdministrationAuditRecord,
   type RealmIdentityProvisioner,
   type RealmMembershipRecord,
+  type RealmOwnerCoordinator,
 } from "./identity-realms.js";
 
 const NOW = "2026-07-15T00:00:00.000Z";
@@ -25,6 +27,7 @@ class MemoryIdentityRealmStore implements IdentityRealmStore {
   readonly memberships = new Map<string, RealmMembershipRecord>();
   readonly sessions = new Map<string, ContentRealmSessionRecord & { readonly csrf: string }>();
   readonly fullAccess = new Map<string, RealmFullAccessBindingRecord>();
+  readonly administrationEvents: RealmAdministrationAuditRecord[] = [];
 
   async listRealms(workspaceId: string) {
     return [...this.realms.values()].filter((realm) => realm.workspaceId === workspaceId);
@@ -83,8 +86,30 @@ class MemoryIdentityRealmStore implements IdentityRealmStore {
       membership.realmId === realmId && membership.identityId === identityId) ?? null;
   }
   async findMembershipById(membershipId: string) { return this.memberships.get(membershipId) ?? null; }
+  async isEligibleRealmOwner(input: Parameters<IdentityRealmStore["isEligibleRealmOwner"]>[0]) {
+    const identity = this.identities.get(input.identityId);
+    const contentMembership = await this.findMembershipByIdentity(input.realmId, input.identityId);
+    const systemMembership = await this.findMembershipByIdentity("rlm_system", input.identityId);
+    return identity !== undefined
+      && identity.kind === "human"
+      && identity.isOwner !== true
+      && identity.disabledAt === undefined
+      && contentMembership?.status === "active"
+      && contentMembership.subjectId === input.subjectId
+      && systemMembership?.status === "active";
+  }
   async suspendMembership(input: Parameters<IdentityRealmStore["suspendMembership"]>[0]) {
-    return this.changeMembership(input.realmId, input.membershipId, input.expectedRevision, "suspended", input.now);
+    const suspended = this.changeMembership(
+      input.realmId,
+      input.membershipId,
+      input.expectedRevision,
+      "suspended",
+      input.now,
+    );
+    for (const [tokenHash, session] of this.sessions) {
+      if (session.membership.id === input.membershipId) this.sessions.delete(tokenHash);
+    }
+    return suspended;
   }
   async reactivateMembership(input: Parameters<IdentityRealmStore["reactivateMembership"]>[0]) {
     return this.changeMembership(input.realmId, input.membershipId, input.expectedRevision, "active", input.now);
@@ -135,7 +160,17 @@ class MemoryIdentityRealmStore implements IdentityRealmStore {
   async deleteContentSession(tokenHash: string, realmId: string) {
     if (this.sessions.get(tokenHash)?.realm.id === realmId) this.sessions.delete(tokenHash);
   }
-  async listFullAccessBindings(realmId: string) {
+  async revokeMembershipSessions(input: Parameters<IdentityRealmStore["revokeMembershipSessions"]>[0]) {
+    let revoked = 0;
+    for (const [tokenHash, session] of this.sessions) {
+      if (session.realm.id === input.realmId && session.membership.id === input.membershipId) {
+        this.sessions.delete(tokenHash);
+        revoked += 1;
+      }
+    }
+    return revoked;
+  }
+  async listFullAccessBindings(realmId: string, _now: string) {
     return [...this.fullAccess.values()].filter((binding) => binding.realmId === realmId);
   }
   async grantFullAccess(input: RealmFullAccessBindingRecord) {
@@ -149,12 +184,18 @@ class MemoryIdentityRealmStore implements IdentityRealmStore {
     this.fullAccess.set(binding.id, revoked);
     return revoked;
   }
-  async hasActiveFullAccess(realmId: string, subjectId: string, now: string) {
-    return [...this.fullAccess.values()].some((binding) =>
+  async findActiveFullAccessBinding(realmId: string, systemIdentityId: string, now: string) {
+    return [...this.fullAccess.values()].find((binding) =>
       binding.realmId === realmId &&
-      binding.subjectId === subjectId &&
+      binding.systemIdentityId === systemIdentityId &&
       binding.revokedAt === undefined &&
-      (binding.validUntil === undefined || binding.validUntil > now));
+      binding.validUntil > now) ?? null;
+  }
+  async hasActiveFullAccess(realmId: string, systemIdentityId: string, now: string) {
+    return await this.findActiveFullAccessBinding(realmId, systemIdentityId, now) !== null;
+  }
+  async recordRealmAdministrationEvent(input: RealmAdministrationAuditRecord) {
+    this.administrationEvents.push(input);
   }
   async createGlobalIdentity(input: {
     readonly id: string;
@@ -173,6 +214,7 @@ class MemoryIdentityRealmStore implements IdentityRealmStore {
     const identity: GlobalIdentityCredentialRecord = {
       id: input.id,
       workspaceId: input.workspaceId,
+      kind: "human",
       primaryIdentifier: input.normalizedIdentifier,
       originRealmId: input.originRealmId,
       credentialVersion: 1,
@@ -278,6 +320,7 @@ function systemIdentity(overrides: Partial<GlobalIdentityCredentialRecord> = {})
   return {
     id: "usr_owner",
     workspaceId: WORKSPACE_ID,
+    kind: "human",
     primaryIdentifier: "owner@example.com",
     originRealmId: "rlm_system",
     credentialVersion: 1,
@@ -374,6 +417,8 @@ describe("M4-A Identity Realm", () => {
     expect(identities).toEqual([{
       id: "usr_visible",
       workspaceId: WORKSPACE_ID,
+      kind: "human",
+      isOwner: false,
       primaryIdentifier: "visible@example.com",
       originRealmId: "rlm_system",
       credentialVersion: 1,
@@ -848,12 +893,10 @@ describe("M4-A Identity Realm", () => {
     })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED", status: 401 });
   });
 
-  it("grants Full Access only to an active Content Membership with recent reauthentication", async () => {
+  it("grants System Identity Full Access without a Realm Membership after recent reauthentication", async () => {
     const store = new MemoryIdentityRealmStore();
     const realm = contentRealm();
-    const membership = activeMembership();
     store.realms.set(realm.id, realm);
-    store.memberships.set(membership.id, membership);
     const service = new IdentityRealmApplicationService(store, runtime);
     const owner: ActorContext = {
       subjectId: "subject_system_owner",
@@ -863,22 +906,259 @@ describe("M4-A Identity Realm", () => {
     };
     const granted = await service.grantFullAccess(owner, {
       realmId: realm.id,
-      subjectId: membership.subjectId,
       reason: " Initial realm recovery ",
       reauthenticatedAt: NOW,
+      validUntil: "2026-07-15T00:30:00.000Z",
     });
     expect(granted).toMatchObject({
       id: "full_access_new",
       realmId: realm.id,
+      systemIdentityId: "usr_owner",
       grantedByIdentityId: "usr_owner",
       reason: "Initial realm recovery",
+      validUntil: "2026-07-15T00:30:00.000Z",
     });
     await expect(service.grantFullAccess(owner, {
       realmId: realm.id,
-      subjectId: membership.subjectId,
       reason: "stale proof",
       reauthenticatedAt: "2026-07-14T23:00:00.000Z",
+      validUntil: "2026-07-15T00:30:00.000Z",
     })).rejects.toMatchObject({ code: "RECENT_REAUTHENTICATION_REQUIRED", status: 403 });
+    await expect(service.grantFullAccess(owner, {
+      realmId: realm.id,
+      reason: "excessive window",
+      reauthenticatedAt: NOW,
+      validUntil: "2026-07-15T04:00:00.001Z",
+    })).rejects.toMatchObject({ code: "IDENTITY_REALM_INPUT_INVALID", status: 422 });
+  });
+
+  it("blocks ordinary suspension of the current Primary Realm Owner", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    const currentOwnerIdentity = systemIdentity({
+      id: "usr_realm_owner",
+      primaryIdentifier: "realm-owner@example.com",
+    });
+    const currentOwnerMembership = activeMembership(currentOwnerIdentity.id);
+    store.realms.set(realm.id, realm);
+    store.identities.set(currentOwnerIdentity.id, currentOwnerIdentity);
+    store.memberships.set(currentOwnerMembership.id, currentOwnerMembership);
+    const owner = {
+      state: "assigned" as const,
+      realmId: realm.id,
+      policyRevision: 4,
+      bindingId: `authorization:${realm.id}:binding:primary-owner`,
+      subjectId: currentOwnerMembership.subjectId,
+      identityId: currentOwnerIdentity.id,
+      issues: [],
+    };
+    const owners = {
+      getPrimaryOwner: vi.fn(async () => owner),
+      setPrimaryOwner: vi.fn(async () => owner),
+    } satisfies RealmOwnerCoordinator;
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      undefined,
+      undefined,
+      owners,
+    );
+
+    await expect(service.suspendMembership({
+      subjectId: "subject_system_operator",
+      identityId: "usr_system_operator",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    }, {
+      realmId: realm.id,
+      membershipId: currentOwnerMembership.id,
+      expectedRevision: currentOwnerMembership.revision,
+    })).rejects.toMatchObject({
+      code: "REALM_PRIMARY_OWNER_MEMBERSHIP_SUSPENSION_FORBIDDEN",
+      status: 409,
+    });
+    expect(store.memberships.get(currentOwnerMembership.id)?.status).toBe("active");
+  });
+
+  it("applies and audits previous-Owner suspension after the Owner CAS transfer", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    const previousIdentity = systemIdentity({
+      id: "usr_previous_owner",
+      primaryIdentifier: "previous-owner@example.com",
+    });
+    const targetIdentity = systemIdentity({
+      id: "usr_next_owner",
+      primaryIdentifier: "next-owner@example.com",
+    });
+    const previousMembership = activeMembership(previousIdentity.id);
+    const targetMembership = activeMembership(targetIdentity.id);
+    const targetSystemMembership: RealmMembershipRecord = {
+      ...targetMembership,
+      id: "mbr_system_next_owner",
+      realmId: "rlm_system",
+      subjectId: "subject:usr_next_owner:system",
+    };
+    store.realms.set(realm.id, realm);
+    store.identities.set(previousIdentity.id, previousIdentity);
+    store.identities.set(targetIdentity.id, targetIdentity);
+    store.memberships.set(previousMembership.id, previousMembership);
+    store.memberships.set(targetMembership.id, targetMembership);
+    store.memberships.set(targetSystemMembership.id, targetSystemMembership);
+    store.sessions.set("previous-owner-session", {
+      identity: previousIdentity,
+      realm,
+      membership: previousMembership,
+      expiresAt: "2026-07-15T08:00:00.000Z",
+      authenticatedAt: NOW,
+      csrf: "previous-owner-csrf",
+    });
+    const before = {
+      state: "assigned" as const,
+      realmId: realm.id,
+      policyRevision: 7,
+      bindingId: `authorization:${realm.id}:binding:primary-owner`,
+      subjectId: previousMembership.subjectId,
+      identityId: previousIdentity.id,
+      issues: [],
+    };
+    const changed = {
+      ...before,
+      policyRevision: 8,
+      subjectId: targetMembership.subjectId,
+      identityId: targetIdentity.id,
+    };
+    const owners = {
+      getPrimaryOwner: vi.fn(async () => before),
+      setPrimaryOwner: vi.fn(async () => changed),
+    } satisfies RealmOwnerCoordinator;
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      undefined,
+      undefined,
+      owners,
+    );
+
+    await expect(service.transferOwner({
+      subjectId: "subject_cms_owner",
+      identityId: "usr_cms_owner",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    }, {
+      realmId: realm.id,
+      targetMembershipId: targetMembership.id,
+      expectedPolicyRevision: before.policyRevision,
+      reason: "Primary owner handoff",
+      reauthenticatedAt: NOW,
+      suspendPreviousMembership: true,
+    })).resolves.toMatchObject({
+      status: "healthy",
+      policyRevision: 8,
+      owner: { membershipId: targetMembership.id },
+    });
+
+    expect(owners.setPrimaryOwner).toHaveBeenCalledOnce();
+    expect(store.memberships.get(previousMembership.id)).toMatchObject({
+      status: "suspended",
+      revision: 2,
+    });
+    expect(store.sessions.has("previous-owner-session")).toBe(false);
+    expect(store.administrationEvents).toContainEqual(expect.objectContaining({
+      event: "REALM_OWNER_REPLACED",
+      result: "success",
+      details: expect.objectContaining({
+        previousOwnerCleanup: expect.objectContaining({
+          requested: {
+            revokePreviousSessions: false,
+            suspendPreviousMembership: true,
+          },
+          outcome: "completed",
+          membershipSuspended: true,
+          sessionsCleared: true,
+        }),
+      }),
+    }));
+  });
+
+  it("revokes previous-Owner sessions without suspending Membership when requested", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    const previousIdentity = systemIdentity({ id: "usr_previous_active_owner" });
+    const targetIdentity = systemIdentity({ id: "usr_next_active_owner" });
+    const previousMembership = activeMembership(previousIdentity.id);
+    const targetMembership = activeMembership(targetIdentity.id);
+    const targetSystemMembership: RealmMembershipRecord = {
+      ...targetMembership,
+      id: "mbr_system_next_active_owner",
+      realmId: "rlm_system",
+      subjectId: "subject:usr_next_active_owner:system",
+    };
+    for (const identity of [previousIdentity, targetIdentity]) store.identities.set(identity.id, identity);
+    for (const membership of [previousMembership, targetMembership, targetSystemMembership]) {
+      store.memberships.set(membership.id, membership);
+    }
+    store.realms.set(realm.id, realm);
+    store.sessions.set("previous-active-owner-session", {
+      identity: previousIdentity,
+      realm,
+      membership: previousMembership,
+      expiresAt: "2026-07-15T08:00:00.000Z",
+      authenticatedAt: NOW,
+      csrf: "previous-active-owner-csrf",
+    });
+    const before = {
+      state: "assigned" as const,
+      realmId: realm.id,
+      policyRevision: 11,
+      bindingId: `authorization:${realm.id}:binding:primary-owner`,
+      subjectId: previousMembership.subjectId,
+      identityId: previousIdentity.id,
+      issues: [],
+    };
+    const owners = {
+      getPrimaryOwner: vi.fn(async () => before),
+      setPrimaryOwner: vi.fn(async () => ({
+        ...before,
+        policyRevision: 12,
+        subjectId: targetMembership.subjectId,
+        identityId: targetIdentity.id,
+      })),
+    } satisfies RealmOwnerCoordinator;
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      undefined,
+      undefined,
+      owners,
+    );
+
+    await service.transferOwner({
+      subjectId: "subject_cms_owner",
+      identityId: "usr_cms_owner",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    }, {
+      realmId: realm.id,
+      targetMembershipId: targetMembership.id,
+      expectedPolicyRevision: before.policyRevision,
+      reason: "Keep former owner as a member",
+      reauthenticatedAt: NOW,
+      revokePreviousSessions: true,
+    });
+
+    expect(store.memberships.get(previousMembership.id)?.status).toBe("active");
+    expect(store.sessions.has("previous-active-owner-session")).toBe(false);
+    expect(store.administrationEvents.at(-1)).toMatchObject({
+      details: {
+        previousOwnerCleanup: {
+          outcome: "completed",
+          membershipSuspended: false,
+          sessionsCleared: true,
+          revokedSessions: 1,
+        },
+      },
+    });
   });
 
   it("invalidates an existing content session as soon as its Membership is suspended", async () => {

@@ -5,6 +5,14 @@ import {
   type AuthorizationActor,
   type AuthorizationBindingRecord,
   type AuthorizationPolicyState,
+  type RealmOwnerCommandActor,
+  type RealmPrimaryOwnerStatus,
+  authorizationOwnerLevelId,
+  authorizationOwnerRoleId,
+  authorizationPrimaryOwnerBindingId,
+  authorizationSystemPolicyRootBindingId,
+  authorizationSystemPolicyRootLevelId,
+  authorizationSystemPolicyRootRoleId,
 } from "./authorization.js";
 import { ApplicationError } from "./errors.js";
 import type {
@@ -68,6 +76,7 @@ implements RealmAuthorizationSubjectProvisioner {
           ownerSubjectId: realmAuthorizationBootstrapSubjectId(realm.id),
           ownerSubjectType: "service-account",
           ownerSubjectName: "Realm authorization provisioner",
+          ownerIsSystemPolicyRoot: true,
         });
       } catch (error: unknown) {
         initializationError = error;
@@ -80,6 +89,53 @@ implements RealmAuthorizationSubjectProvisioner {
     }
     assertProvisioningPolicy(state, realm.id);
     return state;
+  }
+
+  public async getPrimaryOwner(realm: IdentityRealmRecord): Promise<RealmPrimaryOwnerStatus> {
+    assertProvisionableContentRealm(realm);
+    const existing = await this.authorization.loadTrustedProvisioningPolicy(realm.id);
+    if (existing === null) {
+      await this.ensureRealmPolicy(realm);
+    } else {
+      // Status inspection must remain available when only the human Owner
+      // projection is damaged, otherwise the recovery UI deadlocks.
+      assertProvisioningPolicy(existing, realm.id, true);
+    }
+    return this.authorization.getTrustedPrimaryRealmOwner(realm.id);
+  }
+
+  public async setPrimaryOwner(input: {
+    readonly realm: IdentityRealmRecord;
+    readonly actor: RealmOwnerCommandActor;
+    readonly expectedRevision: number;
+    readonly subjectId: string;
+    readonly operation: "assign" | "transfer" | "recover";
+  }): Promise<RealmPrimaryOwnerStatus> {
+    assertActiveContentRealm(input.realm);
+    if (input.actor.realmId !== input.realm.id) {
+      throw new ApplicationError(
+        "AUTHORIZATION_REALM_MISMATCH",
+        409,
+        "The Owner command actor belongs to another Realm.",
+      );
+    }
+    if (input.operation === "recover") {
+      const existing = await this.authorization.loadTrustedProvisioningPolicy(input.realm.id);
+      if (existing === null) {
+        await this.ensureRealmPolicy(input.realm);
+      } else {
+        // Recovery may replace malformed/multiple human Owner Bindings, but the
+        // provisioner/System Policy Root foundation must still be intact.
+        assertProvisioningPolicy(existing, input.realm.id, true);
+      }
+    } else {
+      await this.ensureRealmPolicy(input.realm);
+    }
+    return this.authorization.setTrustedPrimaryRealmOwner(input.actor, {
+      expectedRevision: input.expectedRevision,
+      subjectId: input.subjectId,
+      operation: input.operation,
+    });
   }
 
   public async ensureIdentitySubject(input: {
@@ -206,14 +262,7 @@ implements RealmAuthorizationSubjectProvisioner {
           `Realm '${input.realm.id}' has no Content Administrator Role to grant.`,
         );
       }
-      const binding: AuthorizationBindingRecord = {
-        id: realmDefaultRoleBindingId(input.realm.id, input.subjectId, adminRoleId),
-        realmId: input.realm.id,
-        subjectId: input.subjectId,
-        roleId: adminRoleId,
-        resourceId: state.realm.rootResourceId,
-        propagation: "self-and-children",
-      };
+      const binding = realmAdministratorBinding(state, input.realm.id, input.subjectId);
       const existing = state.bindings.find(({ id }) => id === binding.id);
       if (existing !== undefined) {
         if (!defaultBindingMatches(existing, binding)) {
@@ -234,6 +283,73 @@ implements RealmAuthorizationSubjectProvisioner {
       await this.authorization.createBinding(actor, {
         expectedRevision: state.revision,
         binding,
+      });
+    });
+  }
+
+  /**
+   * Returns only Subjects holding the deterministic administrator Binding
+   * created by this trusted boundary. Arbitrary policy bindings to the same
+   * Role remain ordinary Realm policy and are intentionally not represented as
+   * lifecycle-managed administrator appointments.
+   */
+  public async listRealmAdministratorSubjectIds(
+    realm: IdentityRealmRecord,
+  ): Promise<readonly string[]> {
+    if (realm.kind !== "content") {
+      throw new ApplicationError(
+        "CONTENT_REALM_REQUIRED",
+        409,
+        "Realm administrator inspection requires a Content Realm.",
+      );
+    }
+    const state = await this.authorization.loadTrustedProvisioningPolicy(realm.id);
+    if (state === null) return [];
+    assertProvisioningPolicy(state, realm.id);
+    const administratorRoleId = `authorization:${realm.id}:role:content-administrator`;
+    const subjects: string[] = [];
+    for (const binding of state.bindings) {
+      if (binding.roleId !== administratorRoleId) continue;
+      const expected = realmAdministratorBinding(state, realm.id, binding.subjectId);
+      if (binding.id !== expected.id) continue;
+      if (!defaultBindingMatches(binding, expected)) {
+        throw new ApplicationError(
+          "REALM_DEFAULT_BINDING_CONFLICT",
+          409,
+          `Administrator binding '${binding.id}' has incompatible semantics.`,
+        );
+      }
+      subjects.push(binding.subjectId);
+    }
+    return subjects;
+  }
+
+  /**
+   * Removes only the trusted canonical Content Administrator Binding. The
+   * protected System Policy Root and Primary Owner Bindings have unrelated
+   * deterministic IDs and cannot be selected through this operation. The
+   * underlying authorization commit keeps revision CAS and audit insertion in
+   * the same store transaction. Idempotent when no appointment exists.
+   */
+  public async revokeRealmAdministrator(input: {
+    readonly realm: IdentityRealmRecord;
+    readonly subjectId: string;
+  }): Promise<void> {
+    assertActiveContentRealm(input.realm);
+    await this.withPolicyRetry(input.realm, async (state, actor) => {
+      const expected = realmAdministratorBinding(state, input.realm.id, input.subjectId);
+      const existing = state.bindings.find(({ id }) => id === expected.id);
+      if (existing === undefined) return;
+      if (!defaultBindingMatches(existing, expected)) {
+        throw new ApplicationError(
+          "REALM_DEFAULT_BINDING_CONFLICT",
+          409,
+          `Administrator binding '${existing.id}' has incompatible semantics.`,
+        );
+      }
+      await this.authorization.deleteBinding(actor, {
+        expectedRevision: state.revision,
+        bindingId: expected.id,
       });
     });
   }
@@ -307,18 +423,46 @@ function assertActiveContentRealm(realm: IdentityRealmRecord): void {
   }
 }
 
-function assertProvisioningPolicy(state: AuthorizationPolicyState, realmId: string): void {
+function assertProvisioningPolicy(
+  state: AuthorizationPolicyState,
+  realmId: string,
+  allowPrimaryOwnerRepair = false,
+): void {
   const rootId = realmAuthorizationRootResourceId(realmId);
   const bootstrapId = realmAuthorizationBootstrapSubjectId(realmId);
   const root = state.resources.find(({ id }) => id === rootId);
   const bootstrap = state.subjects.find(({ id }) => id === bootstrapId);
-  const ownerRoleId = `authorization:${realmId}:role:owner`;
+  const ownerRoleId = authorizationOwnerRoleId(realmId);
   const ownerRole = state.roles.find(({ id }) => id === ownerRoleId);
   const ownerLevel = ownerRole === undefined
     ? undefined
     : state.authorityLevels.find(({ id }) => id === ownerRole.levelId);
-  const ownerBinding = state.bindings.find(
-    ({ id }) => id === `authorization:${realmId}:binding:owner`,
+  const rootRoleId = authorizationSystemPolicyRootRoleId(realmId);
+  const rootRole = state.roles.find(({ id }) => id === rootRoleId);
+  const rootLevel = state.authorityLevels.find(
+    ({ id }) => id === authorizationSystemPolicyRootLevelId(realmId),
+  );
+  const rootBinding = state.bindings.find(
+    ({ id }) => id === authorizationSystemPolicyRootBindingId(realmId),
+  );
+  const ownerBindings = state.bindings.filter(({ roleId }) => roleId === ownerRoleId);
+  const primaryOwnerBinding = ownerBindings[0];
+  const primaryOwnerSubject = primaryOwnerBinding === undefined
+    ? undefined
+    : state.subjects.find(({ id }) => id === primaryOwnerBinding.subjectId);
+  const primaryOwnerValid = ownerBindings.length === 0 || (
+    ownerBindings.length === 1
+    && primaryOwnerBinding?.id === authorizationPrimaryOwnerBindingId(realmId)
+    && primaryOwnerBinding.resourceId === rootId
+    && primaryOwnerBinding.propagation === "self-and-children"
+    && primaryOwnerBinding.protected === true
+    && primaryOwnerBinding.validFrom === undefined
+    && primaryOwnerBinding.validUntil === undefined
+    && primaryOwnerBinding.constraints === undefined
+    && primaryOwnerSubject?.type === "user"
+    && primaryOwnerSubject.identityId !== undefined
+    && primaryOwnerSubject.protected !== true
+    && primaryOwnerSubject.disabled !== true
   );
   const valid = state.realm.id === realmId
     && state.realm.rootResourceId === rootId
@@ -339,12 +483,19 @@ function assertProvisioningPolicy(state: AuthorizationPolicyState, realmId: stri
     && ownerLevel?.realmId === realmId
     && ownerLevel.protected === true
     && ownerLevel.rank === 100
-    && ownerBinding?.realmId === realmId
-    && ownerBinding.subjectId === bootstrapId
-    && ownerBinding.roleId === ownerRoleId
-    && ownerBinding.resourceId === rootId
-    && ownerBinding.propagation === "self-and-children"
-    && ownerBinding.protected === true;
+    && rootRole?.realmId === realmId
+    && rootRole.protected === true
+    && rootRole.permissions.includes("authorization.manage")
+    && rootLevel?.realmId === realmId
+    && rootLevel.protected === true
+    && rootLevel.rank > ownerLevel.rank
+    && rootBinding?.realmId === realmId
+    && rootBinding.subjectId === bootstrapId
+    && rootBinding.roleId === rootRoleId
+    && rootBinding.resourceId === rootId
+    && rootBinding.propagation === "self-and-children"
+    && rootBinding.protected === true
+    && (primaryOwnerValid || allowPrimaryOwnerRepair);
   if (!valid) {
     throw new ApplicationError(
       "REALM_AUTHORIZATION_POLICY_CONFLICT",
@@ -381,6 +532,22 @@ function defaultBindingMatches(
     && actual.validUntil === undefined
     && actual.constraints === undefined
     && actual.protected !== true;
+}
+
+function realmAdministratorBinding(
+  state: AuthorizationPolicyState,
+  realmId: string,
+  subjectId: string,
+): AuthorizationBindingRecord {
+  const roleId = `authorization:${realmId}:role:content-administrator`;
+  return {
+    id: realmDefaultRoleBindingId(realmId, subjectId, roleId),
+    realmId,
+    subjectId,
+    roleId,
+    resourceId: state.realm.rootResourceId,
+    propagation: "self-and-children",
+  };
 }
 
 function isRevisionConflict(error: unknown): boolean {

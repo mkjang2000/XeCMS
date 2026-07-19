@@ -16,7 +16,9 @@ import {
 } from "./hierarchy-migration.js";
 import {
   IDENTITY_REALM_MIGRATION_ID,
+  REALM_CONTROL_PLANE_ACCESS_MIGRATION_ID,
   applyIdentityRealmMigration,
+  applyRealmControlPlaneAccessMigration,
 } from "./identity-realm-migration.js";
 import { EVENT_WORKER_MIGRATION_ID, applyEventWorkerMigration } from "./event-worker-migration.js";
 import { USER_IDENTITY_MIGRATION_ID, applyUserIdentityMigration } from "./user-identity-migration.js";
@@ -31,6 +33,18 @@ import {
   ADMIN_APP_STORE_MIGRATION_ID,
   applyAdminAppStoreMigration,
 } from "./admin-app-migration.js";
+import {
+  REALM_OWNER_MODEL_MIGRATION_ID,
+  applyRealmOwnerModelMigration,
+} from "./realm-owner-migration.js";
+import {
+  AUTHORIZATION_CONTROL_PLANE_AUDIT_MIGRATION_ID,
+  applyAuthorizationControlPlaneAuditMigration,
+} from "./authorization-control-plane-audit-migration.js";
+import {
+  REALM_FULL_ACCESS_LIFECYCLE_MIGRATION_ID,
+  applyRealmFullAccessLifecycleMigration,
+} from "./realm-full-access-lifecycle-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -45,6 +59,10 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   SITE_SETTINGS_MIGRATION_ID,AUDIT_RETENTION_MIGRATION_ID,PLUGIN_PLATFORM_MIGRATION_ID,
   OWNER_DELEGATION_RECONCILIATION_MIGRATION_ID,
   ADMIN_APP_STORE_MIGRATION_ID,
+  REALM_CONTROL_PLANE_ACCESS_MIGRATION_ID,
+  REALM_OWNER_MODEL_MIGRATION_ID,
+  AUTHORIZATION_CONTROL_PLANE_AUDIT_MIGRATION_ID,
+  REALM_FULL_ACCESS_LIFECYCLE_MIGRATION_ID,
 ] as const);
 
 export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> {
@@ -279,6 +297,46 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyAdminAppStoreMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         ADMIN_APP_STORE_MIGRATION_ID,
+      ]);
+    }
+    const realmControlPlaneAccess = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [REALM_CONTROL_PLANE_ACCESS_MIGRATION_ID],
+    );
+    if (realmControlPlaneAccess.rowCount === 0) {
+      await applyRealmControlPlaneAccessMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        REALM_CONTROL_PLANE_ACCESS_MIGRATION_ID,
+      ]);
+    }
+    const realmOwnerModel = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [REALM_OWNER_MODEL_MIGRATION_ID],
+    );
+    if (realmOwnerModel.rowCount === 0) {
+      await applyRealmOwnerModelMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        REALM_OWNER_MODEL_MIGRATION_ID,
+      ]);
+    }
+    const authorizationControlPlaneAudit = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [AUTHORIZATION_CONTROL_PLANE_AUDIT_MIGRATION_ID],
+    );
+    if (authorizationControlPlaneAudit.rowCount === 0) {
+      await applyAuthorizationControlPlaneAuditMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        AUTHORIZATION_CONTROL_PLANE_AUDIT_MIGRATION_ID,
+      ]);
+    }
+    const realmFullAccessLifecycle = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [REALM_FULL_ACCESS_LIFECYCLE_MIGRATION_ID],
+    );
+    if (realmFullAccessLifecycle.rowCount === 0) {
+      await applyRealmFullAccessLifecycleMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        REALM_FULL_ACCESS_LIFECYCLE_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

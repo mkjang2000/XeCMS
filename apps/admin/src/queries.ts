@@ -46,6 +46,7 @@ export const queryKeys = {
   identityRealms: ["identity-realms", "list"] as const,
   identityRealm: (realmId: string) => ["identity-realms", realmId, "detail"] as const,
   realmMemberships: (realmId: string) => ["identity-realms", realmId, "memberships"] as const,
+  realmOwner: (realmId: string) => ["identity-realms", realmId, "owner"] as const,
   realmFullAccess: (realmId: string) => ["identity-realms", realmId, "full-access"] as const,
   jobs: (page: number, status: string, topic: string, handlerId: string) =>
     ["jobs", "list", page, status, topic, handlerId] as const,

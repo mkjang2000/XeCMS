@@ -49,6 +49,7 @@ const realm: IdentityRealmRecord = {
 const identity: GlobalIdentityRecord = {
   id: "identity_member",
   workspaceId: realm.workspaceId,
+  kind: "human",
   primaryIdentifier: "member@example.test",
   originRealmId: realm.id,
   credentialVersion: 1,
@@ -84,11 +85,25 @@ const authenticatedSession: AuthenticatedContentRealmSession = {
 const fullAccess: RealmFullAccessBindingRecord = {
   id: "full_access_1",
   realmId: realm.id,
-  subjectId: membership.subjectId,
+  systemIdentityId: "identity_admin",
   grantedByIdentityId: "identity_admin",
-  grantedBySubjectId: "subject_admin",
   reason: "Recovery",
   createdAt: "2026-07-15T02:00:00.000Z",
+  validUntil: "2026-07-15T02:30:00.000Z",
+};
+
+const ownerStatus = {
+  realmId: realm.id,
+  status: "healthy" as const,
+  policyRevision: 4,
+  owner: {
+    globalIdentityId: identity.id,
+    membershipId: membership.id,
+    subjectId: membership.subjectId,
+    primaryIdentifier: identity.primaryIdentifier,
+    identityActive: true,
+    membershipStatus: membership.status,
+  },
 };
 
 const openApps = new Set<FastifyInstance>();
@@ -172,9 +187,9 @@ describe("registerIdentityRealmRoutes", () => {
       method: "POST",
       url: "/api/identity-realms/rlm_community/full-access",
       payload: {
-        subjectId: "subject_member",
         reason: "Recovery",
         password: "admin-password",
+        validUntil: fullAccess.validUntil,
       },
     });
     const revoked = await harness.app.inject({
@@ -678,11 +693,26 @@ async function createHarness(): Promise<{
     grantRealmAdministrator: vi.fn<IdentityRealmAdministrationRouteService["grantRealmAdministrator"]>(
       async () => membership,
     ),
+    revokeRealmAdministrator: vi.fn<IdentityRealmAdministrationRouteService["revokeRealmAdministrator"]>(
+      async () => membership,
+    ),
     suspendMembership: vi.fn<IdentityRealmAdministrationRouteService["suspendMembership"]>(
       async () => ({ ...membership, status: "suspended", revision: 5, suspendedAt: realm.updatedAt }),
     ),
     reactivateMembership: vi.fn<IdentityRealmAdministrationRouteService["reactivateMembership"]>(
       async () => ({ ...membership, revision: 6 }),
+    ),
+    getOwner: vi.fn<IdentityRealmAdministrationRouteService["getOwner"]>(
+      async () => ownerStatus,
+    ),
+    assignOwner: vi.fn<IdentityRealmAdministrationRouteService["assignOwner"]>(
+      async () => ownerStatus,
+    ),
+    transferOwner: vi.fn<IdentityRealmAdministrationRouteService["transferOwner"]>(
+      async () => ownerStatus,
+    ),
+    recoverOwner: vi.fn<IdentityRealmAdministrationRouteService["recoverOwner"]>(
+      async () => ownerStatus,
     ),
     listFullAccessBindings: vi.fn<IdentityRealmAdministrationRouteService["listFullAccessBindings"]>(
       async () => [fullAccess],

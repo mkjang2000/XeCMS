@@ -23,8 +23,6 @@ import {
   type AuthorizationRuntime,
   type AuthorizationStore,
   type NewAuthorizationSubjectRecord,
-  type RealmFullAccessResolver,
-  type RealmFullAccessUse,
 } from "./authorization.js";
 
 const NOW = "2026-07-15T12:00:00.000Z";
@@ -216,37 +214,6 @@ function runtime(): AuthorizationRuntime {
     newAuditId: () => `audit:${++id}`,
     newId: (prefix) => `${prefix}:generated:${++id}`,
   };
-}
-
-class MemoryRealmFullAccessResolver implements RealmFullAccessResolver {
-  readonly #active = new Set<string>();
-  public readonly checks: {
-    readonly realmId: string;
-    readonly subjectId: string;
-    readonly at: string;
-  }[] = [];
-  public readonly uses: RealmFullAccessUse[] = [];
-
-  public grant(realmId: string, subjectId: string): void {
-    this.#active.add(this.key(realmId, subjectId));
-  }
-
-  public async hasActiveFullAccess(
-    realmId: string,
-    subjectId: string,
-    at: string,
-  ): Promise<boolean> {
-    this.checks.push({ realmId, subjectId, at });
-    return this.#active.has(this.key(realmId, subjectId));
-  }
-
-  public async recordUse(input: RealmFullAccessUse): Promise<void> {
-    this.uses.push(input);
-  }
-
-  private key(realmId: string, subjectId: string): string {
-    return `${realmId}\u0000${subjectId}`;
-  }
 }
 
 async function setup(): Promise<{
@@ -632,244 +599,86 @@ describe("AuthorizationApplicationService", () => {
     }));
   });
 
-  it("applies active Full Access only in its target Realm with explicit provenance and use audit", async () => {
+  it("keeps Realm Full Access out of every content and field authorization path", async () => {
     const store = new MultiRealmMemoryAuthorizationStore();
-    const resolver = new MemoryRealmFullAccessResolver();
-    const service = new AuthorizationApplicationService(store, runtime(), resolver);
-    const community = await initializeRealm(service, "rlm_full_community", "subject:community-owner");
-    const commerce = await initializeRealm(service, "rlm_full_commerce", "subject:commerce-owner");
-
-    for (const owner of [community, commerce]) {
-      await service.syncCoreResources(owner, {
-        expectedRevision: realmState(store, owner.realmId).revision,
-        collections: [{ id: "posts", name: "Posts" }],
-      });
-      await service.createSubject(owner, {
-        expectedRevision: realmState(store, owner.realmId).revision,
-        subject: {
-          id: "subject:realm-operator",
-          realmId: owner.realmId,
-          name: "Realm operator",
-          type: "user",
-        },
-      });
-    }
-
-    resolver.grant(community.realmId, "subject:realm-operator");
-    const communityActor = { ...community, subjectId: "subject:realm-operator" };
-    const commerceActor = { ...commerce, subjectId: "subject:realm-operator" };
-    const communityPosts = realmCollectionResourceId(community.realmId, "posts");
-    const commercePosts = realmCollectionResourceId(commerce.realmId, "posts");
-
-    const authorized = await service.authorize(communityActor, {
-      action: "content.update",
-      resourceId: communityPosts,
-    });
-    expect(authorized).toMatchObject({
-      allowed: true,
-      reasonCode: "ALLOW_REALM_FULL_ACCESS",
-      matchedGrants: [{
-        sourceKind: "realm-full-access",
-        sourceRealmId: community.realmId,
-        sourceSubjectId: communityActor.subjectId,
-        permission: "content.update",
-      }],
-      evaluatedScope: { resourceId: communityPosts, propagation: "self" },
-    });
-    expect(authorized).not.toHaveProperty("actorLevel");
-    await expect(service.require(communityActor, {
-      action: "content.delete",
-      resourceId: communityPosts,
-    })).resolves.toMatchObject({ reasonCode: "ALLOW_REALM_FULL_ACCESS" });
-    await expect(service.simulate(community, {
-      subjectId: communityActor.subjectId,
-      action: "content.publish",
-      resourceId: communityPosts,
-      at: NOW,
-    })).resolves.toMatchObject({ reasonCode: "ALLOW_REALM_FULL_ACCESS" });
-
-    // The resolver is keyed by (Realm, subject): an equal subject ID in a
-    // different Realm receives no capability.
-    await expect(service.authorize(commerceActor, {
-      action: "content.update",
-      resourceId: commercePosts,
-    })).resolves.toMatchObject({ allowed: false, reasonCode: "NO_PERMISSION" });
-    expect(resolver.uses).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        realmId: community.realmId,
-        subjectId: communityActor.subjectId,
-        action: "content.update",
-        resourceId: communityPosts,
-        at: NOW,
-        operation: "authorize",
-      }),
-      expect.objectContaining({ action: "content.delete", operation: "authorize" }),
-      expect.objectContaining({ action: "content.publish", operation: "simulate" }),
-    ]));
-    expect(resolver.uses).toHaveLength(3);
-  });
-
-  it("keeps System, invalid policy boundaries, projection failures, and Owner management fail-closed", async () => {
-    const store = new MultiRealmMemoryAuthorizationStore();
-    const resolver = new MemoryRealmFullAccessResolver();
-    const service = new AuthorizationApplicationService(store, runtime(), resolver);
-    const owner = await initializeRealm(service, "rlm_full_boundaries", "subject:boundary-owner");
-    await service.syncCoreResources(owner, {
-      expectedRevision: realmState(store, owner.realmId).revision,
-      collections: [{ id: "posts", name: "Posts" }],
-    });
-    for (const subject of [
-      { id: "subject:active-full", name: "Active full" },
-      { id: "subject:disabled-full", name: "Disabled full", disabled: true },
-    ] as const) {
-      await service.createSubject(owner, {
-        expectedRevision: realmState(store, owner.realmId).revision,
-        subject: { ...subject, realmId: owner.realmId, type: "user" },
-      });
-      resolver.grant(owner.realmId, subject.id);
-    }
-    const fullActor = { realmId: owner.realmId, subjectId: "subject:active-full" };
-    const disabledActor = { realmId: owner.realmId, subjectId: "subject:disabled-full" };
-    const posts = realmCollectionResourceId(owner.realmId, "posts");
-
-    const checksBeforeInvalidRequests = resolver.checks.length;
-    await expect(service.authorize(fullActor, {
-      action: "content.unknown",
-      resourceId: posts,
-    })).resolves.toMatchObject({ allowed: false, reasonCode: "UNKNOWN_PERMISSION" });
-    await expect(service.authorize(fullActor, {
-      action: "content.update",
-      resourceId: "authorization:another-realm:resource:collection:posts",
-    })).resolves.toMatchObject({ allowed: false, reasonCode: "UNKNOWN_RESOURCE" });
-    await expect(service.authorize(disabledActor, {
-      action: "content.update",
-      resourceId: posts,
-    })).resolves.toMatchObject({ allowed: false, reasonCode: "SUBJECT_DISABLED" });
-    expect(resolver.checks).toHaveLength(checksBeforeInvalidRequests);
-    expect(resolver.uses).toHaveLength(0);
-
-    // Full Access is intentionally absent from protected Owner management.
-    await expect(service.createSubject(fullActor, {
-      expectedRevision: realmState(store, owner.realmId).revision,
-      subject: {
-        id: "subject:must-not-be-created",
-        realmId: owner.realmId,
-        name: "Must not be created",
-        type: "user",
-      },
-    })).rejects.toMatchObject({ code: "AUTHORIZATION_DENIED", status: 403 });
-    expect(resolver.checks).toHaveLength(checksBeforeInvalidRequests);
-
-    await service.quarantineContentResources(owner, [posts]);
-    await expect(service.authorize(fullActor, {
-      action: "content.update",
-      resourceId: posts,
-    })).rejects.toMatchObject({ code: "AUTHORIZATION_PROJECTION_UNAVAILABLE", status: 503 });
-    expect(resolver.checks).toHaveLength(checksBeforeInvalidRequests);
-
-    const systemStore = new MemoryAuthorizationStore();
-    const systemResolver = new MemoryRealmFullAccessResolver();
-    const systemService = new AuthorizationApplicationService(systemStore, runtime(), systemResolver);
-    await systemService.initialize({
-      realmId: REALM_ID,
-      realmName: "System",
-      rootResourceId: SYSTEM_WORKSPACE_RESOURCE_ID,
-      rootResourceName: "Workspace",
-      ownerSubjectId: OWNER_ID,
-      ownerSubjectName: "Owner",
-    });
-    await systemService.syncCoreResources(OWNER, {
-      expectedRevision: current(systemStore).revision,
-      collections: [{ id: "posts", name: "Posts" }],
-    });
-    await createSubject(systemService, systemStore, "subject:system-full", "System full");
-    systemResolver.grant(REALM_ID, "subject:system-full");
-    await expect(systemService.authorize(
-      { realmId: REALM_ID, subjectId: "subject:system-full" },
-      { action: "content.update", resourceId: collectionResourceId("posts") },
-    )).resolves.toMatchObject({ allowed: false, reasonCode: "NO_PERMISSION" });
-    expect(systemResolver.checks).toHaveLength(0);
-    expect(systemResolver.uses).toHaveLength(0);
-  });
-
-  it("treats active Realm Full Access as unrestricted across every field API and audits each use", async () => {
-    const store = new MultiRealmMemoryAuthorizationStore();
-    const resolver = new MemoryRealmFullAccessResolver();
-    const service = new AuthorizationApplicationService(store, runtime(), resolver);
-    const owner = await initializeRealm(service, "rlm_full_fields", "subject:fields-owner");
+    const service = new AuthorizationApplicationService(store, runtime());
+    const owner = await initializeRealm(service, "rlm_full_data_plane", "subject:data-owner");
     await service.syncCoreResources(owner, {
       expectedRevision: realmState(store, owner.realmId).revision,
       collections: [{ id: "posts", name: "Posts" }],
     });
     await service.createSubject(owner, {
       expectedRevision: realmState(store, owner.realmId).revision,
-      subject: {
-        id: "subject:field-full",
-        realmId: owner.realmId,
-        name: "Field full",
-        type: "user",
-      },
+      subject: { id: "subject:no-data-grant", realmId: owner.realmId, name: "No data grant", type: "user" },
     });
-    resolver.grant(owner.realmId, "subject:field-full");
-    const actor = { realmId: owner.realmId, subjectId: "subject:field-full" };
+    const actor = { realmId: owner.realmId, subjectId: "subject:no-data-grant" };
     const posts = realmCollectionResourceId(owner.realmId, "posts");
 
+    await expect(service.authorize(actor, {
+      action: "content.update",
+      resourceId: posts,
+    })).resolves.toMatchObject({ allowed: false, reasonCode: "NO_PERMISSION" });
     await expect(service.evaluateField(actor, {
       resourceId: posts,
       field: "privateNotes",
       access: "read",
-    })).resolves.toMatchObject({
-      allowed: true,
-      reasonCode: "ALLOW_REALM_FULL_ACCESS",
-      matchedGrants: [{
-        sourceKind: "realm-full-access",
-        sourceRealmId: owner.realmId,
-        sourceSubjectId: actor.subjectId,
-      }],
-    });
-    await expect(service.evaluateField(actor, {
-      resourceId: posts,
-      field: "privateNotes",
-      access: "write",
-      action: "content.update",
-    })).resolves.toMatchObject({ allowed: true, reasonCode: "ALLOW_REALM_FULL_ACCESS" });
+      action: "content.read",
+    })).resolves.toMatchObject({ allowed: false });
     await expect(service.filterReadableData(actor, {
       resourceId: posts,
-      data: { title: "Visible", secret: "Also visible" },
-    })).resolves.toEqual({ title: "Visible", secret: "Also visible" });
+      data: { title: "Hidden", secret: "Hidden" },
+    })).rejects.toMatchObject({ code: "AUTHORIZATION_DENIED", status: 403 });
     await expect(service.assertWritableData(actor, {
       resourceId: posts,
-      data: { title: "Updated", secret: "Allowed" },
-    })).resolves.toBeUndefined();
+      data: { title: "Denied" },
+    })).rejects.toMatchObject({ code: "AUTHORIZATION_DENIED", status: 403 });
+  });
 
-    expect(resolver.uses).toEqual([
-      expect.objectContaining({
-        action: "content.read",
-        operation: "evaluate-field",
-        field: "privateNotes",
-      }),
-      expect.objectContaining({
-        action: "content.update",
-        operation: "evaluate-field",
-        field: "privateNotes",
-      }),
-      expect.objectContaining({
-        action: "content.read",
-        operation: "filter-readable-data",
-        fields: ["title", "secret"],
-      }),
-      expect.objectContaining({
-        action: "content.update",
-        operation: "assert-writable-data",
-        fields: ["title", "secret"],
-      }),
-    ]);
-    const auditedUses = resolver.uses.length;
-    await expect(service.filterReadableData(actor, {
-      resourceId: posts,
-      data: { "": "invalid field" },
-    })).rejects.toMatchObject({ code: "FIELD_NAME_INVALID", status: 422 });
-    expect(resolver.uses).toHaveLength(auditedUses);
+  it("supports audited CMS read-only oversight and management-only Full Access without a Realm Subject", async () => {
+    const store = new MultiRealmMemoryAuthorizationStore();
+    const service = new AuthorizationApplicationService(store, runtime());
+    const owner = await initializeRealm(service, "rlm_admin_control_plane", "subject:policy-owner");
+    const readonly = {
+      accessMode: "cms-owner-readonly" as const,
+      realmId: owner.realmId,
+      systemIdentityId: "identity:cms-owner",
+    };
+    const full = {
+      accessMode: "realm-full-access" as const,
+      realmId: owner.realmId,
+      systemIdentityId: "identity:cms-owner",
+      fullAccessBindingId: "full-access:grant-one",
+    };
+
+    await expect(service.getPolicy(readonly)).resolves.toMatchObject({ realm: { id: owner.realmId } });
+    await expect(service.createSubject(readonly, {
+      expectedRevision: realmState(store, owner.realmId).revision,
+      subject: { id: "subject:readonly", realmId: owner.realmId, name: "Readonly", type: "user" },
+    })).rejects.toMatchObject({ code: "REALM_ADMINISTRATION_READ_ONLY", status: 403 });
+
+    await service.createSubject(full, {
+      expectedRevision: realmState(store, owner.realmId).revision,
+      subject: { id: "subject:recovered", realmId: owner.realmId, name: "Recovered", type: "user" },
+    });
+    expect(realmState(store, owner.realmId).subjects).toContainEqual(expect.objectContaining({
+      id: "subject:recovered",
+    }));
+    expect(store.audits.at(-1)).toMatchObject({
+      actorIdentityId: full.systemIdentityId,
+      accessMode: "realm-full-access",
+      fullAccessBindingId: full.fullAccessBindingId,
+      decision: { reasonCode: "ALLOW_REALM_FULL_ACCESS" },
+    });
+    expect(store.audits.at(-1)).not.toHaveProperty("actorSubjectId");
+    await expect(service.deleteBinding(full, {
+      expectedRevision: realmState(store, owner.realmId).revision,
+      bindingId: `authorization:${owner.realmId}:binding:owner`,
+    })).rejects.toMatchObject({ code: "AUTHORIZATION_PROTECTED_TARGET", status: 403 });
+
+    await expect(service.getPolicy({ ...readonly, realmId: REALM_ID })).rejects.toMatchObject({
+      code: "REALM_ADMINISTRATION_CONTENT_REALM_REQUIRED",
+      status: 403,
+    });
   });
 
   it("denies same-level administration and out-of-scope binding assignment", async () => {

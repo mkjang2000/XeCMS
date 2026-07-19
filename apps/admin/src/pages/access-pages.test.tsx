@@ -291,6 +291,57 @@ describe("AccessBindingsPage", () => {
 });
 
 describe("AccessRolesPage", () => {
+  it("renders CMS Owner oversight as read-only and hides every policy mutation entry point", async () => {
+    const readonlyPolicy: AuthorizationPolicy = {
+      ...policy,
+      realmId: "rlm_testre",
+      administration: { accessMode: "cms-owner-readonly" },
+      levels: [{ id: "level-editor", realmId: "rlm_testre", name: "Editors", rank: 40, protected: false }],
+      roles: [{
+        id: "role-editor",
+        realmId: "rlm_testre",
+        levelId: "level-editor",
+        name: "Page Editor",
+        permissions: ["content.read"],
+        delegatablePermissions: [],
+        fieldAccess: [],
+        protected: false,
+      }],
+    };
+    const updateRole = vi.fn();
+    const api = {
+      identityRealms: {
+        authorizationFor: vi.fn().mockReturnValue({
+          getPolicy: vi.fn().mockResolvedValue(readonlyPolicy),
+          updateRole,
+        }),
+      },
+    } as unknown as AdminApi;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const router = createMemoryRouter([{
+      path: "/admin/realms/:realmId/access/roles",
+      element: <AccessRolesPage />,
+    }], { initialEntries: ["/admin/realms/rlm_testre/access/roles"] });
+    const user = userEvent.setup();
+
+    render(
+      <DisplayModeProvider initialMode="advanced">
+        <AdminApiProvider api={api}>
+          <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>
+        </AdminApiProvider>
+      </DisplayModeProvider>,
+    );
+
+    expect(await screen.findByText("CMS Owner 읽기 전용 보기")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Full Access 시작" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "새 레벨" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "동일 레벨 역할 추가" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Page Editor/ }));
+    expect((screen.getByLabelText("역할 이름") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "저장" })).toBeNull();
+    expect(updateRole).not.toHaveBeenCalled();
+  });
+
   it("uses a selectable role list and exposes protected roles as read-only details", async () => {
     const rolesPolicy: AuthorizationPolicy = {
       ...policy,

@@ -3,6 +3,8 @@ import type { PoolClient } from "pg";
 import { qualifiedName } from "./identifiers.js";
 
 export const IDENTITY_REALM_MIGRATION_ID = "0013_m4_identity_realms";
+export const REALM_CONTROL_PLANE_ACCESS_MIGRATION_ID =
+  "0021_m4_realm_control_plane_access";
 
 /**
  * Adds the durable M4 identity/Realm boundary without changing legacy identity
@@ -318,25 +320,95 @@ export async function applyIdentityRealmMigration(
 
     CREATE TABLE IF NOT EXISTS ${q("_xecms_realm_full_access_bindings")} (
       id text PRIMARY KEY,
-      realm_id text NOT NULL,
-      subject_id text NOT NULL,
-      granted_by_identity_id text NOT NULL,
-      granted_by_subject_id text NOT NULL,
+      realm_id text NOT NULL REFERENCES ${q("_xecms_realms")}(id) ON DELETE RESTRICT,
+      system_identity_id text NOT NULL REFERENCES ${q("_xecms_identities")}(id) ON DELETE RESTRICT,
+      granted_by_identity_id text NOT NULL REFERENCES ${q("_xecms_identities")}(id) ON DELETE RESTRICT,
       reason text NOT NULL CHECK (length(btrim(reason)) > 0),
       created_at timestamptz NOT NULL,
-      valid_until timestamptz,
+      valid_until timestamptz NOT NULL,
       revoked_at timestamptz,
       revoked_by_identity_id text REFERENCES ${q("_xecms_identities")}(id) ON DELETE RESTRICT,
-      FOREIGN KEY (realm_id, subject_id)
-        REFERENCES ${q("_xecms_auth_subjects")}(realm_id, id) ON DELETE RESTRICT,
-      FOREIGN KEY (granted_by_subject_id, granted_by_identity_id)
-        REFERENCES ${q("_xecms_auth_subjects")}(id, identity_id) ON DELETE RESTRICT,
-      CHECK (valid_until IS NULL OR valid_until > created_at),
+      CHECK (valid_until > created_at),
+      CHECK (valid_until <= created_at + interval '4 hours'),
       CHECK (revoked_at IS NULL OR revoked_at >= created_at),
       CHECK ((revoked_at IS NULL) = (revoked_by_identity_id IS NULL))
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS _xecms_realm_full_access_active_subject
-      ON ${q("_xecms_realm_full_access_bindings")}(realm_id, subject_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS _xecms_realm_full_access_active_system_identity
+      ON ${q("_xecms_realm_full_access_bindings")}(realm_id, system_identity_id)
+      WHERE revoked_at IS NULL;
+    CREATE INDEX IF NOT EXISTS _xecms_realm_full_access_expiry
+      ON ${q("_xecms_realm_full_access_bindings")}(realm_id, valid_until)
+      WHERE revoked_at IS NULL;
+  `);
+}
+
+/**
+ * Replaces the retired Content data-plane Subject grant with the System
+ * control-plane Identity grant. Legacy rows are archived verbatim and never
+ * promoted to the new privilege model.
+ */
+export async function applyRealmControlPlaneAccessMigration(
+  client: Pick<PoolClient, "query">,
+  schema: string,
+): Promise<void> {
+  const q = (name: string): string => qualifiedName(schema, name);
+  const legacy = await client.query<{ readonly present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = $1
+          AND table_name = '_xecms_realm_full_access_bindings'
+          AND column_name = 'subject_id'
+     ) AS present`,
+    [schema],
+  );
+
+  if (legacy.rows[0]?.present === true) {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ${q("_xecms_realm_full_access_legacy_subject_bindings")} (
+        id text PRIMARY KEY,
+        realm_id text NOT NULL,
+        subject_id text NOT NULL,
+        granted_by_identity_id text NOT NULL,
+        granted_by_subject_id text NOT NULL,
+        reason text NOT NULL,
+        created_at timestamptz NOT NULL,
+        valid_until timestamptz,
+        revoked_at timestamptz,
+        revoked_by_identity_id text,
+        archived_at timestamptz NOT NULL,
+        archive_reason text NOT NULL
+      );
+      INSERT INTO ${q("_xecms_realm_full_access_legacy_subject_bindings")}
+        (id, realm_id, subject_id, granted_by_identity_id, granted_by_subject_id,
+         reason, created_at, valid_until, revoked_at, revoked_by_identity_id,
+         archived_at, archive_reason)
+      SELECT id, realm_id, subject_id, granted_by_identity_id, granted_by_subject_id,
+             reason, created_at, valid_until, revoked_at, revoked_by_identity_id,
+             now(), 'content-data-plane-full-access-retired'
+        FROM ${q("_xecms_realm_full_access_bindings")}
+      ON CONFLICT (id) DO NOTHING;
+      DROP TABLE ${q("_xecms_realm_full_access_bindings")};
+    `);
+  }
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${q("_xecms_realm_full_access_bindings")} (
+      id text PRIMARY KEY,
+      realm_id text NOT NULL REFERENCES ${q("_xecms_realms")}(id) ON DELETE RESTRICT,
+      system_identity_id text NOT NULL REFERENCES ${q("_xecms_identities")}(id) ON DELETE RESTRICT,
+      granted_by_identity_id text NOT NULL REFERENCES ${q("_xecms_identities")}(id) ON DELETE RESTRICT,
+      reason text NOT NULL CHECK (length(btrim(reason)) > 0),
+      created_at timestamptz NOT NULL,
+      valid_until timestamptz NOT NULL,
+      revoked_at timestamptz,
+      revoked_by_identity_id text REFERENCES ${q("_xecms_identities")}(id) ON DELETE RESTRICT,
+      CHECK (valid_until > created_at),
+      CHECK (valid_until <= created_at + interval '4 hours'),
+      CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+      CHECK ((revoked_at IS NULL) = (revoked_by_identity_id IS NULL))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS _xecms_realm_full_access_active_system_identity
+      ON ${q("_xecms_realm_full_access_bindings")}(realm_id, system_identity_id)
       WHERE revoked_at IS NULL;
     CREATE INDEX IF NOT EXISTS _xecms_realm_full_access_expiry
       ON ${q("_xecms_realm_full_access_bindings")}(realm_id, valid_until)

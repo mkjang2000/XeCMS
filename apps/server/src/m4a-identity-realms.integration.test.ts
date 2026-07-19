@@ -48,7 +48,7 @@ interface Policy {
 }
 
 describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
-  it("isolates Content identities and permissions through restart, Full Access and suspension", async () => {
+  it("keeps Full Access on the admin control plane through restart and suspension", async () => {
     const schema = `xecms_m4a_${randomUUID().replaceAll("-", "_")}`;
     const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 6 });
     const config = loadServerConfig({
@@ -174,16 +174,35 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
       const deniedAfterRevoke = await contentRequest(server, member, "GET", "/api/content-realms/community/collections/col_articles/documents");
       expect(deniedAfterRevoke.statusCode).toBe(403);
 
+      policy = await getJson<Policy>(server, `/api/identity-realms/${realm.realmId}/authorization/policy`, owner.cookie);
+      const deniedPolicyMutation = await adminRequest(
+        server,
+        owner,
+        "POST",
+        `/api/identity-realms/${realm.realmId}/authorization/levels`,
+        { expectedPolicyRevision: policy.revision, name: "Emergency Operator", rank: 70 },
+      );
+      expect(deniedPolicyMutation.statusCode).toBe(403);
+
       const fullAccess = await adminJson<{ readonly bindingId: string }>(server, owner, "POST", `/api/identity-realms/${realm.realmId}/full-access`, {
-        subjectId: signup.body.subjectId,
         reason: "M4-A recovery acceptance",
         password: TEST_OWNER_PASSWORD,
+        validUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       }, 201);
-      const allowedByFullAccess = await contentRequest(server, member, "GET", "/api/content-realms/community/collections/col_articles/documents");
-      expect(allowedByFullAccess.statusCode).toBe(200);
+      const policyChangedByFullAccess = await adminJson<Policy>(
+        server,
+        owner,
+        "POST",
+        `/api/identity-realms/${realm.realmId}/authorization/levels`,
+        { expectedPolicyRevision: policy.revision, name: "Emergency Operator", rank: 70 },
+        201,
+      );
+      expect(policyChangedByFullAccess.revision).toBe(policy.revision + 1);
+      const stillDeniedWithFullAccess = await contentRequest(server, member, "GET", "/api/content-realms/community/collections/col_articles/documents");
+      expect(stillDeniedWithFullAccess.statusCode).toBe(403);
       const fullAccessUses = await database.pool.query<{ readonly event_type: string }>(
         `SELECT event_type FROM ${qualifiedName(schema, "_xecms_audit_log")}
-          WHERE event_type = 'realm.full-access.used'`,
+          WHERE event_type = 'REALM_FULL_ACCESS_OPERATION'`,
       );
       expect(fullAccessUses.rowCount).toBeGreaterThan(0);
 

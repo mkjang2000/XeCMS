@@ -656,6 +656,8 @@ export function createAdminApi(client = createXeCmsClient()) {
             })),
             get: (realmId) => call(() => client.identityRealms.get(realmId)),
             create: (input) => call(() => client.identityRealms.create(input)),
+            createProfileSchema: (realmId, input) => call(() => client.identityRealms.createProfileSchema(realmId, input)),
+            createProfileField: (realmId, input) => call(() => client.identityRealms.createProfileField(realmId, input)),
             update: (realmId, input) => call(() => client.identityRealms.update(realmId, input)),
             listMemberships: (realmId) => call(async () => ({
                 items: (await client.identityRealms.listMemberships(realmId)).items,
@@ -663,11 +665,20 @@ export function createAdminApi(client = createXeCmsClient()) {
             provisionMembership: (realmId, input) => call(() => client.identityRealms.provisionMembership(realmId, input)),
             registerMembership: (realmId, input) => call(() => client.identityRealms.registerMembership(realmId, input)),
             grantRealmAdministrator: (realmId, membershipId, input) => call(() => client.identityRealms.grantRealmAdministrator(realmId, membershipId, input)),
+            revokeRealmAdministrator: (realmId, membershipId, input) => call(() => client.identityRealms.revokeRealmAdministrator(realmId, membershipId, input)),
             suspendMembership: (realmId, membershipId, expectedRevision) => call(() => client.identityRealms.suspendMembership(realmId, membershipId, { expectedRevision })),
             reactivateMembership: (realmId, membershipId, expectedRevision) => call(() => client.identityRealms.reactivateMembership(realmId, membershipId, { expectedRevision })),
-            listFullAccess: (realmId) => call(async () => ({
-                items: (await client.identityRealms.listFullAccess(realmId)).items,
-            })),
+            getOwner: (realmId) => call(() => client.identityRealms.getOwner(realmId)),
+            assignOwner: (realmId, input) => call(() => client.identityRealms.assignOwner(realmId, input)),
+            transferOwner: (realmId, input) => call(() => client.identityRealms.transferOwner(realmId, input)),
+            recoverOwner: (realmId, input) => call(() => client.identityRealms.recoverOwner(realmId, input)),
+            listFullAccess: (realmId) => call(async () => {
+                const result = await client.identityRealms.listFullAccess(realmId);
+                return {
+                    items: result.items,
+                    ...(result.activeBinding === undefined ? {} : { activeBinding: result.activeBinding }),
+                };
+            }),
             grantFullAccess: (realmId, input) => call(() => client.identityRealms.grantFullAccess(realmId, input)),
             revokeFullAccess: (realmId, bindingId, password) => call(() => client.identityRealms.revokeFullAccess(realmId, bindingId, { password })),
             authorizationFor: (realmId) => createAuthorizationAdminApi(client.identityRealms.authorizationFor(realmId)),

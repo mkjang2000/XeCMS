@@ -12,8 +12,6 @@ import {
 } from "./policy-simple-view.js";
 import { seedPolicy } from "./test-fixtures.js";
 
-const loadedFullAccess = { kind: "loaded", subjectIds: [] } as const;
-
 describe("rootResource", () => {
   it("finds the unique root and falls back to null when ambiguous", () => {
     const policy = seedPolicy();
@@ -52,25 +50,25 @@ describe("levelSimpleState", () => {
 
 describe("subjectGradeState", () => {
   it("is simple for one root-wide unconstrained binding to an editable level", () => {
-    const state = subjectGradeState(seedPolicy(), "subject-editor", loadedFullAccess);
+    const state = subjectGradeState(seedPolicy(), "subject-editor");
     expect(state.kind).toBe("simple");
     expect(state.kind === "simple" && state.levelId).toBe("level-editor");
     expect(state.kind === "simple" && state.locked).toBe(false);
   });
 
   it("locks protected owners instead of hiding them", () => {
-    const state = subjectGradeState(seedPolicy(), "subject-owner", loadedFullAccess);
+    const state = subjectGradeState(seedPolicy(), "subject-owner");
     expect(state.kind).toBe("simple");
     expect(state.kind === "simple" && state.locked).toBe(true);
   });
 
   it("is none for a subject without bindings", () => {
-    expect(subjectGradeState(seedPolicy(), "subject-new", loadedFullAccess).kind).toBe("none");
+    expect(subjectGradeState(seedPolicy(), "subject-new").kind).toBe("none");
   });
 
   it("flags group-inherited roles (transitively) as complex", () => {
     expect(ancestorGroupIds(seedPolicy(), "subject-grouped")).toEqual(["group-writers", "group-parent"]);
-    const state = subjectGradeState(seedPolicy(), "subject-grouped", loadedFullAccess);
+    const state = subjectGradeState(seedPolicy(), "subject-grouped");
     expect(state.kind).toBe("complex");
     expect(state.kind === "complex" && state.reasons).toContain("그룹을 통해 권한을 받고 있어요.");
   });
@@ -81,40 +79,30 @@ describe("subjectGradeState", () => {
       bindings: policy.bindings.map((item) =>
         item.id === "binding-editor" ? { ...item, resourceId: "content", propagation: "self" as const } : item),
     });
-    const scopedState = subjectGradeState(scoped, "subject-editor", loadedFullAccess);
+    const scopedState = subjectGradeState(scoped, "subject-editor");
     expect(scopedState.kind === "complex" && scopedState.reasons).toContain("특정 영역에만 적용되는 권한이 있어요.");
 
     const timed = seedPolicy({
       bindings: policy.bindings.map((item) =>
         item.id === "binding-editor" ? { ...item, validUntil: "2026-12-31T00:00:00.000Z" } : item),
     });
-    const timedState = subjectGradeState(timed, "subject-editor", loadedFullAccess);
+    const timedState = subjectGradeState(timed, "subject-editor");
     expect(timedState.kind === "complex" && timedState.reasons).toContain("기간 조건이 설정되어 있어요.");
 
     const constrained = seedPolicy({
       bindings: policy.bindings.map((item) =>
         item.id === "binding-editor" ? { ...item, constraints: { statuses: ["draft"] } } : item),
     });
-    const constrainedState = subjectGradeState(constrained, "subject-editor", loadedFullAccess);
+    const constrainedState = subjectGradeState(constrained, "subject-editor");
     expect(constrainedState.kind === "complex" && constrainedState.reasons).toContain("소유자·상태 조건이 설정되어 있어요.");
 
     const multi = seedPolicy({
       bindings: [...policy.bindings, { id: "binding-extra", realmId: "system", subjectId: "subject-editor", roleId: "role-viewer", resourceId: "root", propagation: "self-and-children" as const, protected: false }],
     });
-    const multiState = subjectGradeState(multi, "subject-editor", loadedFullAccess);
+    const multiState = subjectGradeState(multi, "subject-editor");
     expect(multiState.kind === "complex" && multiState.reasons).toContain("역할이 여러 개 배정되어 있어요.");
   });
 
-  it("distinguishes Full Access lookup failure (complex) from unsupported (ignored)", () => {
-    const unavailable = subjectGradeState(seedPolicy(), "subject-editor", { kind: "unavailable" });
-    expect(unavailable.kind).toBe("complex");
-    expect(unavailable.kind === "complex" && unavailable.reasons).toContain("권한 정보를 모두 확인할 수 없어요.");
-
-    expect(subjectGradeState(seedPolicy(), "subject-editor", { kind: "unsupported" }).kind).toBe("simple");
-
-    const granted = subjectGradeState(seedPolicy(), "subject-editor", { kind: "loaded", subjectIds: ["subject-editor"] });
-    expect(granted.kind === "complex" && granted.reasons).toContain("전체 접근(Full Access) 권한이 함께 부여되어 있어요.");
-  });
 });
 
 describe("gradePermissionEdit (무손실 불변식)", () => {

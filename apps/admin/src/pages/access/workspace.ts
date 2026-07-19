@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
-import { useAdminApi, type AuthorizationAdminApi } from "@xecms/admin";
+import { useAdminApi, type AuthorizationAdminApi, type AuthorizationPolicy } from "@xecms/admin";
 import { queryKeys } from "../../queries.js";
 
 export function useAuthorizationWorkspace(): {
@@ -31,10 +31,30 @@ export function accessBasePath(realmId?: string): string {
     : `/admin/realms/${encodeURIComponent(realmId)}/access`;
 }
 
+export type AuthorizationWorkspaceAccessMode = "realm-actor" | "cms-owner-readonly" | "realm-full-access";
+
+export function authorizationAccessMode(
+  policy: AuthorizationPolicy,
+  realmId?: string,
+): AuthorizationWorkspaceAccessMode {
+  if (realmId === undefined) return "realm-actor";
+  return policy.administration?.accessMode ?? "realm-actor";
+}
+
+export function canMutateAuthorization(policy: AuthorizationPolicy, realmId?: string): boolean {
+  return authorizationAccessMode(policy, realmId) !== "cms-owner-readonly";
+}
+
 export function useAuthorizationPolicy() {
   const { authorization, policyKey } = useAuthorizationWorkspace();
   return useQuery({
     queryKey: policyKey,
     queryFn: () => authorization.getPolicy(),
+    refetchInterval: (query) => {
+      const value = query.state.data as AuthorizationPolicy | undefined;
+      const validUntil = value?.administration?.fullAccessValidUntil;
+      if (validUntil === undefined) return false;
+      return Math.max(250, Date.parse(validUntil) - Date.now() + 100);
+    },
   });
 }

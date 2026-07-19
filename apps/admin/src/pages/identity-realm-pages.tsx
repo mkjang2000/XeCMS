@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   SCHEMA_NAME_ERROR_MESSAGE,
@@ -11,8 +11,10 @@ import {
   type IdentityRealm,
   type PageResult,
   type RealmFullAccessBinding,
+  type RealmFullAccessPage,
   type RealmMembership,
   type RealmMembershipStatus,
+  type RealmOwnerStatus,
 } from "@xecms/admin";
 import {
   Badge,
@@ -25,7 +27,7 @@ import {
   TextAreaField,
   TextInput,
 } from "@xecms/ui";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { LoadError, PageLoading, RealmAuthorizationError } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
@@ -50,6 +52,10 @@ const statusOptions = [
 ] as const;
 
 type RealmDetailTab = "overview" | "members" | "profile" | "access";
+
+function realmDetailTab(value: string | null): RealmDetailTab {
+  return value === "members" || value === "profile" || value === "access" ? value : "overview";
+}
 
 function commaValues(value: string): readonly string[] {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
@@ -247,8 +253,18 @@ export function IdentityRealmDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { mode } = useDisplayMode();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [profileSetupOpen, setProfileSetupOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState<RealmDetailTab>("overview");
+  const [detailTab, setDetailTabState] = useState<RealmDetailTab>(() => realmDetailTab(searchParams.get("tab")));
+  const setDetailTab = (tab: RealmDetailTab) => {
+    setDetailTabState(tab);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (tab === "overview") next.delete("tab");
+      else next.set("tab", tab);
+      return next;
+    }, { replace: true });
+  };
   const realm = useQuery({
     queryKey: queryKeys.identityRealm(realmId ?? "missing"),
     queryFn: () => api.identityRealms.get(realmId!),
@@ -270,10 +286,17 @@ export function IdentityRealmDetailPage() {
     queryFn: () => api.identityRealms.listMemberships(realmId!),
     enabled: realmId !== undefined && isContent,
   });
+  const owner = useQuery({
+    queryKey: queryKeys.realmOwner(realmId ?? "missing"),
+    queryFn: () => api.identityRealms.getOwner(realmId!),
+    enabled: realmId !== undefined && isContent,
+    retry: false,
+  });
   const fullAccess = useQuery({
     queryKey: queryKeys.realmFullAccess(realmId ?? "missing"),
     queryFn: () => api.identityRealms.listFullAccess(realmId!),
-    enabled: realmId !== undefined && isContent && detailTab === "access" && displayModeAtLeast(mode, "advanced"),
+    enabled: realmId !== undefined && isContent,
+    retry: false,
   });
   const createProfileSchema = useMutation({
     mutationFn: (input: {
@@ -330,16 +353,27 @@ export function IdentityRealmDetailPage() {
           <RealmDetailTabs
             active={detailTab}
             hasProfile={realm.data.profileCollectionId !== undefined}
+            fullAccessActive={(fullAccess.data?.activeBinding !== undefined && isActiveFullAccess(fullAccess.data.activeBinding))
+              || fullAccess.data?.items.some(isActiveFullAccess) === true}
             onChange={setDetailTab}
           />
           {detailTab === "overview" ? <RealmSettingsForm realm={realm.data} /> : null}
           {detailTab === "members" ? (
-            <MembershipSection
-              realm={realm.data}
-              memberships={memberships}
-              identities={identities}
-              systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
-            />
+            <>
+              <RealmOwnerSection
+                realm={realm.data}
+                owner={owner}
+                memberships={memberships}
+                identities={identities}
+                systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
+              />
+              <MembershipSection
+                realm={realm.data}
+                memberships={memberships}
+                identities={identities}
+                systemRealmId={realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system"}
+              />
+            </>
           ) : null}
           {detailTab === "profile" && realm.data.profileCollectionId !== undefined ? (
             <RealmProfileFieldsSection realm={realm.data} />
@@ -347,7 +381,7 @@ export function IdentityRealmDetailPage() {
           {detailTab === "access" ? (
             <>
               <RealmAccessOverview realm={realm.data} mode={mode} />
-              {displayModeAtLeast(mode, "advanced") ? <FullAccessSection realm={realm.data} memberships={memberships.data?.items ?? []} bindings={fullAccess} identities={identities.data?.items ?? []} /> : null}
+              <FullAccessSection realm={realm.data} bindings={fullAccess} mode={mode} />
             </>
           ) : null}
           {profileSetupOpen ? (
@@ -365,9 +399,10 @@ export function IdentityRealmDetailPage() {
   );
 }
 
-function RealmDetailTabs({ active, hasProfile, onChange }: {
+function RealmDetailTabs({ active, hasProfile, fullAccessActive, onChange }: {
   readonly active: RealmDetailTab;
   readonly hasProfile: boolean;
+  readonly fullAccessActive: boolean;
   readonly onChange: (tab: RealmDetailTab) => void;
 }) {
   const tabs: readonly { readonly id: RealmDetailTab; readonly label: string; readonly disabled?: boolean }[] = [
@@ -386,7 +421,7 @@ function RealmDetailTabs({ active, hasProfile, onChange }: {
           aria-selected={active === tab.id}
           disabled={tab.disabled}
           onClick={() => onChange(tab.id)}
-        >{tab.label}</button>
+        >{tab.label}{tab.id === "access" && fullAccessActive ? <span className={styles.detailTabDangerDot} aria-label="Full Access 사용 중" /> : null}</button>
       ))}
     </div>
   );
@@ -406,7 +441,7 @@ function RealmAccessOverview({ realm, mode }: { readonly realm: IdentityRealm; r
           isDisabled={realm.status !== "active"}
         >Realm 권한 관리</Button>}
       />
-      <p className={styles.compactHint}>일반 권한은 역할과 Scope로 관리합니다. Full Access는 Advanced 모드에서 복구 목적으로만 제공됩니다.</p>
+      <p className={styles.compactHint}>일반 권한은 역할과 Scope로 관리합니다. Full Access는 CMS Owner가 기간을 정해 정책을 직접 복구할 때만 사용합니다.</p>
     </section>
   );
 }
@@ -719,6 +754,152 @@ function RealmSettingsForm({ realm }: { readonly realm: IdentityRealm }) {
 }
 
 type QueryResult<T> = ReturnType<typeof useQuery<PageResult<T>>>;
+type OwnerQueryResult = ReturnType<typeof useQuery<RealmOwnerStatus>>;
+type FullAccessQueryResult = ReturnType<typeof useQuery<RealmFullAccessPage>>;
+
+function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmId }: {
+  readonly realm: IdentityRealm;
+  readonly owner: OwnerQueryResult;
+  readonly memberships: QueryResult<RealmMembership>;
+  readonly identities: QueryResult<GlobalIdentity>;
+  readonly systemRealmId: string;
+}) {
+  const api = useAdminApi();
+  const queryClient = useQueryClient();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [targetMembershipId, setTargetMembershipId] = useState("");
+  const [reason, setReason] = useState("");
+  const [password, setPassword] = useState("");
+  const [revokePreviousSessions, setRevokePreviousSessions] = useState(true);
+  const [suspendPreviousMembership, setSuspendPreviousMembership] = useState(false);
+  const identityById = new Map(identities.data?.items.map((identity) => [identity.globalIdentityId, identity]));
+  const candidates = memberships.data?.items.filter((membership) => {
+    const identity = membership.identity ?? identityById.get(membership.globalIdentityId);
+    return membership.status === "active"
+      && (owner.data?.status !== "healthy" || membership.membershipId !== owner.data.owner?.membershipId)
+      && identity?.kind === "human"
+      && identity?.originRealmId === systemRealmId
+      && identity.disabledAt === undefined;
+  }) ?? [];
+  const operation = owner.data?.status === "healthy"
+    ? "transfer"
+    : owner.data?.status === "invalid" ? "recover" : "assign";
+  const operationLabel = operation === "transfer" ? "Owner 교체" : operation === "recover" ? "Owner 복구" : "Owner 지정";
+  const changeOwner = useMutation({
+    mutationFn: () => {
+      const base = {
+        targetMembershipId,
+        expectedPolicyRevision: owner.data!.policyRevision,
+        reason: reason.trim(),
+        password,
+      };
+      if (operation === "assign") return api.identityRealms.assignOwner(realm.realmId, base);
+      if (operation === "recover") return api.identityRealms.recoverOwner(realm.realmId, base);
+      return api.identityRealms.transferOwner(realm.realmId, {
+        ...base,
+        revokePreviousSessions,
+        suspendPreviousMembership,
+      });
+    },
+    onSuccess: async (nextOwner) => {
+      queryClient.setQueryData(queryKeys.realmOwner(realm.realmId), nextOwner);
+      setDialogOpen(false);
+      setTargetMembershipId("");
+      setReason("");
+      setPassword("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.realmMemberships(realm.realmId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.realmAuthorization(realm.realmId) }),
+      ]);
+    },
+  });
+  const openDialog = () => {
+    changeOwner.reset();
+    setTargetMembershipId("");
+    setReason("");
+    setPassword("");
+    setRevokePreviousSessions(true);
+    setSuspendPreviousMembership(false);
+    setDialogOpen(true);
+  };
+
+  return (
+    <section className={styles.panel} aria-labelledby="realm-owner-title" data-owner-status={owner.data?.status}>
+      <SectionHeader
+        id="realm-owner-title"
+        title="Realm Owner"
+        description="이 Realm의 실제 사람 최고관리자와 운영 연속성을 관리합니다."
+        actions={owner.data ? (
+          <Button
+            variant={owner.data.status === "healthy" ? "secondary" : "danger"}
+            onPress={openDialog}
+            isDisabled={realm.status !== "active" || candidates.length === 0}
+          >{operationLabel}</Button>
+        ) : undefined}
+      />
+      {owner.isPending ? <PageLoading label="Realm Owner 상태를 불러오는 중" /> : null}
+      {owner.isError ? <LoadError error={owner.error} onRetry={() => void owner.refetch()} /> : null}
+      {owner.data?.status === "healthy" && owner.data.owner ? (
+        <div className={styles.ownerSummary}>
+          <div>
+            <strong>{owner.data.owner.primaryIdentifier}</strong>
+            <span>Primary Realm Owner</span>
+          </div>
+          <div className={styles.rowActions}>
+            <Badge tone={owner.data.owner.identityActive ? "success" : "danger"}>{owner.data.owner.identityActive ? "계정 활성" : "계정 비활성"}</Badge>
+            <MembershipStatusBadge status={owner.data.owner.membershipStatus} />
+          </div>
+          <DisplayModeGate minimum="advanced">
+            <IdValue label="Global Identity ID" value={owner.data.owner.globalIdentityId} />
+            <IdValue label="Owner Subject ID" value={owner.data.owner.subjectId} />
+          </DisplayModeGate>
+        </div>
+      ) : null}
+      {owner.data?.status === "ownerless" ? (
+        <Callout tone="error"><strong>운영 Owner가 없습니다.</strong> 활성 운영자를 연결한 뒤 Owner를 지정해야 이 Realm의 정상적인 권한 관리 주체가 생깁니다.</Callout>
+      ) : null}
+      {owner.data?.status === "invalid" ? (
+        <Callout tone="error"><strong>Realm Owner 상태가 손상되었습니다.</strong> {owner.data.issueCode ? <code>{owner.data.issueCode}</code> : null} 적격 운영자를 선택해 복구하세요.</Callout>
+      ) : null}
+      {owner.data && candidates.length === 0 ? (
+        <p className={styles.compactHint}>Owner로 지정할 다른 활성 System 운영자 Membership이 없습니다. 아래에서 기존 운영자를 먼저 연결하세요.</p>
+      ) : null}
+      {dialogOpen && owner.data ? (
+        <ConfirmDialog
+          title={operationLabel}
+          confirmLabel={operationLabel}
+          danger={operation !== "assign"}
+          isPending={changeOwner.isPending}
+          isConfirmDisabled={targetMembershipId === "" || reason.trim() === "" || password === ""}
+          onCancel={() => { setDialogOpen(false); changeOwner.reset(); }}
+          onConfirm={() => changeOwner.mutate()}
+        >
+          <div className={styles.dialogStack}>
+            <p>CMS Owner 자신은 대상이 될 수 없습니다. 서버가 대상 계정, Membership과 사람 Subject를 다시 검증합니다.</p>
+            <SelectField
+              label="새 Realm Owner"
+              value={targetMembershipId}
+              options={candidates.map((membership) => ({
+                value: membership.membershipId,
+                label: `${(membership.identity ?? identityById.get(membership.globalIdentityId))?.primaryIdentifier ?? membership.globalIdentityId} · ${membership.membershipId}`,
+              }))}
+              onChange={setTargetMembershipId}
+            />
+            <TextAreaField label="변경 사유" value={reason} onChange={setReason} rows={3} isRequired />
+            {operation === "transfer" ? (
+              <div className={styles.dialogStack}>
+                <CheckboxField isSelected={revokePreviousSessions} onChange={setRevokePreviousSessions}>기존 Owner의 활성 세션 폐기</CheckboxField>
+                <CheckboxField isSelected={suspendPreviousMembership} onChange={setSuspendPreviousMembership}>기존 Owner Membership도 함께 정지</CheckboxField>
+              </div>
+            ) : null}
+            <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
+            <MutationError error={changeOwner.error} />
+          </div>
+        </ConfirmDialog>
+      ) : null}
+    </section>
+  );
+}
 
 function MembershipSection({ realm, memberships, identities, systemRealmId }: {
   readonly realm: IdentityRealm;
@@ -740,7 +921,15 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
   const [membershipAction, setMembershipAction] = useState<"register" | "provision" | null>(null);
   const [promoting, setPromoting] = useState<RealmMembership | null>(null);
   const [promoteReauthPassword, setPromoteReauthPassword] = useState("");
-  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.realmMemberships(realm.realmId) });
+  // Provisioning a Membership, appointing an administrator, or changing a
+  // Membership's status all advance the Realm's authorization policy revision
+  // (and can change the Owner's Membership badge). Refresh the Owner status too
+  // so its cached policyRevision stays current — a stale revision makes the
+  // Owner assign/transfer CAS fail with POLICY_REVISION_CONFLICT.
+  const refresh = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.realmMemberships(realm.realmId) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.realmOwner(realm.realmId) }),
+  ]);
   const provision = useMutation({
     mutationFn: (profile: Readonly<Record<string, unknown>>) => api.identityRealms.provisionMembership(realm.realmId, {
       globalIdentityId: identityId,
@@ -999,31 +1188,49 @@ function IdValue({ label, value }: { readonly label: string; readonly value: str
   return <span className={styles.idValue}><span>{label}</span><code>{value}</code></span>;
 }
 
-function FullAccessSection({ realm, memberships, bindings, identities }: {
+function localDateTimeAfter(minutes: number): string {
+  const value = new Date(Date.now() + minutes * 60_000);
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function isActiveFullAccess(binding: RealmFullAccessBinding): boolean {
+  return binding.revokedAt === undefined && Date.parse(binding.validUntil) > Date.now();
+}
+
+function remainingFullAccessTime(validUntil: string): string {
+  const remainingMinutes = Math.max(0, Math.ceil((Date.parse(validUntil) - Date.now()) / 60_000));
+  if (remainingMinutes < 60) return `${remainingMinutes}분 후 만료`;
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+  return minutes === 0 ? `${hours}시간 후 만료` : `${hours}시간 ${minutes}분 후 만료`;
+}
+
+function FullAccessSection({ realm, bindings, mode }: {
   readonly realm: IdentityRealm;
-  readonly memberships: readonly RealmMembership[];
-  readonly bindings: QueryResult<RealmFullAccessBinding>;
-  readonly identities: readonly GlobalIdentity[];
+  readonly bindings: FullAccessQueryResult;
+  readonly mode: DisplayMode;
 }) {
   const api = useAdminApi();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [subjectId, setSubjectId] = useState("");
   const [reason, setReason] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [password, setPassword] = useState("");
   const [granting, setGranting] = useState(false);
   const [revoking, setRevoking] = useState<RealmFullAccessBinding | null>(null);
   const [revokePassword, setRevokePassword] = useState("");
-  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.realmFullAccess(realm.realmId) });
+  const refresh = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.realmFullAccess(realm.realmId) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.realmAuthorization(realm.realmId) }),
+  ]);
   const grant = useMutation({
     mutationFn: () => api.identityRealms.grantFullAccess(realm.realmId, {
-      subjectId,
       reason: reason.trim(),
       password,
-      ...(localInstant(validUntil) === undefined ? {} : { validUntil: localInstant(validUntil) }),
+      validUntil: localInstant(validUntil)!,
     }),
     onSuccess: async () => {
-      setSubjectId("");
       setReason("");
       setValidUntil("");
       setPassword("");
@@ -1039,40 +1246,91 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
       await refresh();
     },
   });
-  const identityById = new Map(identities.map((identity) => [identity.globalIdentityId, identity]));
-  const activeMemberships = memberships.filter(({ status }) => status === "active");
+  const listedActiveBindings = bindings.data?.items.filter(isActiveFullAccess) ?? [];
+  const activeBindings = bindings.data?.activeBinding !== undefined
+    && isActiveFullAccess(bindings.data.activeBinding)
+    && !listedActiveBindings.some(({ bindingId }) => bindingId === bindings.data!.activeBinding!.bindingId)
+    ? [bindings.data.activeBinding, ...listedActiveBindings]
+    : listedActiveBindings;
+  const currentBinding = bindings.data?.activeBinding !== undefined && isActiveFullAccess(bindings.data.activeBinding)
+    ? bindings.data.activeBinding
+    : undefined;
+  useEffect(() => {
+    if (currentBinding === undefined) return;
+    const delay = Math.max(0, Date.parse(currentBinding.validUntil) - Date.now()) + 100;
+    const timer = window.setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.realmFullAccess(realm.realmId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.realmAuthorization(realm.realmId) });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [currentBinding?.bindingId, currentBinding?.validUntil, queryClient, realm.realmId]);
+  const expiryTime = validUntil === "" ? Number.NaN : Date.parse(localInstant(validUntil)!);
+  const expiryValid = Number.isFinite(expiryTime)
+    && expiryTime > Date.now()
+    && expiryTime <= Date.now() + 4 * 60 * 60_000;
+  const openGrantDialog = () => {
+    grant.reset();
+    setReason("");
+    setPassword("");
+    setValidUntil(localDateTimeAfter(30));
+    setGranting(true);
+  };
 
   return (
-    <section className={styles.panel} aria-labelledby="full-access-title">
+    <section className={`${styles.panel} ${styles.fullAccessPanel}`} data-active={activeBindings.length > 0} aria-labelledby="full-access-title">
       <SectionHeader
         id="full-access-title"
         title="Realm Full Access"
-        description="현재와 미래의 이 Realm 리소스에만 적용되는 별도 보호 바인딩입니다."
-        actions={<Button
-          variant="danger"
-          onPress={() => { grant.reset(); setGranting(true); }}
-          isDisabled={realm.status !== "active" || activeMemberships.length === 0}
-        >Full Access 부여</Button>}
+        description="CMS Owner가 제한된 시간 동안 이 Realm의 Admin Studio 정책을 직접 복구하는 비상 접근입니다."
+        actions={<>
+          <Button size="small" variant="secondary" onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/audit`)}>감사 로그</Button>
+          <Button
+            variant="danger"
+            onPress={openGrantDialog}
+            isDisabled={realm.status === "disabled" || currentBinding !== undefined}
+          >{currentBinding ? "Full Access 사용 중" : "Full Access 시작"}</Button>
+        </>}
       />
-      <Callout tone="warning"><strong>복구와 초기 설정에만 사용하세요.</strong> 일반 운영 권한은 Realm Role Binding으로 부여해야 하며, grant와 revoke 모두 현재 System 계정 비밀번호를 재검증합니다.</Callout>
-      {bindings.isPending ? <PageLoading label="Full Access 바인딩을 불러오는 중" /> : null}
+      <p className={styles.compactHint}>Realm Membership이나 Content API 권한은 만들지 않습니다. 일반 운영은 사람 Realm Owner와 Role Binding으로 처리하세요.</p>
+      {bindings.isPending ? <PageLoading label="Full Access 상태를 불러오는 중" /> : null}
       {bindings.isError ? <LoadError error={bindings.error} onRetry={() => void bindings.refetch()} /> : null}
-      {bindings.data?.items.length === 0 ? <EmptyState title="Full Access 바인딩이 없습니다" description="필요한 Role과 Scope만 부여하는 상태가 가장 안전합니다." /> : null}
-      {bindings.data && bindings.data.items.length > 0 ? (
+      {activeBindings.length > 0 ? (
+        <div className={styles.fullAccessActiveList}>
+          {activeBindings.map((binding) => (
+            <article key={binding.bindingId} className={styles.fullAccessActiveItem}>
+              <div>
+                <Badge tone="danger">Full Access 사용 중</Badge>
+                <strong>{remainingFullAccessTime(binding.validUntil)}</strong>
+                <span>{binding.reason}</span>
+              </div>
+              <div>
+                <span>System Identity <code>{binding.systemIdentityId}</code></span>
+                <span>{formatInstant(binding.createdAt)} 시작 · {formatInstant(binding.validUntil)} 만료</span>
+              </div>
+              <Button size="small" variant="danger" onPress={() => { setRevoking(binding); setRevokePassword(""); }}>즉시 해제</Button>
+            </article>
+          ))}
+        </div>
+      ) : bindings.data ? (
+        <div className={styles.fullAccessInactive}><Badge tone="neutral">비활성</Badge><span>현재 사용 중인 Realm Full Access가 없습니다.</span></div>
+      ) : null}
+      {displayModeAtLeast(mode, "advanced") && bindings.data && bindings.data.items.length > 0 ? (
         <div className={styles.tableWrap}>
           <table className={styles.table}>
-            <thead><tr><th>대상 Subject</th><th>부여 사유</th><th>부여자</th><th>유효 기간</th><th>상태</th><th /></tr></thead>
+            <thead><tr><th>System Identity</th><th>발급 사유</th><th>발급자</th><th>유효 기간</th><th>상태</th><th /></tr></thead>
             <tbody>{bindings.data.items.map((binding) => {
-              const revoked = binding.revokedAt !== undefined;
-              const expired = binding.validUntil !== undefined && Date.parse(binding.validUntil) <= Date.now();
+              const expired = binding.terminationReason === "expired"
+                || Date.parse(binding.validUntil) <= Date.now();
+              const revoked = binding.terminationReason === "revoked"
+                || (binding.revokedAt !== undefined && !expired);
               return (
                 <tr key={binding.bindingId}>
-                  <td><IdValue label="Subject ID" value={binding.subjectId} /><IdValue label="Full Access Binding ID" value={binding.bindingId} /></td>
+                  <td><IdValue label="System Identity ID" value={binding.systemIdentityId} /><IdValue label="Full Access Binding ID" value={binding.bindingId} /></td>
                   <td>{binding.reason}</td>
-                  <td><IdValue label="Global Identity ID" value={binding.grantedByGlobalIdentityId} /><IdValue label="Subject ID" value={binding.grantedBySubjectId} /></td>
+                  <td><IdValue label="Global Identity ID" value={binding.grantedByGlobalIdentityId} /></td>
                   <td>{formatInstant(binding.createdAt)}<span className={styles.secondaryLine}>만료 {formatInstant(binding.validUntil)}</span></td>
-                  <td>{revoked ? <Badge tone="neutral">해지됨</Badge> : expired ? <Badge tone="warning">만료됨</Badge> : <Badge tone="danger">활성 Full Access</Badge>}</td>
-                  <td>{!revoked ? <Button size="small" variant="danger" onPress={() => { setRevoking(binding); setRevokePassword(""); }}>해지</Button> : null}</td>
+                  <td>{expired ? <Badge tone="warning">만료됨</Badge> : revoked ? <Badge tone="neutral">해지됨</Badge> : <Badge tone="danger">활성 Full Access</Badge>}</td>
+                  <td>{!revoked && !expired ? <Button size="small" variant="danger" onPress={() => { setRevoking(binding); setRevokePassword(""); }}>즉시 해제</Button> : null}</td>
                 </tr>
               );
             })}</tbody>
@@ -1082,27 +1340,22 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
       <MutationError error={revoke.error} />
       {granting ? (
         <ConfirmDialog
-          title="Realm Full Access 부여"
-          confirmLabel="Full Access 부여"
+          title="Realm Full Access 시작"
+          confirmLabel="Full Access 시작"
           danger
           isPending={grant.isPending}
-          isConfirmDisabled={subjectId === "" || reason.trim() === "" || password === ""}
+          isConfirmDisabled={!expiryValid || reason.trim() === "" || password === ""}
           onCancel={() => { setGranting(false); grant.reset(); }}
           onConfirm={() => grant.mutate()}
         >
           <div className={styles.dialogStack}>
-            <Callout tone="warning">이 권한은 복구와 초기 설정에만 사용해야 합니다.</Callout>
-            <SelectField
-              label="대상 Realm Subject"
-              value={subjectId}
-              options={activeMemberships.map((membership) => ({
-                value: membership.subjectId,
-                label: `${identityById.get(membership.globalIdentityId)?.primaryIdentifier ?? membership.globalIdentityId} · Subject ${membership.subjectId}`,
-              }))}
-              onChange={setSubjectId}
-            />
-            <TextInput label="만료 시각" type="datetime-local" value={validUntil} onChange={setValidUntil} description="비워 두면 해지할 때까지 유지됩니다." />
-            <TextAreaField label="부여 사유" value={reason} onChange={setReason} rows={3} isRequired />
+            <Callout tone="warning"><strong>비상 정책 복구에만 사용하세요.</strong> 현재 로그인한 CMS Owner의 System Identity에만 적용되며 Content API에는 적용되지 않습니다.</Callout>
+            <div className={styles.fullAccessPresets} aria-label="Full Access 기간 선택">
+              {[15, 30, 60].map((minutes) => <Button key={minutes} size="small" variant="secondary" onPress={() => setValidUntil(localDateTimeAfter(minutes))}>{minutes === 60 ? "1시간" : `${minutes}분`}</Button>)}
+            </div>
+            <TextInput label="만료 시각" type="datetime-local" value={validUntil} onChange={setValidUntil} description="미래 시각을 필수로 지정하며 최대 4시간까지 허용됩니다." isRequired />
+            {validUntil !== "" && !expiryValid ? <Callout tone="error">만료 시각은 현재보다 이후이고 4시간 이내여야 합니다.</Callout> : null}
+            <TextAreaField label="접근 사유" value={reason} onChange={setReason} rows={3} isRequired />
             <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
             <MutationError error={grant.error} />
           </div>
@@ -1110,8 +1363,8 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
       ) : null}
       {revoking ? (
         <ConfirmDialog
-          title="Realm Full Access 해지"
-          confirmLabel="Full Access 해지"
+          title="Realm Full Access 즉시 해제"
+          confirmLabel="즉시 해제"
           danger
           isPending={revoke.isPending}
           isConfirmDisabled={revokePassword === ""}
@@ -1119,7 +1372,7 @@ function FullAccessSection({ realm, memberships, bindings, identities }: {
           onConfirm={() => revoke.mutate()}
         >
           <div className={styles.dialogStack}>
-            <p><code>{revoking.subjectId}</code> Subject의 Full Access를 해지합니다.</p>
+            <p><code>{revoking.systemIdentityId}</code> System Identity의 Realm Full Access를 즉시 해제합니다.</p>
             <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={revokePassword} onChange={setRevokePassword} isRequired />
           </div>
         </ConfirmDialog>

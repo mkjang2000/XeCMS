@@ -134,6 +134,16 @@ export interface AuthorizationPolicyState extends AuthorizationPolicySeed {
   readonly revision: number;
 }
 
+export interface RealmPrimaryOwnerStatus {
+  readonly state: "unassigned" | "assigned" | "invalid";
+  readonly realmId: string;
+  readonly policyRevision: number;
+  readonly bindingId: string;
+  readonly subjectId?: string;
+  readonly identityId?: string;
+  readonly issues: readonly string[];
+}
+
 export type AuthorizationAuditTargetType =
   | "policy"
   | "subject"
@@ -145,7 +155,12 @@ export type AuthorizationAuditTargetType =
 
 export interface AuthorizationAuditDraft {
   readonly id: string;
-  readonly actorSubjectId: string;
+  /** Realm-local Subject when the operation was authorized by Realm policy. */
+  readonly actorSubjectId?: string;
+  /** System Identity for audited control-plane/Full Access operations. */
+  readonly actorIdentityId?: string;
+  readonly accessMode?: AuthorizationAuditAccessMode;
+  readonly fullAccessBindingId?: string;
   readonly action: string;
   readonly targetType: AuthorizationAuditTargetType;
   readonly targetId: string;
@@ -187,6 +202,11 @@ export type AuthorizationPolicyMutation =
   | { readonly type: "binding.create"; readonly value: AuthorizationBindingRecord }
   | { readonly type: "binding.update"; readonly value: AuthorizationBindingRecord }
   | { readonly type: "binding.delete"; readonly id: string }
+  | {
+      /** Trusted, atomic repair/switch of the single human Primary Owner Binding. */
+      readonly type: "binding.replace-primary-owner";
+      readonly value: AuthorizationBindingRecord;
+    }
   | { readonly type: "group-membership.create"; readonly value: AuthorizationGroupMembershipRecord }
   | { readonly type: "group-membership.update"; readonly value: AuthorizationGroupMembershipRecord }
   | { readonly type: "group-membership.delete"; readonly id: string };
@@ -236,39 +256,47 @@ export interface AuthorizationRuntime {
   ) => string;
 }
 
-export type RealmFullAccessUseOperation =
-  | "authorize"
-  | "simulate"
-  | "evaluate-field"
-  | "filter-readable-data"
-  | "assert-writable-data";
-
-/**
- * Audit payload emitted only when Realm Full Access actually authorizes an
- * operation. The resolver owns durable grant/use storage; the authorization
- * application layer owns the policy-boundary checks that precede this call.
- */
-export interface RealmFullAccessUse {
-  readonly realmId: string;
-  readonly subjectId: string;
-  readonly action: string;
-  readonly resourceId: string;
-  readonly at: string;
-  readonly operation: RealmFullAccessUseOperation;
-  readonly field?: string;
-  readonly fields?: readonly string[];
-}
-
-/** Optional M4 bridge. Omitting it preserves the M3 RBAC-only evaluator. */
-export interface RealmFullAccessResolver {
-  hasActiveFullAccess(realmId: string, subjectId: string, at: string): Promise<boolean>;
-  recordUse(input: RealmFullAccessUse): Promise<void>;
-}
-
 export interface AuthorizationActor {
   readonly subjectId: string;
   readonly realmId: string;
 }
+
+/** Explicit Admin Studio boundary. Control-plane actors never impersonate a Realm Subject. */
+export type RealmAdministrationActor =
+  | {
+      readonly accessMode: "realm-actor";
+      readonly realmId: string;
+      readonly subjectId: string;
+      readonly systemIdentityId: string;
+    }
+  | {
+      readonly accessMode: "cms-owner-readonly";
+      readonly realmId: string;
+      readonly systemIdentityId: string;
+    }
+  | {
+      readonly accessMode: "realm-full-access";
+      readonly realmId: string;
+      readonly systemIdentityId: string;
+      readonly fullAccessBindingId: string;
+      readonly fullAccessValidUntil?: string;
+    };
+
+export type AuthorizationPolicyManagementActor = AuthorizationActor | RealmAdministrationActor;
+
+export type AuthorizationAuditAccessMode =
+  | RealmAdministrationActor["accessMode"]
+  | "cms-owner-control-plane"
+  | "system-provisioner";
+
+export type RealmOwnerCommandActor =
+  | Extract<RealmAdministrationActor, { readonly accessMode: "realm-actor" }>
+  | {
+      readonly accessMode: "cms-owner-control-plane";
+      readonly realmId: string;
+      readonly systemIdentityId: string;
+      readonly systemSubjectId?: string;
+    };
 
 export interface AuthorizationEvaluationContext {
   readonly ownerSubjectId?: string;
@@ -276,7 +304,7 @@ export interface AuthorizationEvaluationContext {
 }
 
 export interface AuthorizationGrantRecord {
-  /** Omitted means the legacy RBAC role provenance used by M3. */
+  /** Omitted means ordinary Realm Role provenance. Full Access is management-only. */
   readonly sourceKind?: "role" | "realm-full-access";
   readonly sourceRealmId?: string;
   readonly sourceSubjectId?: string;
@@ -306,10 +334,7 @@ export interface AuthorizationDecisionRecord {
 }
 
 export interface AuthorizationFieldGrantRecord {
-  /** Omitted means the legacy RBAC role provenance used by M3. */
-  readonly sourceKind?: "role" | "realm-full-access";
-  readonly sourceRealmId?: string;
-  readonly sourceSubjectId?: string;
+  readonly sourceKind?: "role";
   readonly sourceRoleId: string;
   readonly sourceBindingId: string;
   readonly sourceResourceId: string;
@@ -321,7 +346,7 @@ export interface AuthorizationFieldDecisionRecord {
   readonly access: FieldAccessMode;
   readonly field: string;
   readonly resourceId: string;
-  readonly reasonCode: FieldAccessDecision["reasonCode"] | "ALLOW_REALM_FULL_ACCESS";
+  readonly reasonCode: FieldAccessDecision["reasonCode"];
   readonly matchedGrants: readonly AuthorizationFieldGrantRecord[];
 }
 
@@ -588,6 +613,36 @@ export interface InitialAuthorizationPolicyInput {
   /** Internal Realm bootstrap may use a protected service account. Defaults to user. */
   readonly ownerSubjectType?: SubjectType;
   readonly ownerSubjectName: string;
+  /**
+   * Content Realm bootstrap only. The supplied principal becomes an invisible
+   * System Policy Root while the protected human Owner Role remains unassigned.
+   * System Realm initialization deliberately keeps the legacy human Owner seed.
+   */
+  readonly ownerIsSystemPolicyRoot?: boolean;
+}
+
+export function authorizationOwnerLevelId(realmId: string): string {
+  return `authorization:${realmId}:level:owner`;
+}
+
+export function authorizationOwnerRoleId(realmId: string): string {
+  return `authorization:${realmId}:role:owner`;
+}
+
+export function authorizationPrimaryOwnerBindingId(realmId: string): string {
+  return `authorization:${realmId}:binding:primary-owner`;
+}
+
+export function authorizationSystemPolicyRootLevelId(realmId: string): string {
+  return `authorization:${realmId}:level:system-policy-root`;
+}
+
+export function authorizationSystemPolicyRootRoleId(realmId: string): string {
+  return `authorization:${realmId}:role:system-policy-root`;
+}
+
+export function authorizationSystemPolicyRootBindingId(realmId: string): string {
+  return `authorization:${realmId}:binding:system-policy-root`;
 }
 
 /** Deterministic seed IDs make bootstrap idempotency and adapter fixtures reproducible. */
@@ -611,15 +666,24 @@ export function createInitialAuthorizationPolicy(
   validateDisplayName(input.ownerSubjectName, "ownerSubjectName");
 
   const prefix = `authorization:${input.realmId}`;
+  if (input.ownerIsSystemPolicyRoot === true && input.ownerSubjectType !== "service-account") {
+    throw new ApplicationError(
+      "SYSTEM_POLICY_ROOT_SUBJECT_INVALID",
+      422,
+      "A System Policy Root must be initialized as a service-account Subject.",
+    );
+  }
   const levelIds = {
-    owner: `${prefix}:level:owner`,
+    systemPolicyRoot: authorizationSystemPolicyRootLevelId(input.realmId),
+    owner: authorizationOwnerLevelId(input.realmId),
     administrator: `${prefix}:level:administrator`,
     editor: `${prefix}:level:editor`,
     viewer: `${prefix}:level:viewer`,
     public: `${prefix}:level:public`,
   } as const;
   const roleIds = {
-    owner: `${prefix}:role:owner`,
+    systemPolicyRoot: authorizationSystemPolicyRootRoleId(input.realmId),
+    owner: authorizationOwnerRoleId(input.realmId),
     contentAdministrator: `${prefix}:role:content-administrator`,
     securityAdministrator: `${prefix}:role:security-administrator`,
     editor: `${prefix}:role:editor`,
@@ -758,6 +822,13 @@ export function createInitialAuthorizationPolicy(
       },
     ],
     authorityLevels: [
+      ...(input.ownerIsSystemPolicyRoot === true ? [{
+        id: levelIds.systemPolicyRoot,
+        realmId: input.realmId,
+        name: "System Policy Root",
+        rank: 110,
+        protected: true,
+      }] : []),
       { id: levelIds.owner, realmId: input.realmId, name: "Owner", rank: 100, protected: true },
       { id: levelIds.administrator, realmId: input.realmId, name: "Administrators", rank: 80 },
       { id: levelIds.editor, realmId: input.realmId, name: "Editors", rank: 40 },
@@ -766,6 +837,15 @@ export function createInitialAuthorizationPolicy(
     ],
     permissions: DEFAULT_PERMISSION_CATALOG,
     roles: [
+      ...(input.ownerIsSystemPolicyRoot === true ? [{
+        id: roleIds.systemPolicyRoot,
+        realmId: input.realmId,
+        levelId: levelIds.systemPolicyRoot,
+        name: "System Policy Root",
+        permissions: allPermissions,
+        delegatablePermissions: ownerDelegations,
+        protected: true,
+      }] : []),
       {
         id: roleIds.owner,
         realmId: input.realmId,
@@ -819,10 +899,12 @@ export function createInitialAuthorizationPolicy(
     ],
     bindings: [
       {
-        id: `${prefix}:binding:owner`,
+        id: input.ownerIsSystemPolicyRoot === true
+          ? authorizationSystemPolicyRootBindingId(input.realmId)
+          : `${prefix}:binding:owner`,
         realmId: input.realmId,
         subjectId: input.ownerSubjectId,
-        roleId: roleIds.owner,
+        roleId: input.ownerIsSystemPolicyRoot === true ? roleIds.systemPolicyRoot : roleIds.owner,
         resourceId: input.rootResourceId,
         propagation: "self-and-children",
         protected: true,
@@ -861,7 +943,6 @@ export class AuthorizationApplicationService {
   public constructor(
     private readonly store: AuthorizationStore,
     private readonly runtime: AuthorizationRuntime,
-    private readonly realmFullAccessResolver?: RealmFullAccessResolver,
   ) {}
 
   public async initialize(
@@ -897,11 +978,16 @@ export class AuthorizationApplicationService {
     return persisted;
   }
 
-  public async getPolicy(actor: AuthorizationActor): Promise<AuthorizationPolicyState> {
+  public async getPolicy(actor: AuthorizationPolicyManagementActor): Promise<AuthorizationPolicyState> {
+    if (isControlPlaneAdministrationActor(actor)) assertContentRealmAdministration(actor);
     const entry = await this.load(actor.realmId);
+    if (isControlPlaneAdministrationActor(actor)) {
+      return entry.state;
+    }
+    const realmActor = realmPolicyActor(actor);
     this.requireDecision(
       evaluateAccess(entry.snapshot, {
-        actorSubjectId: asSubjectId(actor.subjectId),
+        actorSubjectId: asSubjectId(realmActor.subjectId),
         action: asPermissionKey("authorization.read"),
         resourceId: asResourceId(coreResourceId(actor.realmId, "authorization")),
         now: this.runtime.now(),
@@ -926,6 +1012,148 @@ export class AuthorizationApplicationService {
     validateIdentifier(realmId, "realmId");
     if (await this.store.getPolicyRevision(realmId) === null) return null;
     return (await this.load(realmId)).state;
+  }
+
+  /** Trusted control-plane read; caller must authenticate the CMS Owner boundary. */
+  public async getTrustedPrimaryRealmOwner(realmId: string): Promise<RealmPrimaryOwnerStatus> {
+    return primaryRealmOwnerStatus((await this.load(realmId)).state);
+  }
+
+  /**
+   * Assigns, transfers, or repairs the single human Primary Owner Binding.
+   * This is deliberately outside ordinary Role Binding authorization: the Owner
+   * Role is protected and non-assignable there. The deterministic Binding is
+   * created or retargeted by one policy CAS mutation, so transfer never exposes
+   * an intermediate ownerless revision. Membership/Identity eligibility beyond
+   * the policy projection must be checked transactionally by the caller/store.
+   */
+  public async setTrustedPrimaryRealmOwner(
+    actor: RealmOwnerCommandActor,
+    input: {
+      readonly expectedRevision: number;
+      readonly subjectId: string;
+      readonly operation: "assign" | "transfer" | "recover";
+    },
+  ): Promise<RealmPrimaryOwnerStatus> {
+    validateIdentifier(actor.realmId, "realmId");
+    validateIdentifier(input.subjectId, "owner.subjectId");
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+      throw new ApplicationError("POLICY_REVISION_INVALID", 400, "expectedRevision must be a positive integer.");
+    }
+    if (actor.realmId === SYSTEM_AUTHORIZATION_REALM_ID) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_CONTENT_REALM_REQUIRED",
+        409,
+        "The trusted Primary Realm Owner command is only available for Content Realms.",
+      );
+    }
+    const entry = await this.load(actor.realmId);
+    if (entry.state.revision !== input.expectedRevision) {
+      throw new ApplicationError(
+        "POLICY_REVISION_CONFLICT",
+        409,
+        `Expected policy revision '${input.expectedRevision}', but current revision is '${entry.state.revision}'.`,
+        { details: { expectedRevision: input.expectedRevision, actualRevision: entry.state.revision } },
+      );
+    }
+    const current = primaryRealmOwnerStatus(entry.state);
+    if (
+      current.state === "invalid"
+      && (
+        input.operation !== "recover"
+        || current.issues.some((issue) => !RECOVERABLE_PRIMARY_OWNER_ISSUES.has(issue))
+      )
+    ) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_POLICY_INVALID",
+        409,
+        "The protected Realm policy is malformed beyond the Primary Owner recovery boundary.",
+        { details: { issues: current.issues } },
+      );
+    }
+    if (input.operation === "assign" && current.state !== "unassigned") {
+      throw new ApplicationError("REALM_PRIMARY_OWNER_EXISTS", 409, "The Realm already has a Primary Owner.");
+    }
+    if (input.operation === "transfer" && current.state !== "assigned") {
+      throw new ApplicationError("REALM_PRIMARY_OWNER_MISSING", 409, "The Realm has no Primary Owner to transfer.");
+    }
+    if (
+      actor.accessMode === "realm-actor"
+      && (current.state !== "assigned" || current.subjectId !== actor.subjectId)
+    ) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_REQUIRED",
+        403,
+        "Only the current Primary Realm Owner can perform a normal transfer.",
+      );
+    }
+    const subject = entry.state.subjects.find(({ id }) => id === input.subjectId);
+    if (
+      subject === undefined
+      || subject.realmId !== actor.realmId
+      || subject.type !== "user"
+      || subject.identityId === undefined
+      || subject.protected === true
+      || subject.disabled === true
+    ) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_SUBJECT_INELIGIBLE",
+        409,
+        "A Primary Realm Owner must be an active identity-linked human Subject.",
+      );
+    }
+    if (
+      actor.accessMode === "cms-owner-control-plane"
+      && subject.identityId === actor.systemIdentityId
+    ) {
+      throw new ApplicationError(
+        "REALM_PRIMARY_OWNER_SELF_ASSIGNMENT_FORBIDDEN",
+        403,
+        "The CMS Owner cannot assign their own System Identity as a Realm Owner.",
+      );
+    }
+    if (current.state === "assigned" && current.subjectId === subject.id) return current;
+
+    const binding: AuthorizationBindingRecord = {
+      id: authorizationPrimaryOwnerBindingId(actor.realmId),
+      realmId: actor.realmId,
+      subjectId: subject.id,
+      roleId: authorizationOwnerRoleId(actor.realmId),
+      resourceId: entry.state.realm.rootResourceId,
+      propagation: "self-and-children",
+      protected: true,
+    };
+    const previousOwnerBindings = entry.state.bindings.filter(
+      ({ roleId }) => roleId === authorizationOwnerRoleId(actor.realmId),
+    );
+    const before = previousOwnerBindings.length === 0
+      ? null
+      : previousOwnerBindings.length === 1
+        ? previousOwnerBindings[0]!
+        : previousOwnerBindings;
+    const mutation: AuthorizationPolicyMutation = {
+      type: "binding.replace-primary-owner",
+      value: binding,
+    };
+    const auditActor = ownerCommandAuditActor(actor);
+    const persisted = await this.store.mutatePolicy({
+      realmId: actor.realmId,
+      expectedRevision: entry.state.revision,
+      mutation,
+      audit: {
+        id: this.runtime.newAuditId(),
+        ...auditActor,
+        action: `realm-owner.${input.operation}`,
+        targetType: "binding",
+        targetId: binding.id,
+        before,
+        after: binding,
+        decision: null,
+        occurredAt: this.runtime.now(),
+      },
+    });
+    this.cachePersistedState(actor.realmId, persisted, entry.state.revision);
+    return primaryRealmOwnerStatus(persisted);
   }
 
   /**
@@ -985,7 +1213,7 @@ export class AuthorizationApplicationService {
 
   /** Simulation deliberately calls the same production path and uses the same cache. */
   public async simulate(
-    requestingActor: AuthorizationActor,
+    requestingActor: AuthorizationPolicyManagementActor,
     input: {
       readonly subjectId: string;
       readonly action: string;
@@ -995,11 +1223,7 @@ export class AuthorizationApplicationService {
     },
   ): Promise<AuthorizationDecisionRecord> {
     validateIdentifier(input.subjectId, "simulate.subjectId");
-    await this.load(requestingActor.realmId);
-    await this.require(requestingActor, {
-      action: "authorization.read",
-      resourceId: coreResourceId(requestingActor.realmId, "authorization"),
-    });
+    await this.getPolicy(requestingActor);
     const at = input.at ?? this.runtime.now();
     validateOptionalInstant(at, "simulate.at");
     // Only the evaluated identity changes. The requester's separate permission
@@ -1008,7 +1232,6 @@ export class AuthorizationApplicationService {
       { subjectId: input.subjectId, realmId: requestingActor.realmId },
       input,
       at,
-      "simulate",
     );
   }
 
@@ -1091,7 +1314,7 @@ export class AuthorizationApplicationService {
           type: "permission",
           resourceId: check.resourceId,
           supported,
-          decision: await this.authorizeAt(actor, check, now, "authorize", entry),
+          decision: await this.authorizeAt(actor, check, now, entry),
         });
         continue;
       }
@@ -1127,23 +1350,6 @@ export class AuthorizationApplicationService {
       ...(input.action === undefined ? {} : { permission: asPermissionKey(input.action) }),
       ...toKernelContextProperty(input.context),
     });
-    const fullAccessAction = input.action
-      ?? (input.access === "read" ? "content.read" : "content.update");
-    if (await this.useRealmFullAccess(entry, actor, {
-      action: fullAccessAction,
-      resourceId: input.resourceId,
-      at: now,
-      operation: "evaluate-field",
-      field: input.field,
-    })) {
-      return realmFullAccessFieldDecision(
-        actor,
-        input.resourceId,
-        input.field,
-        input.access,
-        entry.state.realm.rootResourceId,
-      );
-    }
     return plainFieldDecision(decision);
   }
 
@@ -1169,15 +1375,6 @@ export class AuthorizationApplicationService {
       ...toKernelContextProperty(input.context),
     });
     const fields = Object.keys(input.data);
-    if (await this.useRealmFullAccess(entry, actor, {
-      action,
-      resourceId: input.resourceId,
-      at: now,
-      operation: "filter-readable-data",
-      fields,
-    }, () => fields.forEach(validateFieldName))) {
-      return { ...input.data };
-    }
     this.requireDecision(enclosingDecision);
     const output: [string, unknown][] = [];
     for (const [field, value] of Object.entries(input.data)) {
@@ -1220,15 +1417,6 @@ export class AuthorizationApplicationService {
       ...toKernelContextProperty(input.context),
     });
     const fields = Object.keys(input.data);
-    if (await this.useRealmFullAccess(entry, actor, {
-      action,
-      resourceId: input.resourceId,
-      at: now,
-      operation: "assert-writable-data",
-      fields,
-    }, () => fields.forEach(validateFieldName))) {
-      return;
-    }
     this.requireDecision(enclosingDecision);
     const decisions = fields.map((field) => {
       validateFieldName(field);
@@ -1254,14 +1442,18 @@ export class AuthorizationApplicationService {
   }
 
   public async listAudit(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly cursor?: string; readonly limit?: number } = {},
   ): Promise<AuthorizationAuditPage> {
-    const state = (await this.load(actor.realmId)).state;
-    await this.require(actor, {
-      action: "audit.read",
-      resourceId: coreResourceId(actor.realmId, "audit"),
-    });
+    await this.load(actor.realmId);
+    if (isControlPlaneAdministrationActor(actor)) {
+      assertContentRealmAdministration(actor);
+    } else {
+      await this.require(realmPolicyActor(actor), {
+        action: "audit.read",
+        resourceId: coreResourceId(actor.realmId, "audit"),
+      });
+    }
     const limit = input.limit ?? 50;
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
       throw new ApplicationError("AUDIT_LIMIT_INVALID", 400, "Audit limit must be an integer from 1 to 200.");
@@ -1827,7 +2019,7 @@ export class AuthorizationApplicationService {
   }
 
   public async createRole(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly role: NewAuthorizationRoleRecord },
   ): Promise<AuthorizationMutationResult<AuthorizationRoleRecord>> {
     const role: AuthorizationRoleRecord = {
@@ -1837,13 +2029,19 @@ export class AuthorizationApplicationService {
     validateRoleRecord(role, actor.realmId);
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     (role.fieldAccess ?? []).forEach(({ resourceId }) => assertResourceAcceptsPolicy(entry.state, resourceId));
-    const decision = authorizeRoleCreate(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      "role.create",
+      entry.state.realm.rootResourceId,
+    );
+    assertRoleMutationUnprotected(entry.state, role);
+    const decision = fullAccessDecision ?? plainDecision(authorizeRoleCreate(entry.snapshot, {
+      actorSubjectId: asSubjectId(realmPolicyActor(actor).subjectId),
       role: toKernelRole(role),
       action: asPermissionKey("role.create"),
       now: this.runtime.now(),
-    });
-    this.requireDecision(decision);
+    }));
+    if (fullAccessDecision === null && !decision.allowed) authorizationDenied(decision);
     const persisted = await this.commit(
       actor,
       entry,
@@ -1852,7 +2050,7 @@ export class AuthorizationApplicationService {
       role.id,
       null,
       role,
-      plainDecision(decision),
+      decision,
     );
     return {
       revision: persisted.revision,
@@ -1861,7 +2059,7 @@ export class AuthorizationApplicationService {
   }
 
   public async updateRole(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: {
       readonly expectedRevision: number;
       readonly roleId: string;
@@ -1874,14 +2072,21 @@ export class AuthorizationApplicationService {
     (input.role.fieldAccess ?? []).forEach(({ resourceId }) =>
       assertResourceAcceptsPolicy(entry.state, resourceId));
     const before = requireRecord(entry.state.roles, input.roleId, "role");
-    const decision = authorizeRoleUpdate(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      "role.update",
+      entry.state.realm.rootResourceId,
+    );
+    assertRoleMutationUnprotected(entry.state, before);
+    assertRoleMutationUnprotected(entry.state, input.role);
+    const decision = fullAccessDecision ?? plainDecision(authorizeRoleUpdate(entry.snapshot, {
+      actorSubjectId: asSubjectId(realmPolicyActor(actor).subjectId),
       roleId: asRoleId(input.roleId),
       nextRole: toKernelRole(input.role),
       action: asPermissionKey("role.update"),
       now: this.runtime.now(),
-    });
-    this.requireDecision(decision);
+    }));
+    if (fullAccessDecision === null && !decision.allowed) authorizationDenied(decision);
     const persisted = await this.commit(
       actor,
       entry,
@@ -1890,7 +2095,7 @@ export class AuthorizationApplicationService {
       input.roleId,
       before,
       input.role,
-      plainDecision(decision),
+      decision,
     );
     return {
       revision: persisted.revision,
@@ -1899,7 +2104,7 @@ export class AuthorizationApplicationService {
   }
 
   public async deleteRole(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly roleId: string },
   ): Promise<AuthorizationMutationResult<{ readonly id: string }>> {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
@@ -1911,13 +2116,19 @@ export class AuthorizationApplicationService {
         `Role '${input.roleId}' cannot be deleted while bindings reference it.`,
       );
     }
-    const decision = authorizeRoleDelete(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      "role.delete",
+      entry.state.realm.rootResourceId,
+    );
+    assertRoleMutationUnprotected(entry.state, before);
+    const decision = fullAccessDecision ?? plainDecision(authorizeRoleDelete(entry.snapshot, {
+      actorSubjectId: asSubjectId(realmPolicyActor(actor).subjectId),
       roleId: asRoleId(input.roleId),
       action: asPermissionKey("role.delete"),
       now: this.runtime.now(),
-    });
-    this.requireDecision(decision);
+    }));
+    if (fullAccessDecision === null && !decision.allowed) authorizationDenied(decision);
     const persisted = await this.commit(
       actor,
       entry,
@@ -1926,13 +2137,13 @@ export class AuthorizationApplicationService {
       input.roleId,
       before,
       null,
-      plainDecision(decision),
+      decision,
     );
     return { revision: persisted.revision, value: { id: input.roleId } };
   }
 
   public async createBinding(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly binding: NewAuthorizationBindingRecord },
   ): Promise<AuthorizationMutationResult<AuthorizationBindingRecord>> {
     const binding: AuthorizationBindingRecord = {
@@ -1942,13 +2153,19 @@ export class AuthorizationApplicationService {
     validateBindingRecord(binding, actor.realmId);
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     assertResourceAcceptsPolicy(entry.state, binding.resourceId);
-    const decision = authorizeRoleBindingCreate(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      "role.assign",
+      binding.resourceId,
+    );
+    assertBindingMutationUnprotected(entry.state, binding);
+    const decision = fullAccessDecision ?? plainDecision(authorizeRoleBindingCreate(entry.snapshot, {
+      actorSubjectId: asSubjectId(realmPolicyActor(actor).subjectId),
       binding: toKernelBinding(binding),
       action: asPermissionKey("role.assign"),
       now: this.runtime.now(),
-    });
-    this.requireDecision(decision);
+    }));
+    if (fullAccessDecision === null && !decision.allowed) authorizationDenied(decision);
     const persisted = await this.commit(
       actor,
       entry,
@@ -1957,7 +2174,7 @@ export class AuthorizationApplicationService {
       binding.id,
       null,
       binding,
-      plainDecision(decision),
+      decision,
     );
     return {
       revision: persisted.revision,
@@ -1966,7 +2183,7 @@ export class AuthorizationApplicationService {
   }
 
   public async updateBinding(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: {
       readonly expectedRevision: number;
       readonly bindingId: string;
@@ -1978,14 +2195,21 @@ export class AuthorizationApplicationService {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     assertResourceAcceptsPolicy(entry.state, input.binding.resourceId);
     const before = requireRecord(entry.state.bindings, input.bindingId, "binding");
-    const decision = authorizeRoleBindingUpdate(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      "role.assign",
+      input.binding.resourceId,
+    );
+    assertBindingMutationUnprotected(entry.state, before);
+    assertBindingMutationUnprotected(entry.state, input.binding);
+    const decision = fullAccessDecision ?? plainDecision(authorizeRoleBindingUpdate(entry.snapshot, {
+      actorSubjectId: asSubjectId(realmPolicyActor(actor).subjectId),
       bindingId: asRoleBindingId(input.bindingId),
       nextBinding: toKernelBinding(input.binding),
       action: asPermissionKey("role.assign"),
       now: this.runtime.now(),
-    });
-    this.requireDecision(decision);
+    }));
+    if (fullAccessDecision === null && !decision.allowed) authorizationDenied(decision);
     const persisted = await this.commit(
       actor,
       entry,
@@ -1994,7 +2218,7 @@ export class AuthorizationApplicationService {
       input.bindingId,
       before,
       input.binding,
-      plainDecision(decision),
+      decision,
     );
     return {
       revision: persisted.revision,
@@ -2003,18 +2227,24 @@ export class AuthorizationApplicationService {
   }
 
   public async deleteBinding(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly bindingId: string },
   ): Promise<AuthorizationMutationResult<{ readonly id: string }>> {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     const before = requireRecord(entry.state.bindings, input.bindingId, "binding");
-    const decision = authorizeRoleBindingRemove(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      "role.assign",
+      before.resourceId,
+    );
+    assertBindingMutationUnprotected(entry.state, before);
+    const decision = fullAccessDecision ?? plainDecision(authorizeRoleBindingRemove(entry.snapshot, {
+      actorSubjectId: asSubjectId(realmPolicyActor(actor).subjectId),
       bindingId: asRoleBindingId(input.bindingId),
       action: asPermissionKey("role.assign"),
       now: this.runtime.now(),
-    });
-    this.requireDecision(decision);
+    }));
+    if (fullAccessDecision === null && !decision.allowed) authorizationDenied(decision);
     const persisted = await this.commit(
       actor,
       entry,
@@ -2023,13 +2253,13 @@ export class AuthorizationApplicationService {
       input.bindingId,
       before,
       null,
-      plainDecision(decision),
+      decision,
     );
     return { revision: persisted.revision, value: { id: input.bindingId } };
   }
 
   public async createLevel(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly level: NewAuthorizationLevelRecord },
   ): Promise<AuthorizationMutationResult<AuthorizationLevelRecord>> {
     const level: AuthorizationLevelRecord = {
@@ -2057,7 +2287,7 @@ export class AuthorizationApplicationService {
   }
 
   public async updateLevel(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: {
       readonly expectedRevision: number;
       readonly levelId: string;
@@ -2088,7 +2318,7 @@ export class AuthorizationApplicationService {
   }
 
   public async deleteLevel(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly levelId: string },
   ): Promise<AuthorizationMutationResult<{ readonly id: string }>> {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
@@ -2116,7 +2346,7 @@ export class AuthorizationApplicationService {
   }
 
   public async createSubject(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly subject: NewAuthorizationSubjectRecord },
   ): Promise<AuthorizationMutationResult<AuthorizationSubjectRecord>> {
     if ("identityId" in input.subject) {
@@ -2217,7 +2447,7 @@ export class AuthorizationApplicationService {
   }
 
   public async updateSubject(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: {
       readonly expectedRevision: number;
       readonly subjectId: string;
@@ -2237,6 +2467,7 @@ export class AuthorizationApplicationService {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     const decision = this.requireOwnerManagement(actor, entry);
     const before = requireRecord(entry.state.subjects, input.subjectId, "subject");
+    assertSubjectMutationUnprotected(entry.state, input.subjectId);
     if (before.protected === true || input.subject.protected === true) protectedTarget("subject", input.subjectId);
     if (before.type !== input.subject.type) identityChange("subject type", input.subjectId);
     const subject: AuthorizationSubjectRecord = {
@@ -2260,14 +2491,15 @@ export class AuthorizationApplicationService {
   }
 
   public async deleteSubject(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly subjectId: string },
   ): Promise<AuthorizationMutationResult<{ readonly id: string }>> {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     const decision = this.requireOwnerManagement(actor, entry);
     const before = requireRecord(entry.state.subjects, input.subjectId, "subject");
+    assertSubjectMutationUnprotected(entry.state, input.subjectId);
     if (before.protected === true) protectedTarget("subject", input.subjectId);
-    if (input.subjectId === actor.subjectId) {
+    if (!isControlPlaneAdministrationActor(actor) && input.subjectId === realmPolicyActor(actor).subjectId) {
       throw new ApplicationError("SELF_SUBJECT_MUTATION", 403, "An actor cannot delete its own subject.");
     }
     if (entry.state.bindings.some(({ subjectId }) => subjectId === input.subjectId)) {
@@ -2291,7 +2523,7 @@ export class AuthorizationApplicationService {
   }
 
   public async createGroupMembership(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: {
       readonly expectedRevision: number;
       readonly membership: NewAuthorizationGroupMembershipRecord;
@@ -2304,6 +2536,8 @@ export class AuthorizationApplicationService {
     validateGroupMembershipRecord(membership, actor.realmId);
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     const decision = this.requireOwnerManagement(actor, entry);
+    assertSubjectMutationUnprotected(entry.state, membership.memberSubjectId);
+    assertSubjectMutationUnprotected(entry.state, membership.groupSubjectId);
     assertValidGroupMembership(entry.state, membership, undefined);
     const persisted = await this.commit(
       actor,
@@ -2322,7 +2556,7 @@ export class AuthorizationApplicationService {
   }
 
   public async updateGroupMembership(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: {
       readonly expectedRevision: number;
       readonly membershipId: string;
@@ -2334,6 +2568,10 @@ export class AuthorizationApplicationService {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     const decision = this.requireOwnerManagement(actor, entry);
     const before = requireRecord(entry.state.groupMemberships, input.membershipId, "group membership");
+    assertSubjectMutationUnprotected(entry.state, before.memberSubjectId);
+    assertSubjectMutationUnprotected(entry.state, before.groupSubjectId);
+    assertSubjectMutationUnprotected(entry.state, input.membership.memberSubjectId);
+    assertSubjectMutationUnprotected(entry.state, input.membership.groupSubjectId);
     assertValidGroupMembership(entry.state, input.membership, input.membershipId);
     const persisted = await this.commit(
       actor,
@@ -2352,12 +2590,14 @@ export class AuthorizationApplicationService {
   }
 
   public async deleteGroupMembership(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     input: { readonly expectedRevision: number; readonly membershipId: string },
   ): Promise<AuthorizationMutationResult<{ readonly id: string }>> {
     const entry = await this.loadForMutation(actor, input.expectedRevision);
     const decision = this.requireOwnerManagement(actor, entry);
     const before = requireRecord(entry.state.groupMemberships, input.membershipId, "group membership");
+    assertSubjectMutationUnprotected(entry.state, before.memberSubjectId);
+    assertSubjectMutationUnprotected(entry.state, before.groupSubjectId);
     const persisted = await this.commit(
       actor,
       entry,
@@ -2407,7 +2647,6 @@ export class AuthorizationApplicationService {
       readonly context?: AuthorizationEvaluationContext;
     },
     now: string,
-    operation: "authorize" | "simulate" = "authorize",
     entryOverride?: PolicyCacheEntry,
   ): Promise<AuthorizationDecisionRecord> {
     assertCanonicalPermission(input.action);
@@ -2420,81 +2659,31 @@ export class AuthorizationApplicationService {
       now,
       ...toKernelContextProperty(input.context),
     });
-    if (await this.useRealmFullAccess(entry, actor, {
-      action: input.action,
-      resourceId: input.resourceId,
-      at: now,
-      operation,
-    })) {
-      return realmFullAccessDecision(
-        actor,
-        input.action,
-        input.resourceId,
-        entry.state.realm.rootResourceId,
-      );
-    }
     return plainDecision(decision);
   }
 
-  /**
-   * Full Access is an additive Realm-local capability, never an alternative
-   * identity/resource validator. It intentionally does not participate in the
-   * protected Owner and hierarchy-management mutation paths below.
-   */
-  private async useRealmFullAccess(
-    entry: PolicyCacheEntry,
-    actor: AuthorizationActor,
-    input: Omit<RealmFullAccessUse, "realmId" | "subjectId">,
-    validateUse?: () => void,
-  ): Promise<boolean> {
-    const resolver = this.realmFullAccessResolver;
-    if (resolver === undefined || actor.realmId === SYSTEM_AUTHORIZATION_REALM_ID) return false;
-    if (entry.state.realm.id !== actor.realmId) return false;
-
-    const permission = entry.state.permissions.find(({ key }) => key === input.action);
-    if (permission === undefined || permission.hierarchyGuard !== "none") return false;
-    const subject = entry.state.subjects.find(({ id }) => id === actor.subjectId);
-    const resource = entry.state.resources.find(({ id }) => id === input.resourceId);
-    if (
-      subject === undefined
-      || subject.disabled === true
-      || subject.realmId !== actor.realmId
-      || resource === undefined
-      || resource.realmId !== actor.realmId
-    ) {
-      return false;
-    }
-
-    if (!await resolver.hasActiveFullAccess(actor.realmId, actor.subjectId, input.at)) return false;
-    // Validation that historically followed the enclosing RBAC decision runs
-    // only after Full Access is known to be active, but before a successful-use
-    // audit is emitted. This preserves M3 error precedence when no resolver is
-    // configured and avoids auditing rejected field payloads as successful use.
-    validateUse?.();
-    await resolver.recordUse({
-      realmId: actor.realmId,
-      subjectId: actor.subjectId,
-      action: input.action,
-      resourceId: input.resourceId,
-      at: input.at,
-      operation: input.operation,
-      ...(input.field === undefined ? {} : { field: input.field }),
-      ...(input.fields === undefined ? {} : { fields: [...input.fields] }),
-    });
-    return true;
-  }
-
   private async loadForMutation(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     expectedRevision: number,
   ): Promise<PolicyCacheEntry> {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
       throw new ApplicationError("POLICY_REVISION_INVALID", 400, "expectedRevision must be a positive integer.");
     }
     const entry = await this.load(actor.realmId);
-    const actorSubject = entry.state.subjects.find(({ id }) => id === actor.subjectId);
-    if (actorSubject === undefined || actorSubject.realmId !== actor.realmId) {
-      throw new ApplicationError("AUTHORIZATION_ACTOR_UNKNOWN", 403, "The actor does not belong to this realm.");
+    if (isControlPlaneAdministrationActor(actor)) {
+      assertContentRealmAdministration(actor);
+      if (actor.accessMode === "cms-owner-readonly") {
+        throw new ApplicationError(
+          "REALM_ADMINISTRATION_READ_ONLY",
+          403,
+          "CMS Owner oversight is read-only without active Realm Full Access.",
+        );
+      }
+    } else {
+      const actorSubject = entry.state.subjects.find(({ id }) => id === realmPolicyActor(actor).subjectId);
+      if (actorSubject === undefined || actorSubject.realmId !== actor.realmId) {
+        throw new ApplicationError("AUTHORIZATION_ACTOR_UNKNOWN", 403, "The actor does not belong to this realm.");
+      }
     }
     if (entry.state.revision !== expectedRevision) {
       throw new ApplicationError(
@@ -2508,23 +2697,48 @@ export class AuthorizationApplicationService {
   }
 
   private requireOwnerManagement(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     entry: PolicyCacheEntry,
   ): AuthorizationDecisionRecord {
+    const fullAccessDecision = realmFullAccessManagementDecision(
+      actor,
+      AUTHORIZATION_MANAGE_PERMISSION,
+      entry.state.realm.rootResourceId,
+    );
+    if (fullAccessDecision !== null) return fullAccessDecision;
+    const realmActor = realmPolicyActor(actor);
     const decision = evaluateAccess(entry.snapshot, {
-      actorSubjectId: asSubjectId(actor.subjectId),
+      actorSubjectId: asSubjectId(realmActor.subjectId),
       action: asPermissionKey(AUTHORIZATION_MANAGE_PERMISSION),
       resourceId: asResourceId(entry.state.realm.rootResourceId),
       now: this.runtime.now(),
     });
     this.requireDecision(decision);
-    const actorSubject = entry.state.subjects.find(({ id }) => id === actor.subjectId);
-    const hasProtectedOwnerGrant = actorSubject?.protected === true && decision.matchedGrants.some((grant) => {
-      const role = entry.state.roles.find(({ id }) => id === grant.sourceRoleId);
-      const level = role === undefined
-        ? undefined
-        : entry.state.authorityLevels.find(({ id }) => id === role.levelId);
-      return role?.protected === true && level?.protected === true;
+    const actorSubject = entry.state.subjects.find(({ id }) => id === realmActor.subjectId);
+    const hasProtectedOwnerGrant = decision.matchedGrants.some((grant) => {
+      if (actor.realmId === SYSTEM_AUTHORIZATION_REALM_ID) {
+        return actorSubject?.protected === true
+          && grant.sourceRoleId === authorizationOwnerRoleId(actor.realmId);
+      }
+      const hasSystemPolicyRoot = entry.state.roles.some(
+        ({ id }) => id === authorizationSystemPolicyRootRoleId(actor.realmId),
+      );
+      const isLegacyProtectedOwner = !hasSystemPolicyRoot
+        && actorSubject?.protected === true
+        && grant.sourceRoleId === authorizationOwnerRoleId(actor.realmId);
+      const isSystemRoot = actorSubject?.protected === true
+        && actorSubject.type === "service-account"
+        && grant.sourceRoleId === authorizationSystemPolicyRootRoleId(actor.realmId)
+        && grant.sourceLevelId === authorizationSystemPolicyRootLevelId(actor.realmId)
+        && grant.sourceBindingId === authorizationSystemPolicyRootBindingId(actor.realmId);
+      const isHumanPrimaryOwner = actorSubject?.protected !== true
+        && actorSubject?.type === "user"
+        && actorSubject.identityId !== undefined
+        && actorSubject.disabled !== true
+        && grant.sourceRoleId === authorizationOwnerRoleId(actor.realmId)
+        && grant.sourceLevelId === authorizationOwnerLevelId(actor.realmId)
+        && grant.sourceBindingId === authorizationPrimaryOwnerBindingId(actor.realmId);
+      return isLegacyProtectedOwner || isSystemRoot || isHumanPrimaryOwner;
     });
     if (!hasProtectedOwnerGrant) {
       throw new ApplicationError(
@@ -2537,7 +2751,7 @@ export class AuthorizationApplicationService {
   }
 
   private async commit<TMutation extends AuthorizationPolicyMutation>(
-    actor: AuthorizationActor,
+    actor: AuthorizationPolicyManagementActor,
     entry: PolicyCacheEntry,
     mutation: TMutation,
     targetType: AuthorizationAuditTargetType,
@@ -2552,7 +2766,7 @@ export class AuthorizationApplicationService {
       realmId: actor.realmId,
       expectedRevision: entry.state.revision,
       mutation,
-      audit: this.audit(actor.subjectId, mutation.type, targetType, targetId, before, after, decision),
+      audit: this.policyMutationAudit(actor, mutation.type, targetType, targetId, before, after, decision),
     });
     this.cachePersistedState(actor.realmId, persisted, entry.state.revision);
     return persisted;
@@ -2577,6 +2791,41 @@ export class AuthorizationApplicationService {
       after,
       decision,
       occurredAt: this.runtime.now(),
+    };
+  }
+
+  private policyMutationAudit(
+    actor: AuthorizationPolicyManagementActor,
+    action: string,
+    targetType: AuthorizationAuditTargetType,
+    targetId: string,
+    before: unknown | null,
+    after: unknown | null,
+    decision: AuthorizationDecisionRecord | null,
+  ): AuthorizationAuditDraft {
+    if (isControlPlaneAdministrationActor(actor)) {
+      return {
+        id: this.runtime.newAuditId(),
+        actorIdentityId: actor.systemIdentityId,
+        accessMode: actor.accessMode,
+        ...(actor.accessMode === "realm-full-access"
+          ? { fullAccessBindingId: actor.fullAccessBindingId }
+          : {}),
+        action,
+        targetType,
+        targetId,
+        before,
+        after,
+        decision,
+        occurredAt: this.runtime.now(),
+      };
+    }
+    const realmActor = realmPolicyActor(actor);
+    return {
+      ...this.audit(realmActor.subjectId, action, targetType, targetId, before, after, decision),
+      ...(isRealmAdministrationActor(actor)
+        ? { actorIdentityId: actor.systemIdentityId, accessMode: actor.accessMode }
+        : {}),
     };
   }
 
@@ -2851,13 +3100,14 @@ function plainFieldDecision(decision: FieldAccessDecision): AuthorizationFieldDe
   };
 }
 
-function realmFullAccessDecision(
-  actor: AuthorizationActor,
+function realmFullAccessManagementDecision(
+  actor: AuthorizationPolicyManagementActor,
   action: string,
   resourceId: string,
-  rootResourceId: string,
-): AuthorizationDecisionRecord {
-  const sourceId = realmFullAccessSourceId(actor.realmId);
+): AuthorizationDecisionRecord | null {
+  if (!isRealmFullAccessActor(actor)) return null;
+  assertContentRealmAdministration(actor);
+  const sourceId = `authorization:${actor.realmId}:realm-full-access`;
   return {
     allowed: true,
     action,
@@ -2865,49 +3115,94 @@ function realmFullAccessDecision(
     matchedGrants: [{
       sourceKind: "realm-full-access",
       sourceRealmId: actor.realmId,
-      sourceSubjectId: actor.subjectId,
       permission: action,
-      // Compatibility-shaped provenance fields. sourceKind distinguishes these
-      // synthetic IDs from policy Role/Level/Binding records.
       sourceRoleId: `${sourceId}:role`,
       sourceLevelId: `${sourceId}:level`,
       sourceRank: 0,
-      sourceBindingId: `${sourceId}:subject:${actor.subjectId}`,
-      sourceScope: { resourceId: rootResourceId, propagation: "self-and-children" },
+      sourceBindingId: actor.fullAccessBindingId,
+      sourceScope: { resourceId, propagation: "self-and-children" },
       membershipPath: [],
     }],
     evaluatedScope: { resourceId, propagation: "self" },
   };
 }
 
-function realmFullAccessFieldDecision(
-  actor: AuthorizationActor,
-  resourceId: string,
-  field: string,
-  access: FieldAccessMode,
-  rootResourceId: string,
-): AuthorizationFieldDecisionRecord {
-  const sourceId = realmFullAccessSourceId(actor.realmId);
-  return {
-    allowed: true,
-    access,
-    field,
-    resourceId,
-    reasonCode: "ALLOW_REALM_FULL_ACCESS",
-    matchedGrants: [{
-      sourceKind: "realm-full-access",
-      sourceRealmId: actor.realmId,
-      sourceSubjectId: actor.subjectId,
-      sourceRoleId: `${sourceId}:role`,
-      sourceBindingId: `${sourceId}:subject:${actor.subjectId}`,
-      sourceResourceId: rootResourceId,
-      membershipPath: [],
-    }],
-  };
+function isRealmAdministrationActor(
+  actor: AuthorizationPolicyManagementActor,
+): actor is RealmAdministrationActor {
+  return "accessMode" in actor;
 }
 
-function realmFullAccessSourceId(realmId: string): string {
-  return `authorization:${realmId}:realm-full-access`;
+function isControlPlaneAdministrationActor(
+  actor: AuthorizationPolicyManagementActor,
+): actor is Exclude<RealmAdministrationActor, { readonly accessMode: "realm-actor" }> {
+  return isRealmAdministrationActor(actor) && actor.accessMode !== "realm-actor";
+}
+
+function isRealmFullAccessActor(
+  actor: AuthorizationPolicyManagementActor,
+): actor is Extract<RealmAdministrationActor, { readonly accessMode: "realm-full-access" }> {
+  return isRealmAdministrationActor(actor) && actor.accessMode === "realm-full-access";
+}
+
+function realmPolicyActor(actor: AuthorizationPolicyManagementActor): AuthorizationActor {
+  if (!isRealmAdministrationActor(actor)) return actor;
+  if (actor.accessMode === "realm-actor") {
+    return { realmId: actor.realmId, subjectId: actor.subjectId };
+  }
+  throw new ApplicationError(
+    "REALM_SUBJECT_ACTOR_REQUIRED",
+    403,
+    "This operation requires a Realm-local authorization Subject.",
+  );
+}
+
+function assertContentRealmAdministration(actor: RealmAdministrationActor): void {
+  if (actor.realmId === SYSTEM_AUTHORIZATION_REALM_ID) {
+    throw new ApplicationError(
+      "REALM_ADMINISTRATION_CONTENT_REALM_REQUIRED",
+      403,
+      "Control-plane Realm administration cannot target the System Realm.",
+    );
+  }
+}
+
+function assertRoleMutationUnprotected(
+  state: AuthorizationPolicyState,
+  role: AuthorizationRoleRecord,
+): void {
+  const level = state.authorityLevels.find(({ id }) => id === role.levelId);
+  if (role.protected === true || level?.protected === true) protectedTarget("role", role.id);
+}
+
+function assertBindingMutationUnprotected(
+  state: AuthorizationPolicyState,
+  binding: AuthorizationBindingRecord,
+): void {
+  const subject = state.subjects.find(({ id }) => id === binding.subjectId);
+  const role = state.roles.find(({ id }) => id === binding.roleId);
+  const level = role === undefined
+    ? undefined
+    : state.authorityLevels.find(({ id }) => id === role.levelId);
+  if (
+    binding.protected === true
+    || subject?.protected === true
+    || role?.protected === true
+    || level?.protected === true
+  ) protectedTarget("binding", binding.id);
+}
+
+function assertSubjectMutationUnprotected(state: AuthorizationPolicyState, subjectId: string): void {
+  const subject = state.subjects.find(({ id }) => id === subjectId);
+  const protectedGrant = state.bindings.some((binding) => {
+    if (binding.subjectId !== subjectId) return false;
+    const role = state.roles.find(({ id }) => id === binding.roleId);
+    const level = role === undefined
+      ? undefined
+      : state.authorityLevels.find(({ id }) => id === role.levelId);
+    return binding.protected === true || role?.protected === true || level?.protected === true;
+  });
+  if (subject?.protected === true || protectedGrant) protectedTarget("subject", subjectId);
 }
 
 function fieldAllowlistsEqual(
@@ -2996,6 +3291,15 @@ export function applyPolicyMutation(
       return { ...state, revision: nextRevision, bindings: replaceRecord(state.bindings, mutation.value) };
     case "binding.delete":
       return { ...state, revision: nextRevision, bindings: removeRecord(state.bindings, mutation.id) };
+    case "binding.replace-primary-owner":
+      return {
+        ...state,
+        revision: nextRevision,
+        bindings: [
+          ...state.bindings.filter(({ roleId }) => roleId !== mutation.value.roleId),
+          mutation.value,
+        ],
+      };
     case "group-membership.create":
       return {
         ...state,
@@ -3160,10 +3464,9 @@ function assertManageableLevel(
   replacedId: string | undefined,
 ): void {
   if (level.protected === true) protectedInput("authority level");
-  const protectedRanks = state.authorityLevels
-    .filter(({ protected: isProtected }) => isProtected === true)
-    .map(({ rank }) => rank);
-  const ownerRank = protectedRanks.length === 0 ? undefined : Math.max(...protectedRanks);
+  const ownerRank = state.authorityLevels.find(
+    ({ id }) => id === authorizationOwnerLevelId(state.realm.id),
+  )?.rank;
   if (ownerRank !== undefined && level.rank >= ownerRank) {
     throw new ApplicationError(
       "AUTHORITY_LEVEL_RANK_NOT_LOWER",
@@ -3179,6 +3482,97 @@ function assertManageableLevel(
       `Authority level rank '${level.rank}' is already in use.`,
     );
   }
+}
+
+function primaryRealmOwnerStatus(state: AuthorizationPolicyState): RealmPrimaryOwnerStatus {
+  const bindingId = authorizationPrimaryOwnerBindingId(state.realm.id);
+  const ownerLevelId = authorizationOwnerLevelId(state.realm.id);
+  const ownerRoleId = authorizationOwnerRoleId(state.realm.id);
+  const rootLevelId = authorizationSystemPolicyRootLevelId(state.realm.id);
+  const rootRoleId = authorizationSystemPolicyRootRoleId(state.realm.id);
+  const issues: string[] = [];
+  const ownerLevel = state.authorityLevels.find(({ id }) => id === ownerLevelId);
+  const ownerRole = state.roles.find(({ id }) => id === ownerRoleId);
+  const rootLevel = state.authorityLevels.find(({ id }) => id === rootLevelId);
+  const rootRole = state.roles.find(({ id }) => id === rootRoleId);
+  const rootBindings = state.bindings.filter(({ roleId }) => roleId === rootRoleId);
+  if (ownerLevel?.protected !== true || ownerLevel.rank !== 100) issues.push("owner-level-invalid");
+  if (
+    ownerRole?.protected !== true
+    || ownerRole.levelId !== ownerLevelId
+    || !ownerRole.permissions.includes(AUTHORIZATION_MANAGE_PERMISSION)
+  ) issues.push("owner-role-invalid");
+  if (rootLevel?.protected !== true || rootLevel.rank <= (ownerLevel?.rank ?? 100)) {
+    issues.push("system-policy-root-level-invalid");
+  }
+  if (
+    rootRole?.protected !== true
+    || rootRole.levelId !== rootLevelId
+    || !rootRole.permissions.includes(AUTHORIZATION_MANAGE_PERMISSION)
+  ) issues.push("system-policy-root-role-invalid");
+  if (rootBindings.length !== 1 || rootBindings[0]?.protected !== true) {
+    issues.push("system-policy-root-binding-invalid");
+  }
+  const ownerBindings = state.bindings.filter(({ roleId }) => roleId === ownerRoleId);
+  if (ownerBindings.length === 0) {
+    return {
+      state: issues.length === 0 ? "unassigned" : "invalid",
+      realmId: state.realm.id,
+      policyRevision: state.revision,
+      bindingId,
+      issues,
+    };
+  }
+  if (ownerBindings.length !== 1) issues.push("multiple-primary-owner-bindings");
+  const binding = ownerBindings.find(({ id }) => id === bindingId) ?? ownerBindings[0]!;
+  if (
+    binding.id !== bindingId
+    || binding.resourceId !== state.realm.rootResourceId
+    || binding.propagation !== "self-and-children"
+    || binding.protected !== true
+    || binding.validFrom !== undefined
+    || binding.validUntil !== undefined
+    || binding.constraints !== undefined
+  ) issues.push("primary-owner-binding-invalid");
+  const subject = state.subjects.find(({ id }) => id === binding.subjectId);
+  if (
+    subject === undefined
+    || subject.type !== "user"
+    || subject.identityId === undefined
+    || subject.protected === true
+    || subject.disabled === true
+  ) issues.push("primary-owner-subject-invalid");
+  return {
+    state: issues.length === 0 ? "assigned" : "invalid",
+    realmId: state.realm.id,
+    policyRevision: state.revision,
+    bindingId,
+    subjectId: binding.subjectId,
+    ...(subject?.identityId === undefined ? {} : { identityId: subject.identityId }),
+    issues,
+  };
+}
+
+const RECOVERABLE_PRIMARY_OWNER_ISSUES = new Set([
+  "multiple-primary-owner-bindings",
+  "primary-owner-binding-invalid",
+  "primary-owner-subject-invalid",
+]);
+
+function ownerCommandAuditActor(
+  actor: RealmOwnerCommandActor,
+): Pick<AuthorizationAuditDraft, "actorSubjectId" | "actorIdentityId" | "accessMode"> {
+  return actor.accessMode === "realm-actor"
+    ? {
+        actorSubjectId: actor.subjectId,
+        actorIdentityId: actor.systemIdentityId,
+        accessMode: actor.accessMode,
+      }
+    : {
+        ...(actor.systemSubjectId === undefined ? {} : { actorSubjectId: actor.systemSubjectId }),
+        actorIdentityId: actor.systemIdentityId,
+        accessMode: actor.accessMode,
+      };
 }
 
 function assertValidGroupMembership(

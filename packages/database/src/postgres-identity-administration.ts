@@ -243,6 +243,35 @@ export class PostgresIdentityAdministrationStore implements IdentityAdministrati
       if (before.is_owner && input.disabled) {
         throw new ApplicationError("IDENTITY_OWNER_DISABLE_FORBIDDEN", 409, "Transfer Workspace ownership before disabling the Owner.");
       }
+      if (input.disabled) {
+        const primaryOwner = await client.query<{ realm_id: string }>(
+          `SELECT membership.realm_id
+             FROM ${this.q("_xecms_realm_memberships")} membership
+             JOIN ${this.q("_xecms_realms")} realm
+               ON realm.id = membership.realm_id
+              AND realm.workspace_id = membership.workspace_id
+             JOIN ${this.q("_xecms_auth_role_bindings")} binding
+               ON binding.realm_id = membership.realm_id
+              AND binding.subject_id = membership.subject_id
+            WHERE membership.identity_id = $1
+              AND membership.workspace_id = $2
+              AND membership.status = 'active'
+              AND realm.kind = 'content' AND realm.status = 'active'
+              AND binding.id = 'authorization:' || realm.id || ':binding:primary-owner'
+              AND binding.role_id = 'authorization:' || realm.id || ':role:owner'
+              AND binding.protected = true
+            LIMIT 1`,
+          [input.identityId, input.workspaceId],
+        );
+        if (primaryOwner.rows[0] !== undefined) {
+          throw new ApplicationError(
+            "REALM_PRIMARY_OWNER_DISABLE_FORBIDDEN",
+            409,
+            "Transfer or recover the Primary Realm Owner before disabling this Identity.",
+            { details: { realmId: primaryOwner.rows[0].realm_id } },
+          );
+        }
+      }
       const alreadyDisabled = before.disabled_at !== null;
       if (alreadyDisabled === input.disabled) {
         throw new ApplicationError("IDENTITY_STATUS_UNCHANGED", 409, "The Identity already has the requested status.");
@@ -744,6 +773,27 @@ export class PostgresIdentityAdministrationStore implements IdentityAdministrati
       const targetSubjectId = targetMembership.rows[0]?.subject_id;
       if (targetSubjectId === undefined) {
         throw new ApplicationError("OWNER_TRANSFER_TARGET_INVALID", 409, "The new Owner needs an active System Membership.");
+      }
+      const realmOwnership = await client.query(
+        `SELECT binding.id
+           FROM ${this.q("_xecms_auth_role_bindings")} binding
+           JOIN ${this.q("_xecms_auth_subjects")} subject
+             ON subject.realm_id = binding.realm_id AND subject.id = binding.subject_id
+           JOIN ${this.q("_xecms_realms")} realm
+             ON realm.id = binding.realm_id AND realm.workspace_id = $1
+          WHERE subject.identity_id = $2 AND realm.kind = 'content'
+            AND binding.id = 'authorization:' || realm.id || ':binding:primary-owner'
+            AND binding.role_id = 'authorization:' || realm.id || ':role:owner'
+          LIMIT 1
+          FOR UPDATE OF binding`,
+        [input.workspaceId, target.id],
+      );
+      if (realmOwnership.rowCount !== 0) {
+        throw new ApplicationError(
+          "OWNER_TRANSFER_TARGET_REALM_OWNER_FORBIDDEN",
+          409,
+          "Transfer the target Identity's Primary Realm Owner responsibility before making them CMS Owner.",
+        );
       }
       await client.query(
         `UPDATE ${this.q("_xecms_identities")}
