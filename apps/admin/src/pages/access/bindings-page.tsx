@@ -9,10 +9,11 @@ import { Badge, Button, Callout, EmptyState } from "@xecms/ui";
 import styles from "../../authorization.module.css";
 import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
-import { Page, PageHeader, SectionHeader } from "../../components/page.js";
+import { Page, SectionHeader } from "../../components/page.js";
 import { useDisplayMode } from "../../display-mode.js";
 import { ScopeTreeSelector } from "../../components/resource-scope-tree.js";
 import {
+  AccessPageHeader,
   dateTimeValue,
   emptyBinding,
   MutationError,
@@ -77,8 +78,8 @@ export function AccessBindingsPage() {
 
   return (
     <Page>
-      <PageHeader
-        eyebrow={realmId ? "Content Realm authorization" : "System authorization"}
+      <AccessPageHeader
+        realmId={realmId}
         title="역할 배정"
         description="사용자나 그룹에 역할을 연결하고, 어느 영역까지 적용할지 정합니다."
         actions={writable ? <><Button variant="secondary" onPress={openSubjectCreator}>사용자·그룹 등록</Button><Button onPress={() => openBinding(emptyBinding(policy.data))}>역할 배정하기</Button></> : undefined}

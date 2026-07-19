@@ -7,9 +7,9 @@ import gradeStyles from "../../access-grades.module.css";
 import styles from "../../authorization.module.css";
 import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
-import { Page, PageHeader, SectionHeader } from "../../components/page.js";
+import { Page, SectionHeader } from "../../components/page.js";
 import { useDisplayMode } from "../../display-mode.js";
-import { roleNameOf } from "./common.js";
+import { AccessPageHeader, roleNameOf } from "./common.js";
 import { PolicyMutationError } from "./guardrails.js";
 import {
   gradeOptions,
@@ -90,8 +90,8 @@ export function AccessMembersPage() {
 
   return (
     <Page>
-      <PageHeader
-        eyebrow={realmId ? "Content Realm" : "Workspace"}
+      <AccessPageHeader
+        realmId={realmId}
         title="멤버"
         description="멤버마다 등급 하나만 고르면 그 등급의 권한이 그대로 적용됩니다."
       />
@@ -238,7 +238,7 @@ function ComplexGradeSummary({ policy, subjectId, reasons, basePath }: {
           size="small"
           variant="secondary"
           onPress={() => {
-            setMode("standard");
+            setMode("standard", { auto: true });
             void navigate(`${basePath}/bindings`);
           }}
         >표준 모드에서 관리</Button>

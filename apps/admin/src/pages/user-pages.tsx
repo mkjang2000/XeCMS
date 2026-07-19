@@ -17,6 +17,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { LoadError, PageLoading } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
+import { DisplayModeGate, displayModeAtLeast, useDisplayMode } from "../display-mode.js";
 import { queryKeys } from "../queries.js";
 import styles from "../identity-realms.module.css";
 
@@ -41,6 +42,7 @@ export function UserListPage() {
   const api = useAdminApi();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { mode } = useDisplayMode();
   const [searchDraft, setSearchDraft] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "active" | "disabled">("all");
@@ -118,10 +120,10 @@ export function UserListPage() {
         {identities.data && identities.data.items.length > 0 ? (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
-              <thead><tr><th>Identity</th><th>종류</th><th>상태</th><th>Membership</th><th>최근 변경</th></tr></thead>
+              <thead><tr><th>계정</th><th>종류</th><th>상태</th><th>소속</th><th>최근 변경</th></tr></thead>
               <tbody>{identities.data.items.map((identity) => (
                 <tr key={identity.identityId}>
-                  <td><Link to={`/admin/users/${encodeURIComponent(identity.identityId)}`}><strong>{identity.primaryIdentifier}</strong></Link><span className={styles.secondaryLine}>{identity.identityId}</span></td>
+                  <td><Link to={`/admin/users/${encodeURIComponent(identity.identityId)}`}><strong>{identity.primaryIdentifier}</strong></Link>{displayModeAtLeast(mode, "advanced") ? <span className={styles.secondaryLine}>{identity.identityId}</span> : null}</td>
                   <td>{identity.kind === "human" ? "사람" : "서비스"}</td>
                   <td><IdentityStatus identity={identity} /></td>
                   <td>{identity.memberships.length}개</td>
@@ -141,6 +143,7 @@ export function UserDetailPage() {
   const api = useAdminApi();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { mode } = useDisplayMode();
   const [identifier, setIdentifier] = useState<string | null>(null);
   const [confirmStatus, setConfirmStatus] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
@@ -282,14 +285,16 @@ export function UserDetailPage() {
       <PageHeader
         eyebrow="Users & access"
         title={current.primaryIdentifier}
-        description={current.identityId}
+        description={displayModeAtLeast(mode, "advanced")
+          ? current.identityId
+          : current.kind === "human" ? "운영 계정" : "서비스 계정"}
         actions={<IdentityStatus identity={current} />}
       />
       <div className={styles.summaryGrid}>
         <div><span>종류</span><strong>{current.kind === "human" ? "사람" : "서비스"}</strong></div>
-        <div><span>Identity revision</span><strong>{current.revision}</strong></div>
-        <div><span>Credential version</span><strong>{current.credentialVersion}</strong></div>
-        <div><span>Membership</span><strong>{current.memberships.length}</strong></div>
+        <DisplayModeGate minimum="advanced"><div><span>Identity revision</span><strong>{current.revision}</strong></div></DisplayModeGate>
+        <DisplayModeGate minimum="advanced"><div><span>Credential version</span><strong>{current.credentialVersion}</strong></div></DisplayModeGate>
+        <div><span>소속</span><strong>{current.memberships.length}</strong></div>
       </div>
       <section className={styles.panel} aria-labelledby="identity-settings-title">
         <SectionHeader id="identity-settings-title" title="계정 설정" description="identifier 변경은 로그인 식별자와 운영자 공간 권한 대상 표시명을 함께 갱신합니다." />
@@ -327,7 +332,7 @@ export function UserDetailPage() {
           /> : null}
           {sessions.data && sessions.data.items.length > 0 ? (
             <div className={styles.tableWrap}><table className={styles.table}>
-              <thead><tr><th>Audience / Realm</th><th>인증</th><th>만료</th><th>상태</th><th>작업</th></tr></thead>
+              <thead><tr><th>{displayModeAtLeast(mode, "advanced") ? "Audience / Realm" : "로그인 위치"}</th><th>인증</th><th>만료</th><th>상태</th><th>작업</th></tr></thead>
               <tbody>{sessions.data.items.map((session) => <tr key={session.sessionId}>
                 <td><strong>{session.audience === "admin" ? "Admin" : "Content"}{session.current ? " · 현재" : ""}</strong><span className={styles.secondaryLine}>{session.realmName}</span></td>
                 <td>{formatInstant(session.authenticatedAt)}</td>
@@ -368,7 +373,7 @@ export function UserDetailPage() {
               <thead><tr><th>이름 / Prefix</th><th>Scopes</th><th>생성</th><th>최근 사용</th><th>작업</th></tr></thead>
               <tbody>{apiKeys.data.items.map((key) => <tr key={key.apiKeyId}>
                 <td><strong>{key.name}</strong><span className={styles.secondaryLine}>{key.prefix}</span></td>
-                <td><code>{key.scopes.join(", ") || "default deny"}</code></td>
+                <td>{key.scopes.length > 0 ? <code>{key.scopes.join(", ")}</code> : "권한 없음(기본 거부)"}</td>
                 <td>{formatInstant(key.createdAt)}</td>
                 <td>{key.lastUsedAt === undefined ? "—" : formatInstant(key.lastUsedAt)}</td>
                 <td>{key.revokedAt === undefined ? <Button size="small" variant="danger" onPress={() => setRevokeApiKeyId(key.apiKeyId)}>폐기</Button> : <Badge tone="neutral">폐기됨</Badge>}</td>
@@ -386,11 +391,11 @@ export function UserDetailPage() {
         <ErrorCallout error={createSystemMembership.error} />
         {current.memberships.length === 0 ? <EmptyState title="소속이 없습니다" description="사용자 공간 상세에서 명시적으로 provisioning할 수 있습니다." /> : (
           <div className={styles.tableWrap}><table className={styles.table}>
-            <thead><tr><th>사용자 공간</th><th>상태</th><th>권한 대상</th><th>Profile</th></tr></thead>
+            <thead><tr><th>사용자 공간</th><th>상태</th>{displayModeAtLeast(mode, "advanced") ? <th>권한 대상</th> : null}<th>Profile</th></tr></thead>
             <tbody>{current.memberships.map((membership) => <tr key={membership.membershipId}>
-              <td><strong>{membership.realmName}</strong><span className={styles.secondaryLine}>{membership.realmKey}</span></td>
+              <td><strong>{membership.realmName}</strong>{displayModeAtLeast(mode, "advanced") ? <span className={styles.secondaryLine}>{membership.realmKey}</span> : null}</td>
               <td><Badge tone={membership.status === "active" ? "success" : membership.status === "pending" ? "warning" : "danger"}>{membership.status}</Badge></td>
-              <td><code>{membership.subjectId}</code></td>
+              {displayModeAtLeast(mode, "advanced") ? <td><code>{membership.subjectId}</code></td> : null}
               <td>{membership.profileDocumentId ?? "—"}</td>
             </tr>)}</tbody>
           </table></div>
@@ -480,7 +485,7 @@ export function UserDetailPage() {
         >
           <div className={styles.dialogStack}>
             <TextInput label="Key 이름" value={apiKeyName} onChange={setApiKeyName} placeholder="Production reader" isRequired />
-            <TextInput label="Permission scopes" value={apiKeyScopes} onChange={setApiKeyScopes} description="쉼표로 구분합니다. 비우면 default deny입니다." placeholder="content.list, content.read" />
+            <TextInput label="Permission scopes" value={apiKeyScopes} onChange={setApiKeyScopes} description="쉼표로 구분합니다. 비우면 아무 권한도 없습니다(기본 거부)." placeholder="content.list, content.read" />
             <TextInput label="만료 시각" type="datetime-local" value={apiKeyExpiresAt} onChange={setApiKeyExpiresAt} />
           </div>
         </ConfirmDialog>

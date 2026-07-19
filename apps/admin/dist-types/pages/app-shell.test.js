@@ -33,5 +33,11 @@ describe("Admin navigation access visibility", () => {
         expect(visibleNavigationItems("advanced", access).map(({ to }) => to))
             .toEqual(["/admin/operations", "/admin/settings"]);
     });
+    it("shows the user-space entry in basic mode and orders people items users → spaces → access", () => {
+        const access = profile(["nav.users", "nav.realms", "nav.access"]);
+        // /admin/realms is now available in basic mode (was standard-only).
+        expect(visibleNavigationItems("basic", access).map(({ to }) => to))
+            .toEqual(["/admin/users", "/admin/realms", "/admin/access"]);
+    });
 });
 //# sourceMappingURL=app-shell.test.js.map

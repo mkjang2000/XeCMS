@@ -5,10 +5,10 @@ import { Badge, Button, Callout, EmptyState } from "@xecms/ui";
 import styles from "../../authorization.module.css";
 import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
-import { Page, PageHeader, SectionHeader } from "../../components/page.js";
+import { Page, SectionHeader } from "../../components/page.js";
 import { ScopeTreeSelector } from "../../components/resource-scope-tree.js";
 import { useDisplayMode } from "../../display-mode.js";
-import { MutationError, resourceNameOf, resourcePathOf, roleNameOf, subjectNameOf } from "./common.js";
+import { AccessPageHeader, MutationError, resourceNameOf, resourcePathOf, roleNameOf, subjectNameOf } from "./common.js";
 import {
   decisionReasonName,
   hierarchyContextDescription,
@@ -58,7 +58,7 @@ export function AccessSimulatorPage() {
     effectivePermissions.reset();
   };
   return <Page>
-    <PageHeader eyebrow={realmId ? "Content Realm authorization" : "Explainable authorization"} title="사용자 권한 확인" description="사용자와 영역을 선택하면 실제로 가능한 업무와 그 이유를 한눈에 확인할 수 있습니다." />
+    <AccessPageHeader realmId={realmId} title="사용자 권한 확인" description="사용자와 영역을 선택하면 실제로 가능한 업무와 그 이유를 한눈에 확인할 수 있습니다." />
     <AccessWorkspaceNav policy={policy.data} />
     <div className={styles.guideBanner}>
       <span className={styles.guideNumber}>?</span>

@@ -38,7 +38,7 @@ export function AdvancedConfigNotice({
           size="small"
           variant="secondary"
           onPress={() => {
-            setMode(targetMode);
+            setMode(targetMode, { auto: true });
             void navigate(to);
           }}
         >

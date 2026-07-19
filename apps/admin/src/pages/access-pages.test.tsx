@@ -68,6 +68,8 @@ describe("AccessSimulatorPage", () => {
     );
 
     await user.selectOptions(await screen.findByLabelText("확인할 사용자·그룹"), "subject-editor");
+    // Global (System) authorization context is labelled consistently.
+    expect(screen.getByText("운영자 공간 · 권한")).toBeTruthy();
     expect(screen.getByRole("link", { name: "사용자 권한 확인" })).toBeTruthy();
     expect(screen.queryByText("특정 권한 상세 진단")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Pages, Collection" }));

@@ -5,10 +5,10 @@ import { Badge, Button, Callout, EmptyState } from "@xecms/ui";
 import styles from "../../authorization.module.css";
 import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
-import { Page, PageHeader, SectionHeader } from "../../components/page.js";
+import { Page, SectionHeader } from "../../components/page.js";
 import { useDisplayMode } from "../../display-mode.js";
 import { ScopeTreeSelector } from "../../components/resource-scope-tree.js";
-import { MutationError, PolicySummary, textList } from "./common.js";
+import { AccessPageHeader, MutationError, PolicySummary, textList } from "./common.js";
 import { PermissionEditor } from "./permission-editor.js";
 import { canMutateAuthorization, useAuthorizationPolicy, useAuthorizationWorkspace } from "./workspace.js";
 export function AccessRolesPage() {
@@ -78,7 +78,7 @@ export function AccessRolesPage() {
         setLevelEditorOpen(false);
     };
     const inspectorOpen = levelEditorOpen || editingRole !== null;
-    return (_jsxs(Page, { children: [_jsx(PageHeader, { eyebrow: realmId ? "Content Realm authorization" : "System authorization", title: advanced ? "레벨과 역할" : "등급과 역할", description: advanced ? "위쪽 레벨이 아래쪽 역할을 관리합니다. 같은 레벨에서는 책임만 나누고 서로를 관리하지 않습니다." : "등급별 역할과 맡은 업무를 관리합니다. 등급 순서 변경은 고급 모드에서 할 수 있습니다.", actions: advanced && writable ? _jsx(Button, { onPress: () => selectLevel(null), children: "\uC0C8 \uB808\uBCA8" }) : undefined }), _jsx(AccessWorkspaceNav, { policy: policy.data }), _jsxs("div", { className: styles.guideBanner, children: [_jsx("span", { className: styles.guideNumber, children: "1" }), _jsxs("div", { children: [_jsx("strong", { children: advanced ? "먼저 관리 서열을 정하고, 같은 높이에 필요한 역할을 나누세요." : "등급 안에서 담당 업무별 역할을 나눌 수 있습니다." }), _jsx("p", { children: advanced ? "역할을 선택하면 오른쪽에서 실제 업무와 위임 범위를 설정할 수 있습니다." : "고급 위임·필드 제한이 있는 역할도 값을 유지한 채 기본 업무만 편집합니다." })] })] }), _jsx(PolicySummary, { policy: policy.data }), _jsxs("div", { className: `${styles.layout} ${styles.rolesLayout}`, children: [_jsx("div", { className: styles.levels, children: levels.map((level) => {
+    return (_jsxs(Page, { children: [_jsx(AccessPageHeader, { realmId: realmId, title: advanced ? "레벨과 역할" : "등급과 역할", description: advanced ? "위쪽 레벨이 아래쪽 역할을 관리합니다. 같은 레벨에서는 책임만 나누고 서로를 관리하지 않습니다." : "등급별 역할과 맡은 업무를 관리합니다. 등급 순서 변경은 고급 모드에서 할 수 있습니다.", actions: advanced && writable ? _jsx(Button, { onPress: () => selectLevel(null), children: "\uC0C8 \uB808\uBCA8" }) : undefined }), _jsx(AccessWorkspaceNav, { policy: policy.data }), _jsxs("div", { className: styles.guideBanner, children: [_jsx("span", { className: styles.guideNumber, children: "1" }), _jsxs("div", { children: [_jsx("strong", { children: advanced ? "먼저 관리 서열을 정하고, 같은 높이에 필요한 역할을 나누세요." : "등급 안에서 담당 업무별 역할을 나눌 수 있습니다." }), _jsx("p", { children: advanced ? "역할을 선택하면 오른쪽에서 실제 업무와 위임 범위를 설정할 수 있습니다." : "고급 위임·필드 제한이 있는 역할도 값을 유지한 채 기본 업무만 편집합니다." })] })] }), _jsx(PolicySummary, { policy: policy.data }), _jsxs("div", { className: `${styles.layout} ${styles.rolesLayout}`, children: [_jsx("div", { className: styles.levels, children: levels.map((level) => {
                             const roles = policy.data.roles.filter((role) => role.levelId === level.id);
                             return (_jsxs("section", { className: styles.levelCard, children: [_jsxs("div", { className: styles.levelHeader, children: [_jsxs("div", { className: styles.levelIdentity, children: [advanced ? _jsxs("span", { className: styles.rank, children: ["L", level.rank] }) : null, _jsxs("div", { children: [_jsx("h2", { children: level.name }), _jsx("span", { className: styles.hint, children: advanced ? `권한 레벨 ${level.rank} · 같은 높이의 역할 ${roles.length}개` : `역할 ${roles.length}개` })] })] }), _jsxs("div", { className: styles.levelActions, children: [writable ? _jsx(Button, { size: "small", variant: "secondary", onPress: () => createRoleAt(level), children: "\uB3D9\uC77C \uB808\uBCA8 \uC5ED\uD560 \uCD94\uAC00" }) : null, advanced && writable && !level.protected
                                                         ? _jsx(Button, { size: "small", variant: "quiet", onPress: () => selectLevel(level), children: "\uB808\uBCA8 \uD3B8\uC9D1" })

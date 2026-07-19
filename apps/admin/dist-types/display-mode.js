@@ -28,6 +28,8 @@ const rank = {
 const DisplayModeContext = createContext({
     mode: "basic",
     setMode: () => undefined,
+    autoModeChange: null,
+    clearAutoModeChange: () => undefined,
 });
 export function isDisplayMode(value) {
     return value === "basic" || value === "standard" || value === "advanced";
@@ -48,6 +50,18 @@ export function readStoredDisplayMode(storage) {
 }
 export function DisplayModeProvider({ children, initialMode, }) {
     const [mode, setModeState] = useState(() => initialMode ?? readStoredDisplayMode(typeof window === "undefined" ? undefined : window.localStorage));
+    // Session-local (never persisted or cross-tab): the mode to revert to after an
+    // automatic mode raise. Persisting or syncing this would misfire in other tabs.
+    const [autoModeChange, setAutoModeChange] = useState(null);
+    const setMode = useMemo(() => (next, options) => {
+        setModeState((previous) => {
+            if (next === previous)
+                return previous;
+            setAutoModeChange(options?.auto === true ? { from: previous } : null);
+            return next;
+        });
+    }, []);
+    const clearAutoModeChange = useMemo(() => () => setAutoModeChange(null), []);
     useEffect(() => {
         document.documentElement.dataset["displayMode"] = mode;
         try {
@@ -62,12 +76,13 @@ export function DisplayModeProvider({ children, initialMode, }) {
             if (event.key === DISPLAY_MODE_STORAGE_KEY
                 && isDisplayMode(event.newValue)) {
                 setModeState(event.newValue);
+                setAutoModeChange(null);
             }
         };
         window.addEventListener("storage", syncMode);
         return () => window.removeEventListener("storage", syncMode);
     }, []);
-    const value = useMemo(() => ({ mode, setMode: setModeState }), [mode]);
+    const value = useMemo(() => ({ mode, setMode, autoModeChange, clearAutoModeChange }), [mode, setMode, autoModeChange, clearAutoModeChange]);
     return (_jsx(DisplayModeContext.Provider, { value: value, children: children }));
 }
 export function useDisplayMode() {
@@ -76,6 +91,22 @@ export function useDisplayMode() {
 export function DisplayModeGate({ minimum, children, }) {
     const { mode } = useDisplayMode();
     return displayModeAtLeast(mode, minimum) ? children : null;
+}
+const MODE_LABEL = {
+    basic: "간단",
+    standard: "표준",
+    advanced: "고급",
+};
+/**
+ * Shown after a screen automatically raised the display mode. Tells the user it
+ * happened and offers a one-click revert to the previous mode. Renders nothing
+ * when the last change was a manual selection.
+ */
+export function ModeChangeNotice() {
+    const { mode, setMode, autoModeChange, clearAutoModeChange } = useDisplayMode();
+    if (autoModeChange === null)
+        return null;
+    return (_jsxs("div", { className: styles.notice, role: "status", children: [_jsxs("span", { children: ["\uD45C\uC2DC \uBAA8\uB4DC\uAC00 ", _jsx("strong", { children: MODE_LABEL[mode] }), "\uC73C\uB85C \uBC14\uB00C\uC5C8\uC2B5\uB2C8\uB2E4."] }), _jsxs(Button, { size: "small", variant: "quiet", onPress: () => { setMode(autoModeChange.from); clearAutoModeChange(); }, children: [MODE_LABEL[autoModeChange.from], "\uC73C\uB85C \uB418\uB3CC\uB9AC\uAE30"] })] }));
 }
 export function DisplayModeSelector({ compact = false, }) {
     const { mode, setMode } = useDisplayMode();

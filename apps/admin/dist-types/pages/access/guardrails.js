@@ -14,7 +14,7 @@ export function AdvancedConfigNotice({ message, reasons = [], targetMode = "stan
     const { setMode } = useDisplayMode();
     const navigate = useNavigate();
     return (_jsxs(Callout, { tone: "info", children: [_jsx("strong", { children: message }), reasons.length > 0 ? (_jsx("ul", { className: styles.noticeReasons, children: reasons.map((reason) => _jsx("li", { children: reason }, reason)) })) : null, _jsx("div", { className: styles.noticeActions, children: _jsx(Button, { size: "small", variant: "secondary", onPress: () => {
-                        setMode(targetMode);
+                        setMode(targetMode, { auto: true });
                         void navigate(to);
                     }, children: actionLabel ?? (targetMode === "advanced" ? "고급 모드에서 열기" : "표준 모드에서 열기") }) })] }));
 }

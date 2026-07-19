@@ -1,7 +1,44 @@
-import { toAdminApiError, type AuthorizationPolicy, type AuthorizationRoleBinding } from "@xecms/admin";
+import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { toAdminApiError, useAdminApi, type AuthorizationPolicy, type AuthorizationRoleBinding } from "@xecms/admin";
 import { Callout } from "@xecms/ui";
 import styles from "../../authorization.module.css";
+import { PageHeader } from "../../components/page.js";
 import { resourcePath } from "../../components/resource-scope-tree.js";
+import { queryKeys } from "../../queries.js";
+
+/**
+ * Unified header for every authorization screen. Makes the "same screen, two
+ * contexts" ambiguity explicit: a global (System) policy vs a specific user
+ * space's policy — the latter shows the realm's name so operators know which
+ * space they are editing. Replaces the per-page ad-hoc eyebrows.
+ */
+export function AccessPageHeader({
+  realmId, title, description, actions,
+}: {
+  readonly realmId?: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly actions?: ReactNode;
+}) {
+  const api = useAdminApi();
+  const realm = useQuery({
+    queryKey: queryKeys.identityRealm(realmId ?? "missing"),
+    queryFn: () => api.identityRealms.get(realmId!),
+    enabled: realmId !== undefined,
+  });
+  const eyebrow = realmId === undefined
+    ? "운영자 공간 · 권한"
+    : `사용자 공간 · ${realm.data?.name ?? "…"}`;
+  return (
+    <PageHeader
+      eyebrow={eyebrow}
+      title={title}
+      {...(description === undefined ? {} : { description })}
+      {...(actions === undefined ? {} : { actions })}
+    />
+  );
+}
 
 export function PolicySummary({ policy }: { readonly policy: AuthorizationPolicy }) {
   const items = [

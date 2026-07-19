@@ -43,12 +43,22 @@ const rank: Readonly<Record<DisplayMode, number>> = {
 
 interface DisplayModeContextValue {
   readonly mode: DisplayMode;
-  readonly setMode: (mode: DisplayMode) => void;
+  /**
+   * Change the display mode. Pass `{ auto: true }` when a screen raises the mode
+   * on the user's behalf (e.g. "manage in standard mode") — this records the
+   * previous mode so a revert banner can offer to undo it.
+   */
+  readonly setMode: (mode: DisplayMode, options?: { readonly auto?: boolean }) => void;
+  /** Set only when the last change was automatic; carries the mode to revert to. */
+  readonly autoModeChange: { readonly from: DisplayMode } | null;
+  readonly clearAutoModeChange: () => void;
 }
 
 const DisplayModeContext = createContext<DisplayModeContextValue>({
   mode: "basic",
   setMode: () => undefined,
+  autoModeChange: null,
+  clearAutoModeChange: () => undefined,
 });
 
 export function isDisplayMode(value: unknown): value is DisplayMode {
@@ -84,6 +94,21 @@ export function DisplayModeProvider({
       typeof window === "undefined" ? undefined : window.localStorage,
     ),
   );
+  // Session-local (never persisted or cross-tab): the mode to revert to after an
+  // automatic mode raise. Persisting or syncing this would misfire in other tabs.
+  const [autoModeChange, setAutoModeChange] = useState<{ readonly from: DisplayMode } | null>(null);
+
+  const setMode = useMemo(
+    () => (next: DisplayMode, options?: { readonly auto?: boolean }) => {
+      setModeState((previous) => {
+        if (next === previous) return previous;
+        setAutoModeChange(options?.auto === true ? { from: previous } : null);
+        return next;
+      });
+    },
+    [],
+  );
+  const clearAutoModeChange = useMemo(() => () => setAutoModeChange(null), []);
 
   useEffect(() => {
     document.documentElement.dataset["displayMode"] = mode;
@@ -101,6 +126,7 @@ export function DisplayModeProvider({
         && isDisplayMode(event.newValue)
       ) {
         setModeState(event.newValue);
+        setAutoModeChange(null);
       }
     };
     window.addEventListener("storage", syncMode);
@@ -108,8 +134,8 @@ export function DisplayModeProvider({
   }, []);
 
   const value = useMemo<DisplayModeContextValue>(
-    () => ({ mode, setMode: setModeState }),
-    [mode],
+    () => ({ mode, setMode, autoModeChange, clearAutoModeChange }),
+    [mode, setMode, autoModeChange, clearAutoModeChange],
   );
   return (
     <DisplayModeContext.Provider value={value}>
@@ -131,6 +157,34 @@ export function DisplayModeGate({
 }) {
   const { mode } = useDisplayMode();
   return displayModeAtLeast(mode, minimum) ? children : null;
+}
+
+const MODE_LABEL: Readonly<Record<DisplayMode, string>> = {
+  basic: "간단",
+  standard: "표준",
+  advanced: "고급",
+};
+
+/**
+ * Shown after a screen automatically raised the display mode. Tells the user it
+ * happened and offers a one-click revert to the previous mode. Renders nothing
+ * when the last change was a manual selection.
+ */
+export function ModeChangeNotice() {
+  const { mode, setMode, autoModeChange, clearAutoModeChange } = useDisplayMode();
+  if (autoModeChange === null) return null;
+  return (
+    <div className={styles.notice} role="status">
+      <span>표시 모드가 <strong>{MODE_LABEL[mode]}</strong>으로 바뀌었습니다.</span>
+      <Button
+        size="small"
+        variant="quiet"
+        onPress={() => { setMode(autoModeChange.from); clearAutoModeChange(); }}
+      >
+        {MODE_LABEL[autoModeChange.from]}으로 되돌리기
+      </Button>
+    </div>
+  );
 }
 
 export function DisplayModeSelector({

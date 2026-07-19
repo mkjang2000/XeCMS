@@ -15,6 +15,7 @@ import {
 import { Icon, type IconName } from "../components/icon.js";
 import {
   DisplayModeSelector,
+  ModeChangeNotice,
   displayModeAtLeast,
   useDisplayMode,
   type DisplayMode,
@@ -52,8 +53,8 @@ export const navigationItems: readonly {
   { to: "/admin/media", icon: "media", label: "미디어", group: "content", minimum: "basic", access: ["nav.media"] },
   { to: "/admin/schema", icon: "schema", label: "스키마", group: "content", minimum: "basic", access: ["nav.schema"] },
   { to: "/admin/users", icon: "identity", label: "사용자", group: "people", minimum: "basic", access: ["nav.users"] },
+  { to: "/admin/realms", icon: "identity", label: "사용자 공간", group: "people", minimum: "basic", access: ["nav.realms"] },
   { to: "/admin/access", icon: "shield", label: "권한", group: "people", minimum: "basic", access: ["nav.access"] },
-  { to: "/admin/realms", icon: "identity", label: "사용자 공간", group: "people", minimum: "standard", access: ["nav.realms"] },
   { to: "/admin/jobs", icon: "events", label: "이벤트 작업", group: "system", minimum: "advanced", access: ["nav.jobs"] },
   { to: "/admin/operations", icon: "shield", label: "운영 및 감사", group: "system", minimum: "advanced", access: ["nav.operations.audit", "nav.operations.retention", "nav.operations.media"] },
   { to: "/admin/plugins", icon: "schema", label: "Plugins", group: "system", minimum: "advanced", access: ["nav.plugins"] },
@@ -153,7 +154,7 @@ export function AppShell() {
                 {groupItems.map((item) => (
                   <NavLink key={item.to} to={item.to}>
                     <Icon name={item.icon} size={18} />
-                    <span>{item.to === "/admin/access" && mode === "basic" ? "멤버 등급" : item.label}</span>
+                    <span>{item.label}</span>
                   </NavLink>
                 ))}
               </section>
@@ -197,6 +198,7 @@ export function AppShell() {
           </div>
         </header>
         <main id="main-content" className={styles.main} tabIndex={-1}>
+          <ModeChangeNotice />
           <Outlet />
         </main>
       </div>

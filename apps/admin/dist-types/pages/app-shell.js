@@ -5,7 +5,7 @@ import { Button, EmptyState, LoadingIndicator } from "@xecms/ui";
 import { allAccessAllowed, anyAccessAllowed, useAdminApi, } from "@xecms/admin";
 import { permissionCheck, systemResources, useAccessProfile, } from "../access-profile.js";
 import { Icon } from "../components/icon.js";
-import { DisplayModeSelector, displayModeAtLeast, useDisplayMode, } from "../display-mode.js";
+import { DisplayModeSelector, ModeChangeNotice, displayModeAtLeast, useDisplayMode, } from "../display-mode.js";
 import styles from "../app-shell.module.css";
 import { queryKeys } from "../queries.js";
 export const navigationAccessChecks = [
@@ -29,8 +29,8 @@ export const navigationItems = [
     { to: "/admin/media", icon: "media", label: "미디어", group: "content", minimum: "basic", access: ["nav.media"] },
     { to: "/admin/schema", icon: "schema", label: "스키마", group: "content", minimum: "basic", access: ["nav.schema"] },
     { to: "/admin/users", icon: "identity", label: "사용자", group: "people", minimum: "basic", access: ["nav.users"] },
+    { to: "/admin/realms", icon: "identity", label: "사용자 공간", group: "people", minimum: "basic", access: ["nav.realms"] },
     { to: "/admin/access", icon: "shield", label: "권한", group: "people", minimum: "basic", access: ["nav.access"] },
-    { to: "/admin/realms", icon: "identity", label: "사용자 공간", group: "people", minimum: "standard", access: ["nav.realms"] },
     { to: "/admin/jobs", icon: "events", label: "이벤트 작업", group: "system", minimum: "advanced", access: ["nav.jobs"] },
     { to: "/admin/operations", icon: "shield", label: "운영 및 감사", group: "system", minimum: "advanced", access: ["nav.operations.audit", "nav.operations.retention", "nav.operations.media"] },
     { to: "/admin/plugins", icon: "schema", label: "Plugins", group: "system", minimum: "advanced", access: ["nav.plugins"] },
@@ -82,9 +82,9 @@ export function AppShell() {
                             const groupItems = visibleItems.filter((item) => item.group === group.id);
                             if (groupItems.length === 0)
                                 return null;
-                            return (_jsxs("section", { className: styles.navGroup, "aria-labelledby": `admin-nav-${group.id}`, children: [_jsx("span", { className: styles.navGroupLabel, id: `admin-nav-${group.id}`, children: group.label }), groupItems.map((item) => (_jsxs(NavLink, { to: item.to, children: [_jsx(Icon, { name: item.icon, size: 18 }), _jsx("span", { children: item.to === "/admin/access" && mode === "basic" ? "멤버 등급" : item.label })] }, item.to)))] }, group.id));
+                            return (_jsxs("section", { className: styles.navGroup, "aria-labelledby": `admin-nav-${group.id}`, children: [_jsx("span", { className: styles.navGroupLabel, id: `admin-nav-${group.id}`, children: group.label }), groupItems.map((item) => (_jsxs(NavLink, { to: item.to, children: [_jsx(Icon, { name: item.icon, size: 18 }), _jsx("span", { children: item.label })] }, item.to)))] }, group.id));
                         }) }), _jsxs("div", { className: styles.sidebarFooter, children: [_jsxs("div", { className: styles.account, children: [_jsx("span", { className: styles.avatar, "aria-hidden": "true", children: initials }), _jsxs("span", { className: styles.accountCopy, children: [_jsx("strong", { children: username }), _jsx("span", { children: accessProfile.data
                                                     ? `운영자 공간 · Policy r${accessProfile.data.policyRevision}`
-                                                    : "운영자 공간 계정" })] })] }), _jsxs(Button, { variant: "quiet", size: "small", className: styles.logoutButton, onPress: () => logout.mutate(), isDisabled: logout.isPending, children: [_jsx(Icon, { name: "logout", size: 17 }), _jsx("span", { className: styles.logoutLabel, children: logout.isPending ? "로그아웃 중…" : "로그아웃" })] })] })] }), _jsxs("div", { className: styles.content, children: [_jsxs("header", { className: styles.topbar, children: [_jsxs("div", { className: styles.topbarContext, children: [_jsx("strong", { children: "Admin Studio" }), _jsx("span", { className: styles.topbarDivider, "aria-hidden": "true" }), _jsx("span", { children: "Default Workspace" })] }), _jsxs("div", { className: styles.topbarActions, children: [_jsx(DisplayModeSelector, { compact: true }), _jsx("span", { className: styles.environment, children: "Development" })] })] }), _jsx("main", { id: "main-content", className: styles.main, tabIndex: -1, children: _jsx(Outlet, {}) })] })] }));
+                                                    : "운영자 공간 계정" })] })] }), _jsxs(Button, { variant: "quiet", size: "small", className: styles.logoutButton, onPress: () => logout.mutate(), isDisabled: logout.isPending, children: [_jsx(Icon, { name: "logout", size: 17 }), _jsx("span", { className: styles.logoutLabel, children: logout.isPending ? "로그아웃 중…" : "로그아웃" })] })] })] }), _jsxs("div", { className: styles.content, children: [_jsxs("header", { className: styles.topbar, children: [_jsxs("div", { className: styles.topbarContext, children: [_jsx("strong", { children: "Admin Studio" }), _jsx("span", { className: styles.topbarDivider, "aria-hidden": "true" }), _jsx("span", { children: "Default Workspace" })] }), _jsxs("div", { className: styles.topbarActions, children: [_jsx(DisplayModeSelector, { compact: true }), _jsx("span", { className: styles.environment, children: "Development" })] })] }), _jsxs("main", { id: "main-content", className: styles.main, tabIndex: -1, children: [_jsx(ModeChangeNotice, {}), _jsx(Outlet, {})] })] })] }));
 }
 //# sourceMappingURL=app-shell.js.map

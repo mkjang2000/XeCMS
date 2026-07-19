@@ -6,7 +6,8 @@ import gradeStyles from "../../access-grades.module.css";
 import styles from "../../authorization.module.css";
 import { AccessWorkspaceNav } from "../../components/access-workspace-nav.js";
 import { PageLoading, RealmAuthorizationError } from "../../components/async-state.js";
-import { Page, PageHeader, SectionHeader } from "../../components/page.js";
+import { Page, SectionHeader } from "../../components/page.js";
+import { AccessPageHeader } from "./common.js";
 import { AdvancedConfigNotice, PolicyMutationError } from "./guardrails.js";
 import {
   droppedDelegations,
@@ -60,8 +61,8 @@ export function AccessGradesPage() {
 
   return (
     <Page>
-      <PageHeader
-        eyebrow={realmId ? "Content Realm" : "Workspace"}
+      <AccessPageHeader
+        realmId={realmId}
         title="등급 관리"
         description="멤버 등급마다 할 수 있는 일을 정합니다. 위에 있는 등급이 아래 등급을 관리합니다."
         actions={writable ? <Button onPress={() => setSheet({ kind: "create" })}>새 등급</Button> : undefined}
