@@ -8,6 +8,7 @@ import {
   type RealmFullAccessBindingRecord,
   type RealmMembershipRecord,
   type RealmCollectionEntitlement,
+  type RealmManagementDelegation,
 } from "@xecms/application";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,8 @@ import {
   type ContentRealmDocumentRouteAdapter,
   type ContentRealmMetadataRouteSource,
   type ContentRealmProfileRouteAdapter,
+  type CrossRealmManagedTarget,
+  type CrossRealmManagementRouteAdapter,
   type IdentityRealmAdministrationRouteService,
   type IdentityRealmRouteActorAdapter,
   type IdentityRealmRouteSecurityAdapter,
@@ -337,6 +340,49 @@ describe("registerIdentityRealmRoutes", () => {
       .toBe(1);
   });
 
+  it("manages cross-realm delegations via the CMS-owner control plane", async () => {
+    const harness = await createHarness();
+
+    const list = await harness.app.inject({
+      method: "GET",
+      url: "/api/identity-realms/rlm_community/management-delegations",
+    });
+    const created = await harness.app.inject({
+      method: "PUT",
+      url: "/api/identity-realms/rlm_community/management-delegations/rlm_portal",
+      payload: {
+        actions: ["identity.disable"],
+        scopeByAction: { "identity.disable": "any" },
+        expectedRevision: null,
+        password: "admin-password",
+      },
+    });
+    const removed = await harness.app.inject({
+      method: "DELETE",
+      url: "/api/identity-realms/rlm_community/management-delegations/rlm_portal",
+      payload: { expectedRevision: 1, password: "admin-password" },
+    });
+    const reverse = await harness.app.inject({
+      method: "GET",
+      url: "/api/identity-realms/rlm_portal/managed-by-delegations",
+    });
+
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({ managingRealmId: "rlm_community", items: [] });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({
+      managingRealmId: "rlm_community",
+      managedRealmId: "rlm_portal",
+      actions: ["identity.disable"],
+      revision: 1,
+    });
+    expect(removed.statusCode).toBe(204);
+    expect(reverse.statusCode).toBe(200);
+    expect(reverse.json()).toMatchObject({ managedRealmId: "rlm_portal", items: [] });
+    expect(harness.administration.putRealmDelegation.mock.calls[0]?.[1].reauthenticatedAt)
+      .toBe(VERIFIED_REAUTHENTICATED_AT);
+  });
+
   it("rejects an unknown action in an entitlement PUT before reaching the service", async () => {
     const harness = await createHarness();
     const response = await harness.app.inject({
@@ -508,6 +554,70 @@ describe("registerIdentityRealmRoutes", () => {
     expect(harness.profiles.update.mock.calls[0]?.[0].actor).not.toHaveProperty("execution");
     expect(harness.security.assertContentOrigin).toHaveBeenCalledTimes(4);
     expect(harness.actors.requireSystemActor).not.toHaveBeenCalled();
+  });
+
+  it("administers another realm's user through the cross-realm delegation gate", async () => {
+    const harness = await createHarness();
+    const login = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/login",
+      headers: { origin: "https://content.example" },
+      payload: { identifier: identity.primaryIdentifier, password: "correct horse battery staple" },
+    });
+    const browserCookie = String(login.headers["set-cookie"]).split(";", 1)[0] ?? "";
+
+    const reset = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/managed-identities/identity_portal_user/credentials/reset",
+      headers: {
+        cookie: browserCookie,
+        origin: "https://content.example",
+        "x-csrf-token": "content-csrf",
+      },
+      payload: { temporaryPassword: "temp horse battery staple" },
+    });
+
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toMatchObject({ identityId: "identity_portal_user", revision: 3 });
+    // The gate (steps a+b) is consulted before the mutation runs.
+    expect(harness.crossRealmManagement.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ realmId: "rlm_community" }),
+      expect.objectContaining({ action: "identity.credentials.reset" }),
+    );
+    expect(harness.crossRealmManagement.resetPassword).toHaveBeenCalledTimes(1);
+    // CSRF/Origin were enforced (content mutation surface).
+    expect(harness.security.assertContentOrigin).toHaveBeenCalled();
+    expect(harness.actors.requireSystemActor).not.toHaveBeenCalled();
+  });
+
+  it("returns the gate's denial for a cross-realm action without delegation", async () => {
+    const harness = await createHarness();
+    harness.crossRealmManagement.authorize.mockRejectedValueOnce(
+      new ApplicationError("CROSS_REALM_NO_DELEGATION", 403, "not delegated"),
+    );
+    const login = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/login",
+      headers: { origin: "https://content.example" },
+      payload: { identifier: identity.primaryIdentifier, password: "correct horse battery staple" },
+    });
+    const browserCookie = String(login.headers["set-cookie"]).split(";", 1)[0] ?? "";
+
+    const disabled = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/managed-identities/identity_portal_user/disable",
+      headers: {
+        cookie: browserCookie,
+        origin: "https://content.example",
+        "x-csrf-token": "content-csrf",
+      },
+      payload: {},
+    });
+
+    expect(disabled.statusCode).toBe(403);
+    expect(disabled.json().code).toBe("CROSS_REALM_NO_DELEGATION");
+    // Denial happens before any mutation.
+    expect(harness.crossRealmManagement.setDisabled).not.toHaveBeenCalled();
   });
 
   it("routes Content Collection and Document operations through the Membership actor", async () => {
@@ -707,6 +817,13 @@ async function createHarness(): Promise<{
   readonly profiles: MockProfiles;
   readonly documents: MockDocuments;
   readonly security: MockSecurity;
+  readonly crossRealmManagement: {
+    readonly getTarget: ReturnType<typeof vi.fn<CrossRealmManagementRouteAdapter["getTarget"]>>;
+    readonly authorize: ReturnType<typeof vi.fn<CrossRealmManagementRouteAdapter["authorize"]>>;
+    readonly resetPassword: ReturnType<typeof vi.fn<CrossRealmManagementRouteAdapter["resetPassword"]>>;
+    readonly setDisabled: ReturnType<typeof vi.fn<CrossRealmManagementRouteAdapter["setDisabled"]>>;
+    readonly revokeSessions: ReturnType<typeof vi.fn<CrossRealmManagementRouteAdapter["revokeSessions"]>>;
+  };
 }> {
   const systemActor: ActorContext = {
     subjectId: "subject_admin",
@@ -811,6 +928,26 @@ async function createHarness(): Promise<{
     deleteRealmEntitlement: vi.fn<IdentityRealmAdministrationRouteService["deleteRealmEntitlement"]>(
       async () => undefined,
     ),
+    listRealmDelegations: vi.fn<IdentityRealmAdministrationRouteService["listRealmDelegations"]>(
+      async () => [],
+    ),
+    listManagedByDelegations:
+      vi.fn<IdentityRealmAdministrationRouteService["listManagedByDelegations"]>(async () => []),
+    putRealmDelegation: vi.fn<IdentityRealmAdministrationRouteService["putRealmDelegation"]>(
+      async (_actor, input) => ({
+        workspaceId: "wrk_default",
+        managingRealmId: input.managingRealmId,
+        managedRealmId: input.managedRealmId,
+        actions: [...input.actions] as RealmManagementDelegation["actions"],
+        scopeByAction: input.scopeByAction as RealmManagementDelegation["scopeByAction"],
+        revision: (input.expectedRevision ?? 0) + 1,
+        updatedAt: VERIFIED_REAUTHENTICATED_AT,
+        updatedBy: "identity_admin",
+      }),
+    ),
+    deleteRealmDelegation: vi.fn<IdentityRealmAdministrationRouteService["deleteRealmDelegation"]>(
+      async () => undefined,
+    ),
   };
 
   const contentAuthentication = {
@@ -899,6 +1036,27 @@ async function createHarness(): Promise<{
     >(() => "content-csrf"),
   };
 
+  const managedTarget: CrossRealmManagedTarget = {
+    identityId: "identity_portal_user",
+    primaryIdentifier: "portal.user@example.com",
+    revision: 2,
+    disabled: false,
+    memberships: [{ realmId: "rlm_portal", realmKind: "content", status: "active" }],
+  };
+  const crossRealmManagement = {
+    getTarget: vi.fn<CrossRealmManagementRouteAdapter["getTarget"]>(async () => managedTarget),
+    authorize: vi.fn<CrossRealmManagementRouteAdapter["authorize"]>(async () => undefined),
+    resetPassword: vi.fn<CrossRealmManagementRouteAdapter["resetPassword"]>(
+      async () => ({ ...managedTarget, revision: 3 }),
+    ),
+    setDisabled: vi.fn<CrossRealmManagementRouteAdapter["setDisabled"]>(
+      async ({ disabled }) => ({ ...managedTarget, revision: 3, disabled }),
+    ),
+    revokeSessions: vi.fn<CrossRealmManagementRouteAdapter["revokeSessions"]>(
+      async () => managedTarget,
+    ),
+  };
+
   const app = Fastify({ logger: false });
   openApps.add(app);
   await app.register(cookie);
@@ -912,6 +1070,7 @@ async function createHarness(): Promise<{
     documents,
     security,
     secureCookies: false,
+    crossRealmManagement,
   });
   app.setErrorHandler((error, request, reply) => {
     const application = error instanceof ApplicationError ? error : undefined;
@@ -926,7 +1085,7 @@ async function createHarness(): Promise<{
     });
   });
   await app.ready();
-  return { app, administration, contentAuthentication, actors, profiles, documents, security };
+  return { app, administration, contentAuthentication, actors, profiles, documents, security, crossRealmManagement };
 }
 
 type MockAdministration = ReturnTypeForAdministration;

@@ -619,6 +619,11 @@
   background: color-mix(in srgb, var(--xe-color-surface-subtle) 55%, transparent);
 }
 
+/* Another realm's Auth collection — structurally closed, not just unset. */
+.entitlementMatrixCell[data-access="blocked"] {
+  background: color-mix(in srgb, var(--xe-color-danger-soft, #f8d7da) 30%, transparent);
+}
+
 /* Entitlement edit dialog: the body scrolls on its own so the scrollbar sits
    inside the padded content and never clips the modal's rounded corner. */
 .entitlementDialog {

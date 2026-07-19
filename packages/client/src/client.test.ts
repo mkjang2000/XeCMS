@@ -446,6 +446,52 @@ describe("createXeCmsClient", () => {
     );
   });
 
+  it("maps the management delegation control-plane routes", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: "csrf-admin" }))
+      .mockResolvedValueOnce(jsonResponse({ managingRealmId: "realm / 1", items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ managedRealmId: "realm / 1", items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ managingRealmId: "realm / 1", managedRealmId: "realm / 2", actions: ["identity.disable"], scopeByAction: { "identity.disable": "any" }, revision: 1 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = createXeCmsClient({ fetch });
+    const realmId = "realm / 1";
+    const managedRealmId = "realm / 2";
+
+    await client.auth.getSession();
+    await client.identityRealms.listManagementDelegations(realmId);
+    await client.identityRealms.listManagedByDelegations(realmId);
+    await client.identityRealms.putManagementDelegation(realmId, managedRealmId, {
+      actions: ["identity.disable"],
+      scopeByAction: { "identity.disable": "any" },
+      expectedRevision: null,
+      password: "correct horse battery staple",
+    });
+    await client.identityRealms.deleteManagementDelegation(realmId, managedRealmId, {
+      expectedRevision: 1,
+      password: "correct horse battery staple",
+    });
+
+    expect(fetch.mock.calls[1]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/management-delegations",
+    );
+    expect(fetch.mock.calls[2]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/managed-by-delegations",
+    );
+    const [putUrl, putRequest] = fetch.mock.calls[3] ?? [];
+    expect(putUrl).toBe(
+      "/api/identity-realms/realm%20%2F%201/management-delegations/realm%20%2F%202",
+    );
+    expect(putRequest?.method).toBe("PUT");
+    expect(putRequest?.body).toContain('"identity.disable":"any"');
+    expect(new Headers(putRequest?.headers).get("x-csrf-token")).toBe("csrf-admin");
+    const [deleteUrl, deleteRequest] = fetch.mock.calls[4] ?? [];
+    expect(deleteUrl).toBe(
+      "/api/identity-realms/realm%20%2F%201/management-delegations/realm%20%2F%202",
+    );
+    expect(deleteRequest?.method).toBe("DELETE");
+  });
+
   it("maps a Realm-scoped Content client and stores only that Realm's response token", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

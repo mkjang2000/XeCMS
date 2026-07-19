@@ -49,6 +49,10 @@ import {
   REALM_COLLECTION_ENTITLEMENTS_MIGRATION_ID,
   applyRealmCollectionEntitlementsMigration,
 } from "./realm-collection-entitlements-migration.js";
+import {
+  REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
+  applyRealmManagementDelegationsMigration,
+} from "./realm-management-delegations-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -68,6 +72,7 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   AUTHORIZATION_CONTROL_PLANE_AUDIT_MIGRATION_ID,
   REALM_FULL_ACCESS_LIFECYCLE_MIGRATION_ID,
   REALM_COLLECTION_ENTITLEMENTS_MIGRATION_ID,
+  REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
 ] as const);
 
 export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> {
@@ -352,6 +357,16 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyRealmCollectionEntitlementsMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         REALM_COLLECTION_ENTITLEMENTS_MIGRATION_ID,
+      ]);
+    }
+    const realmManagementDelegations = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID],
+    );
+    if (realmManagementDelegations.rowCount === 0) {
+      await applyRealmManagementDelegationsMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

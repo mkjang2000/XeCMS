@@ -13,6 +13,8 @@ export * from "./authorization-control-plane-audit-migration.js";
 export * from "./realm-full-access-lifecycle-migration.js";
 export * from "./realm-collection-entitlements-migration.js";
 export * from "./postgres-realm-collection-entitlements.js";
+export * from "./realm-management-delegations-migration.js";
+export * from "./postgres-realm-management-delegations.js";
 export * from "./postgres-admin-apps.js";
 export * from "./postgres-site-settings.js";
 export * from "./postgres-sites.js";

@@ -10,6 +10,13 @@ import type {
   RealmPrimaryOwnerStatus,
 } from "./authorization.js";
 import { COLLECTION_ACTIONS } from "./realm-collection-entitlements.js";
+import { MANAGEMENT_ACTIONS } from "./realm-management-delegations.js";
+import type {
+  DelegationScopeRule,
+  ManagementAction,
+  RealmManagementDelegation,
+  RealmManagementDelegationStore,
+} from "./realm-management-delegations.js";
 import type {
   CollectionAction,
   CollectionEntitlementConstraint,
@@ -125,7 +132,9 @@ export type RealmAdministrationAuditEvent =
   | "REALM_FULL_ACCESS_ENTERED"
   | "REALM_FULL_ACCESS_OPERATION"
   | "REALM_COLLECTION_ENTITLEMENT_UPDATED"
-  | "REALM_COLLECTION_ENTITLEMENT_REMOVED";
+  | "REALM_COLLECTION_ENTITLEMENT_REMOVED"
+  | "REALM_MANAGEMENT_DELEGATION_UPDATED"
+  | "REALM_MANAGEMENT_DELEGATION_REMOVED";
 
 export interface RealmAdministrationAuditRecord {
   readonly event: RealmAdministrationAuditEvent;
@@ -517,6 +526,7 @@ export class IdentityRealmApplicationService {
     private readonly passwords?: PasswordHasher,
     private readonly owners?: RealmOwnerCoordinator,
     private readonly entitlements?: RealmCollectionEntitlementStore,
+    private readonly delegations?: RealmManagementDelegationStore,
   ) {}
 
   public async listRealms(actor: ActorContext): Promise<readonly IdentityRealmRecord[]> {
@@ -690,6 +700,12 @@ export class IdentityRealmApplicationService {
     const store = this.requireEntitlementStore();
 
     const collectionId = normalizedId(input.collectionId, "collectionId");
+    // A realm's Auth (profile) collection holds its members' identity/profile
+    // data. Another realm must never be granted access to it — that would leak
+    // account data across the realm boundary. The realm's own Auth collection is
+    // already structurally guaranteed (no ceiling needed), so setting a ceiling
+    // on ANY Auth collection here is only ever an attempt to open a foreign one.
+    await this.assertNotAuthCollectionOfAnotherRealm(actor.workspaceId, input.realmId, collectionId);
     const actions = normalizedActions(input.actions);
     const readableFields = normalizedFields(input.readableFields, "readableFields");
     const writableFields = normalizedFields(input.writableFields, "writableFields");
@@ -788,6 +804,178 @@ export class IdentityRealmApplicationService {
       );
     }
     return this.entitlements;
+  }
+
+  /**
+   * Rejects granting an entitlement on a collection that is another realm's Auth
+   * (profile) collection. Cross-realm access to identity/profile data must go
+   * through explicit user-administration delegation, never through a content
+   * access ceiling.
+   */
+  private async assertNotAuthCollectionOfAnotherRealm(
+    workspaceId: string,
+    entitlementRealmId: string,
+    collectionId: string,
+  ): Promise<void> {
+    const realms = await this.store.listRealms(workspaceId);
+    const owner = realms.find((realm) => realm.profileCollectionId === collectionId);
+    if (owner !== undefined && owner.id !== entitlementRealmId) {
+      throw new ApplicationError(
+        "ENTITLEMENT_FOREIGN_AUTH_COLLECTION",
+        422,
+        "A realm's Auth Collection cannot be exposed to another realm through an access ceiling.",
+      );
+    }
+  }
+
+  /**
+   * CMS-level cross-realm user-administration delegation management. Only a CMS
+   * Owner (`requireRealmAdministration`) may read or change delegations — these
+   * decide which realm may administer another realm's users.
+   */
+  public async listRealmDelegations(
+    actor: ActorContext,
+    managingRealmId: string,
+  ): Promise<readonly RealmManagementDelegation[]> {
+    await requireRealmAdministration(actor);
+    await this.requireContentRealm(actor.workspaceId, managingRealmId);
+    return this.requireDelegationStore().listByManagingRealm(managingRealmId);
+  }
+
+  /** Reverse view: which realms are allowed to administer a given realm's users. */
+  public async listManagedByDelegations(
+    actor: ActorContext,
+    managedRealmId: string,
+  ): Promise<readonly RealmManagementDelegation[]> {
+    await requireRealmAdministration(actor);
+    await this.requireContentRealm(actor.workspaceId, managedRealmId);
+    return this.requireDelegationStore().listByManagedRealm(managedRealmId);
+  }
+
+  public async putRealmDelegation(
+    actor: ActorContext,
+    input: {
+      readonly managingRealmId: string;
+      readonly managedRealmId: string;
+      readonly actions: readonly string[];
+      readonly scopeByAction: Readonly<Record<string, string>>;
+      readonly expectedRevision: number | null;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+      readonly sessionId?: string;
+    },
+  ): Promise<RealmManagementDelegation> {
+    await requireRealmAdministration(actor);
+    const now = this.runtime.now();
+    requireRecentReauthentication(input.reauthenticatedAt, now);
+    const managingRealmId = normalizedId(input.managingRealmId, "managingRealmId");
+    const managedRealmId = normalizedId(input.managedRealmId, "managedRealmId");
+    if (managingRealmId === managedRealmId) {
+      invalid("A realm cannot be delegated to manage itself.");
+    }
+    // The managed realm must be a content realm in this workspace. The managing
+    // realm may be content or the System realm (reserved for entry point A).
+    const managed = await this.requireContentRealm(actor.workspaceId, managedRealmId);
+    await this.requireManagingRealm(actor.workspaceId, managingRealmId);
+    const store = this.requireDelegationStore();
+
+    const actions = normalizedManagementActions(input.actions);
+    const scopeByAction = normalizedScopeByAction(input.scopeByAction, actions);
+    if (input.expectedRevision !== null
+      && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1)) {
+      invalid("expectedRevision must be null (create) or a positive safe integer (update).");
+    }
+
+    const updatedBy = actor.identityId ?? actor.subjectId;
+    const before = await store.getDelegation(managingRealmId, managedRealmId);
+    const saved = await store.put({
+      workspaceId: managed.workspaceId,
+      managingRealmId,
+      managedRealmId,
+      actions,
+      scopeByAction,
+      expectedRevision: input.expectedRevision,
+      updatedAt: now,
+      updatedBy,
+    });
+    await this.store.recordRealmAdministrationEvent({
+      event: "REALM_MANAGEMENT_DELEGATION_UPDATED",
+      systemIdentityId: updatedBy,
+      realmId: managingRealmId,
+      accessMode: "cms-owner-control-plane",
+      occurredAt: now,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      operation: before === null ? "create" : "update",
+      targetType: "realm-management-delegation",
+      targetId: managedRealmId,
+      before: before ?? undefined,
+      after: saved,
+      result: "success",
+      details: { reauthenticatedAt: input.reauthenticatedAt },
+    });
+    return saved;
+  }
+
+  public async deleteRealmDelegation(
+    actor: ActorContext,
+    input: {
+      readonly managingRealmId: string;
+      readonly managedRealmId: string;
+      readonly expectedRevision: number;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+      readonly sessionId?: string;
+    },
+  ): Promise<void> {
+    await requireRealmAdministration(actor);
+    const now = this.runtime.now();
+    requireRecentReauthentication(input.reauthenticatedAt, now);
+    const managingRealmId = normalizedId(input.managingRealmId, "managingRealmId");
+    const managedRealmId = normalizedId(input.managedRealmId, "managedRealmId");
+    await this.requireManagingRealm(actor.workspaceId, managingRealmId);
+    const store = this.requireDelegationStore();
+
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+      invalid("expectedRevision must be a positive safe integer.");
+    }
+    const before = await store.getDelegation(managingRealmId, managedRealmId);
+    await store.remove({ managingRealmId, managedRealmId, expectedRevision: input.expectedRevision });
+    await this.store.recordRealmAdministrationEvent({
+      event: "REALM_MANAGEMENT_DELEGATION_REMOVED",
+      systemIdentityId: actor.identityId ?? actor.subjectId,
+      realmId: managingRealmId,
+      accessMode: "cms-owner-control-plane",
+      occurredAt: now,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      operation: "remove",
+      targetType: "realm-management-delegation",
+      targetId: managedRealmId,
+      before: before ?? undefined,
+      result: "success",
+      details: { reauthenticatedAt: input.reauthenticatedAt },
+    });
+  }
+
+  private requireDelegationStore(): RealmManagementDelegationStore {
+    if (this.delegations === undefined) {
+      throw new ApplicationError(
+        "MANAGEMENT_DELEGATION_STORE_UNAVAILABLE",
+        500,
+        "Cross-realm management delegation is not configured on this server.",
+      );
+    }
+    return this.delegations;
+  }
+
+  /**
+   * A managing realm is either a content realm in this workspace or the System
+   * realm (entry point A). Throws if it is neither.
+   */
+  private async requireManagingRealm(workspaceId: string, managingRealmId: string): Promise<void> {
+    if (managingRealmId === SYSTEM_ACTOR_REALM_ID) return;
+    await this.requireContentRealm(workspaceId, managingRealmId);
   }
 
   /** Explicitly gives an existing System Identity a Content Realm Membership. */
@@ -1757,6 +1945,51 @@ function normalizedActions(value: readonly string[]): readonly CollectionAction[
     seen.add(raw as CollectionAction);
   }
   return COLLECTION_ACTIONS.filter((action) => seen.has(action));
+}
+
+const MANAGEMENT_ACTION_SET = new Set<string>(MANAGEMENT_ACTIONS);
+
+function normalizedManagementActions(value: readonly string[]): readonly ManagementAction[] {
+  if (!Array.isArray(value)) invalid("actions must be an array.");
+  const seen = new Set<ManagementAction>();
+  for (const raw of value) {
+    if (typeof raw !== "string" || !MANAGEMENT_ACTION_SET.has(raw)) {
+      invalid(`Unknown management action: ${JSON.stringify(raw)}.`);
+    }
+    seen.add(raw as ManagementAction);
+  }
+  if (seen.size === 0) invalid("A delegation must grant at least one action.");
+  return MANAGEMENT_ACTIONS.filter((action) => seen.has(action));
+}
+
+/**
+ * Normalises the per-action any/all rule. Every declared action gets an explicit
+ * rule (defaulting to the stricter "all" when omitted); keys for actions not in
+ * the delegation are rejected to avoid dangling scope entries.
+ */
+function normalizedScopeByAction(
+  value: Readonly<Record<string, string>>,
+  actions: readonly ManagementAction[],
+): Readonly<Partial<Record<ManagementAction, DelegationScopeRule>>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalid("scopeByAction must be an object.");
+  }
+  const allowed = new Set<string>(actions);
+  const result: Partial<Record<ManagementAction, DelegationScopeRule>> = {};
+  for (const [action, rule] of Object.entries(value)) {
+    if (!allowed.has(action)) {
+      invalid(`scopeByAction has a rule for '${action}', which is not a granted action.`);
+    }
+    if (rule !== "any" && rule !== "all") {
+      invalid(`scopeByAction.${action} must be 'any' or 'all'.`);
+    }
+    result[action as ManagementAction] = rule;
+  }
+  // Default any action without an explicit rule to the stricter "all".
+  for (const action of actions) {
+    if (result[action] === undefined) result[action] = "all";
+  }
+  return result;
 }
 
 function normalizedFields(

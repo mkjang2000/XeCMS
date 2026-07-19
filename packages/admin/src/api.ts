@@ -382,6 +382,55 @@ export interface DeleteRealmCollectionEntitlementInput {
   readonly password: string;
 }
 
+export type ManagementAction =
+  | "identity.credentials.reset"
+  | "identity.disable"
+  | "identity.update"
+  | "identity.session.revoke"
+  | "membership.suspend"
+  | "membership.reactivate"
+  | "membership.provision";
+
+export type DelegationScopeRule = "any" | "all";
+
+export interface RealmManagementDelegation {
+  readonly workspaceId: string;
+  readonly managingRealmId: string;
+  readonly managedRealmId: string;
+  readonly actions: readonly ManagementAction[];
+  readonly scopeByAction: Readonly<Partial<Record<ManagementAction, DelegationScopeRule>>>;
+  readonly revision: number;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+}
+
+/** Delegations where a realm is the managing realm. */
+export interface RealmManagementDelegationList {
+  readonly managingRealmId: string;
+  readonly delegations: readonly RealmManagementDelegation[];
+}
+
+/** Reverse view: delegations where a realm is the managed realm. */
+export interface ManagedRealmDelegationList {
+  readonly managedRealmId: string;
+  readonly delegations: readonly RealmManagementDelegation[];
+}
+
+export interface PutRealmManagementDelegationInput {
+  readonly actions: readonly ManagementAction[];
+  readonly scopeByAction: Readonly<Partial<Record<ManagementAction, DelegationScopeRule>>>;
+  /** `null` to create; a positive revision to update (CAS). */
+  readonly expectedRevision: number | null;
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly password: string;
+}
+
+export interface DeleteRealmManagementDelegationInput {
+  readonly expectedRevision: number;
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly password: string;
+}
+
 export interface CollectionField {
   readonly id: string;
   readonly name: string;
@@ -1216,6 +1265,18 @@ export interface AdminApi {
       input: DeleteRealmCollectionEntitlementInput,
     ): Promise<void>;
     listEntitlementsForCollection(collectionId: string): Promise<CollectionEntitlementList>;
+    listManagementDelegations(realmId: string): Promise<RealmManagementDelegationList>;
+    listManagedByDelegations(realmId: string): Promise<ManagedRealmDelegationList>;
+    putManagementDelegation(
+      realmId: string,
+      managedRealmId: string,
+      input: PutRealmManagementDelegationInput,
+    ): Promise<RealmManagementDelegation>;
+    deleteManagementDelegation(
+      realmId: string,
+      managedRealmId: string,
+      input: DeleteRealmManagementDelegationInput,
+    ): Promise<void>;
     authorizationFor(realmId: string): AuthorizationAdminApi;
   };
   readonly authorization: AuthorizationAdminApi;

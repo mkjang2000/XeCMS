@@ -20,5 +20,8 @@ export * from "./relations.js";
 export * from "./realm-authorization-provisioning.js";
 export * from "./realm-collection-entitlements.js";
 export * from "./entitlement-gate.js";
+export * from "./realm-management-delegations.js";
+export * from "./cross-realm-management-gate.js";
+export * from "./cross-realm-management-service.js";
 export * from "./schema-artifacts.js";
 export * from "./schema.js";

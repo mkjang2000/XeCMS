@@ -92,6 +92,11 @@ import {
   type RealmFullAccessListDto,
   type RealmCollectionEntitlementDto,
   type RealmCollectionEntitlementListDto,
+  type RealmManagementDelegationDto,
+  type RealmManagementDelegationListDto,
+  type ManagedRealmDelegationListDto,
+  type PutRealmManagementDelegationRequest,
+  type DeleteRealmManagementDelegationRequest,
   type CollectionEntitlementListDto,
   type PutRealmCollectionEntitlementRequest,
   type DeleteRealmCollectionEntitlementRequest,
@@ -467,6 +472,18 @@ export interface XeCmsClient {
       input: DeleteRealmCollectionEntitlementRequest,
     ): Promise<void>;
     listEntitlementsForCollection(collectionId: string): Promise<CollectionEntitlementListDto>;
+    listManagementDelegations(realmId: string): Promise<RealmManagementDelegationListDto>;
+    listManagedByDelegations(realmId: string): Promise<ManagedRealmDelegationListDto>;
+    putManagementDelegation(
+      realmId: string,
+      managedRealmId: string,
+      input: PutRealmManagementDelegationRequest,
+    ): Promise<RealmManagementDelegationDto>;
+    deleteManagementDelegation(
+      realmId: string,
+      managedRealmId: string,
+      input: DeleteRealmManagementDelegationRequest,
+    ): Promise<void>;
     authorizationFor(realmId: string): AuthorizationClient;
   };
   readonly contentRealms: {
@@ -1192,6 +1209,24 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
       listEntitlementsForCollection: (collectionId) =>
         request<CollectionEntitlementListDto>(
           `/collections/${encodeURIComponent(collectionId)}/entitlements`,
+        ),
+      listManagementDelegations: (realmId) =>
+        request<RealmManagementDelegationListDto>(
+          `${identityRealmPath(realmId)}/management-delegations`,
+        ),
+      listManagedByDelegations: (realmId) =>
+        request<ManagedRealmDelegationListDto>(
+          `${identityRealmPath(realmId)}/managed-by-delegations`,
+        ),
+      putManagementDelegation: (realmId, managedRealmId, input) =>
+        request<RealmManagementDelegationDto>(
+          `${identityRealmPath(realmId)}/management-delegations/${encodeURIComponent(managedRealmId)}`,
+          { method: "PUT", body: json(input), csrf: true },
+        ),
+      deleteManagementDelegation: (realmId, managedRealmId, input) =>
+        request<void>(
+          `${identityRealmPath(realmId)}/management-delegations/${encodeURIComponent(managedRealmId)}`,
+          { method: "DELETE", body: json(input), csrf: true },
         ),
       authorizationFor: (realmId) => createAuthorizationClient((kind, id) =>
         `${identityRealmPath(realmId)}/authorization${kind === undefined ? "" : `/${kind}`}${

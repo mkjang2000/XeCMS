@@ -9,6 +9,9 @@ import {
   type RealmMembershipRecord,
   type RealmCollectionEntitlement,
   type RealmEntitlementStatus,
+  type CrossRealmIdentityAction,
+  type CrossRealmTargetMembership,
+  type RealmManagementDelegation,
 } from "@xecms/application";
 import type {
   CollectionListDto,
@@ -40,6 +43,12 @@ import type {
   RealmEntitlementStatusDto,
   PutRealmCollectionEntitlementRequest,
   DeleteRealmCollectionEntitlementRequest,
+  ManagementActionDto,
+  RealmManagementDelegationDto,
+  RealmManagementDelegationListDto,
+  ManagedRealmDelegationListDto,
+  PutRealmManagementDelegationRequest,
+  DeleteRealmManagementDelegationRequest,
   RealmMembershipDto,
   RealmMembershipListDto,
   RealmOwnerStatusDto,
@@ -219,6 +228,36 @@ export interface IdentityRealmAdministrationRouteService {
       readonly requestId?: string;
     },
   ): Promise<void>;
+  listRealmDelegations(
+    actor: ActorContext,
+    managingRealmId: string,
+  ): Promise<readonly RealmManagementDelegation[]>;
+  listManagedByDelegations(
+    actor: ActorContext,
+    managedRealmId: string,
+  ): Promise<readonly RealmManagementDelegation[]>;
+  putRealmDelegation(
+    actor: ActorContext,
+    input: {
+      readonly managingRealmId: string;
+      readonly managedRealmId: string;
+      readonly actions: readonly string[];
+      readonly scopeByAction: Readonly<Record<string, string>>;
+      readonly expectedRevision: number | null;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+    },
+  ): Promise<RealmManagementDelegation>;
+  deleteRealmDelegation(
+    actor: ActorContext,
+    input: {
+      readonly managingRealmId: string;
+      readonly managedRealmId: string;
+      readonly expectedRevision: number;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+    },
+  ): Promise<void>;
 }
 
 export interface RealmAdministrationMembershipRecord extends RealmMembershipRecord {
@@ -268,6 +307,53 @@ export interface IdentityRealmRouteActorAdapter {
   contentActorForSession(
     session: AuthenticatedContentContext,
   ): ActorContext | Promise<ActorContext>;
+}
+
+/** Minimal result returned to a realm-B operator after a cross-realm action. */
+export interface CrossRealmManagedIdentityDto {
+  readonly identityId: string;
+  readonly primaryIdentifier: string;
+  readonly revision: number;
+  readonly disabled: boolean;
+}
+
+/** A target user as seen by entry point B: only what the route needs to act. */
+export interface CrossRealmManagedTarget {
+  readonly identityId: string;
+  readonly primaryIdentifier: string;
+  readonly revision: number;
+  readonly disabled: boolean;
+  readonly memberships: readonly CrossRealmTargetMembership[];
+}
+
+/**
+ * Entry point B: a Content Realm operator administering another realm's users.
+ * The adapter owns target lookup, cross-realm authorization (steps a+b), and the
+ * actual mutation via the identity-administration service. Optional so existing
+ * wiring/tests are unaffected when it is absent.
+ */
+export interface CrossRealmManagementRouteAdapter {
+  /** Loads the target account (memberships included) for authorization + action. */
+  getTarget(identityId: string, workspaceId: string): Promise<CrossRealmManagedTarget>;
+  /** Runs steps a (actor's own-realm permission) + b (CMS delegation). Throws on denial. */
+  authorize(
+    actor: ActorContext,
+    input: { readonly action: CrossRealmIdentityAction; readonly target: CrossRealmManagedTarget },
+  ): Promise<void>;
+  resetPassword(input: {
+    readonly actor: ActorContext;
+    readonly target: CrossRealmManagedTarget;
+    readonly temporaryPassword: string;
+  }): Promise<CrossRealmManagedTarget>;
+  setDisabled(input: {
+    readonly actor: ActorContext;
+    readonly target: CrossRealmManagedTarget;
+    readonly disabled: boolean;
+  }): Promise<CrossRealmManagedTarget>;
+  revokeSessions(input: {
+    readonly actor: ActorContext;
+    readonly target: CrossRealmManagedTarget;
+  }): Promise<CrossRealmManagedTarget>;
 }
 
 export interface ContentRealmProfileRouteAdapter {
@@ -341,6 +427,8 @@ export interface RegisterIdentityRealmRoutesOptions {
   readonly documents: ContentRealmDocumentRouteAdapter;
   readonly security: IdentityRealmRouteSecurityAdapter;
   readonly secureCookies: boolean;
+  /** Entry point B (cross-realm user administration). Optional. */
+  readonly crossRealmManagement?: CrossRealmManagementRouteAdapter;
 }
 
 /**
@@ -358,6 +446,7 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
     profiles,
     documents,
     security,
+    crossRealmManagement,
   } = options;
   const cookieName = CONTENT_REALM_SESSION_COOKIE;
 
@@ -733,6 +822,69 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
     },
   );
 
+  // --- CMS Owner: cross-realm management delegations ---
+  app.get(
+    "/api/identity-realms/:realmId/management-delegations",
+    async (request): Promise<RealmManagementDelegationListDto> => {
+      const actor = await systemActor(request, false);
+      const { realmId } = pathParams(request.params, ["realmId"]);
+      const items = (await administration.listRealmDelegations(actor, realmId)).map(toDelegationDto);
+      return { managingRealmId: realmId, items };
+    },
+  );
+
+  app.get(
+    "/api/identity-realms/:realmId/managed-by-delegations",
+    async (request): Promise<ManagedRealmDelegationListDto> => {
+      const actor = await systemActor(request, false);
+      const { realmId } = pathParams(request.params, ["realmId"]);
+      const items = (await administration.listManagedByDelegations(actor, realmId)).map(toDelegationDto);
+      return { managedRealmId: realmId, items };
+    },
+  );
+
+  app.put(
+    "/api/identity-realms/:realmId/management-delegations/:managedRealmId",
+    async (request, reply): Promise<RealmManagementDelegationDto> => {
+      const actor = await systemActor(request, true);
+      const { realmId, managedRealmId } = pathParams(request.params, ["realmId", "managedRealmId"]);
+      const body = parseDelegationPut(request.body);
+      const verified = await actors.verifySystemReauthentication(request, actor, body.password);
+      const before = (await administration.listRealmDelegations(actor, realmId))
+        .some((d) => d.managedRealmId === managedRealmId);
+      const saved = await administration.putRealmDelegation(actor, {
+        managingRealmId: realmId,
+        managedRealmId,
+        actions: body.actions,
+        scopeByAction: body.scopeByAction,
+        expectedRevision: body.expectedRevision,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+        requestId: request.id,
+      });
+      if (!before) reply.code(201);
+      return toDelegationDto(saved);
+    },
+  );
+
+  app.delete(
+    "/api/identity-realms/:realmId/management-delegations/:managedRealmId",
+    async (request, reply): Promise<null> => {
+      const actor = await systemActor(request, true);
+      const { realmId, managedRealmId } = pathParams(request.params, ["realmId", "managedRealmId"]);
+      const body = parseDelegationDelete(request.body);
+      const verified = await actors.verifySystemReauthentication(request, actor, body.password);
+      await administration.deleteRealmDelegation(actor, {
+        managingRealmId: realmId,
+        managedRealmId,
+        expectedRevision: body.expectedRevision,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+        requestId: request.id,
+      });
+      reply.code(204);
+      return null;
+    },
+  );
+
   app.get(
     "/api/content-realms/:realmKey",
     async (request): Promise<ContentRealmMetadataDto> => {
@@ -867,6 +1019,86 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
       return profileDto(context, profile);
     },
   );
+
+  // --- Entry point B: cross-realm user administration ---
+  // A Content Realm operator (realm B) administers another realm's user, within
+  // the CMS-declared delegation. Physically separate from the System
+  // `/api/identities/*` surface; content session + CSRF + delegation gate.
+  if (crossRealmManagement !== undefined) {
+    const managed = crossRealmManagement;
+    const crossRealmActor = async (
+      request: FastifyRequest,
+      realmKey: string,
+    ): Promise<ActorContext> => {
+      const authenticated = await requireContentSession(
+        request, realmKey, true, contentAuthentication, security, cookieName,
+      );
+      const actor = await contentActorContext(authenticated.session, realmKey, actors);
+      if (actor.authentication === "api-key") {
+        throw new ApplicationError(
+          "API_KEY_ADMINISTRATION_FORBIDDEN",
+          403,
+          "API keys cannot administer other realms' users.",
+        );
+      }
+      return actor;
+    };
+
+    app.post(
+      "/api/content-realms/:realmKey/managed-identities/:identityId/credentials/reset",
+      async (request, reply): Promise<CrossRealmManagedIdentityDto> => {
+        const { realmKey, identityId } = pathParams(request.params, ["realmKey", "identityId"]);
+        const actor = await crossRealmActor(request, realmKey);
+        const body = parseCrossRealmPasswordReset(request.body);
+        const target = await managed.getTarget(identityId, actor.workspaceId);
+        await managed.authorize(actor, { action: "identity.credentials.reset", target });
+        const updated = await managed.resetPassword({
+          actor, target, temporaryPassword: body.temporaryPassword,
+        });
+        noStore(reply);
+        return toCrossRealmTargetDto(updated);
+      },
+    );
+
+    app.post(
+      "/api/content-realms/:realmKey/managed-identities/:identityId/disable",
+      async (request, reply): Promise<CrossRealmManagedIdentityDto> => {
+        const { realmKey, identityId } = pathParams(request.params, ["realmKey", "identityId"]);
+        const actor = await crossRealmActor(request, realmKey);
+        const target = await managed.getTarget(identityId, actor.workspaceId);
+        await managed.authorize(actor, { action: "identity.disable", target });
+        const updated = await managed.setDisabled({ actor, target, disabled: true });
+        noStore(reply);
+        return toCrossRealmTargetDto(updated);
+      },
+    );
+
+    app.post(
+      "/api/content-realms/:realmKey/managed-identities/:identityId/reactivate",
+      async (request, reply): Promise<CrossRealmManagedIdentityDto> => {
+        const { realmKey, identityId } = pathParams(request.params, ["realmKey", "identityId"]);
+        const actor = await crossRealmActor(request, realmKey);
+        const target = await managed.getTarget(identityId, actor.workspaceId);
+        await managed.authorize(actor, { action: "identity.disable", target });
+        const updated = await managed.setDisabled({ actor, target, disabled: false });
+        noStore(reply);
+        return toCrossRealmTargetDto(updated);
+      },
+    );
+
+    app.post(
+      "/api/content-realms/:realmKey/managed-identities/:identityId/sessions/revoke",
+      async (request, reply): Promise<CrossRealmManagedIdentityDto> => {
+        const { realmKey, identityId } = pathParams(request.params, ["realmKey", "identityId"]);
+        const actor = await crossRealmActor(request, realmKey);
+        const target = await managed.getTarget(identityId, actor.workspaceId);
+        await managed.authorize(actor, { action: "identity.session.revoke", target });
+        const updated = await managed.revokeSessions({ actor, target });
+        noStore(reply);
+        return toCrossRealmTargetDto(updated);
+      },
+    );
+  }
 
   app.get(
     "/api/content-realms/:realmKey/collections",
@@ -1335,6 +1567,48 @@ function parseEntitlementDelete(value: unknown): DeleteRealmCollectionEntitlemen
   };
 }
 
+function parseCrossRealmPasswordReset(value: unknown): { readonly temporaryPassword: string } {
+  const body = exactObject(value, ["temporaryPassword"], "Cross-realm password reset request");
+  return { temporaryPassword: requiredString(body, "temporaryPassword") };
+}
+
+function parseDelegationPut(value: unknown): PutRealmManagementDelegationRequest {
+  const body = exactObject(value, [
+    "actions", "scopeByAction", "expectedRevision", "password",
+  ], "Management delegation request");
+  return {
+    actions: requiredStringArray(body, "actions") as readonly ManagementActionDto[],
+    scopeByAction: parseScopeByAction(body["scopeByAction"]),
+    expectedRevision: nullableRevision(body, "expectedRevision"),
+    password: requiredString(body, "password"),
+  };
+}
+
+function parseScopeByAction(
+  value: unknown,
+): Readonly<Partial<Record<ManagementActionDto, "any" | "all">>> {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalid("scopeByAction must be an object.");
+  }
+  const result: Partial<Record<ManagementActionDto, "any" | "all">> = {};
+  for (const [action, rule] of Object.entries(value as Record<string, unknown>)) {
+    if (rule !== "any" && rule !== "all") {
+      invalid(`scopeByAction.${action} must be 'any' or 'all'.`);
+    }
+    result[action as ManagementActionDto] = rule;
+  }
+  return result;
+}
+
+function parseDelegationDelete(value: unknown): DeleteRealmManagementDelegationRequest {
+  const body = exactObject(value, ["expectedRevision", "password"], "Delegation delete request");
+  return {
+    expectedRevision: positiveRevision(body, "expectedRevision"),
+    password: requiredString(body, "password"),
+  };
+}
+
 function parseSignup(value: unknown): ContentRealmSignupRequest {
   const body = exactObject(value, ["identifier", "password", "profile"], "Realm signup request");
   return {
@@ -1513,6 +1787,30 @@ function toEntitlementStatusDto(status: RealmEntitlementStatus): RealmEntitlemen
     workspaceId: status.workspaceId,
     state: status.state,
     version: status.version,
+  };
+}
+
+function toCrossRealmTargetDto(target: CrossRealmManagedTarget): CrossRealmManagedIdentityDto {
+  return {
+    identityId: target.identityId,
+    primaryIdentifier: target.primaryIdentifier,
+    revision: target.revision,
+    disabled: target.disabled,
+  };
+}
+
+function toDelegationDto(delegation: RealmManagementDelegation): RealmManagementDelegationDto {
+  return {
+    workspaceId: delegation.workspaceId,
+    managingRealmId: delegation.managingRealmId,
+    managedRealmId: delegation.managedRealmId,
+    actions: delegation.actions as readonly ManagementActionDto[],
+    scopeByAction: delegation.scopeByAction as Readonly<
+      Partial<Record<ManagementActionDto, "any" | "all">>
+    >,
+    revision: delegation.revision,
+    updatedAt: delegation.updatedAt,
+    updatedBy: delegation.updatedBy,
   };
 }
 

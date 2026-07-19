@@ -1217,6 +1217,55 @@ export interface DeleteRealmCollectionEntitlementRequest {
   readonly password: string;
 }
 
+export type ManagementActionDto =
+  | "identity.credentials.reset"
+  | "identity.disable"
+  | "identity.update"
+  | "identity.session.revoke"
+  | "membership.suspend"
+  | "membership.reactivate"
+  | "membership.provision";
+
+export type DelegationScopeRuleDto = "any" | "all";
+
+export interface RealmManagementDelegationDto {
+  readonly workspaceId: string;
+  readonly managingRealmId: string;
+  readonly managedRealmId: string;
+  readonly actions: readonly ManagementActionDto[];
+  readonly scopeByAction: Readonly<Partial<Record<ManagementActionDto, DelegationScopeRuleDto>>>;
+  readonly revision: number;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+}
+
+/** Delegations where a given realm is the managing realm. */
+export interface RealmManagementDelegationListDto {
+  readonly managingRealmId: string;
+  readonly items: readonly RealmManagementDelegationDto[];
+}
+
+/** Reverse view: delegations where a given realm is the managed realm. */
+export interface ManagedRealmDelegationListDto {
+  readonly managedRealmId: string;
+  readonly items: readonly RealmManagementDelegationDto[];
+}
+
+export interface PutRealmManagementDelegationRequest {
+  readonly actions: readonly ManagementActionDto[];
+  readonly scopeByAction: Readonly<Partial<Record<ManagementActionDto, DelegationScopeRuleDto>>>;
+  /** `null` to create; a positive revision to update (CAS). */
+  readonly expectedRevision: number | null;
+  /** Current System account password; never persisted or returned. */
+  readonly password: string;
+}
+
+export interface DeleteRealmManagementDelegationRequest {
+  readonly expectedRevision: number;
+  /** Current System account password; never persisted or returned. */
+  readonly password: string;
+}
+
 export interface RealmOwnerStatusDto {
   readonly realmId: string;
   readonly status: "healthy" | "ownerless" | "invalid";

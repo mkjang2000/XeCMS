@@ -88,6 +88,20 @@ function renderDetail(
     updatedBy: "usr_admin",
   });
   const deleteCollectionEntitlement = vi.fn().mockResolvedValue(undefined);
+  const otherRealm = contentRealm({ realmId: "rlm_portal", realmKey: "portal", name: "업무포털", status: "active", profileCollectionId: "col_portal_auth" });
+  const listManagementDelegations = vi.fn().mockResolvedValue({ managingRealmId: realm.realmId, delegations: [] });
+  const listManagedByDelegations = vi.fn().mockResolvedValue({ managedRealmId: realm.realmId, delegations: [] });
+  const putManagementDelegation = vi.fn().mockResolvedValue({
+    workspaceId: "wrk_default",
+    managingRealmId: realm.realmId,
+    managedRealmId: "rlm_portal",
+    actions: ["identity.credentials.reset"],
+    scopeByAction: { "identity.credentials.reset": "any" },
+    revision: 1,
+    updatedAt: "2026-07-19T00:00:00.000Z",
+    updatedBy: "usr_admin",
+  });
+  const deleteManagementDelegation = vi.fn().mockResolvedValue(undefined);
   const getOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, ...ownerStatus });
   const assignOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
   const transferOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
@@ -99,7 +113,7 @@ function renderDetail(
   const api = {
     identityRealms: {
       get: vi.fn().mockResolvedValue(realm),
-      list: vi.fn().mockResolvedValue({ items: [realm], nextCursor: undefined }),
+      list: vi.fn().mockResolvedValue({ items: [realm, otherRealm], nextCursor: undefined }),
       listGlobalIdentities: vi.fn().mockResolvedValue({ items: globalIdentities, nextCursor: undefined }),
       listMemberships: vi.fn().mockResolvedValue({ items: memberships, nextCursor: undefined }),
       listFullAccess,
@@ -108,6 +122,10 @@ function renderDetail(
       listCollectionEntitlements,
       putCollectionEntitlement,
       deleteCollectionEntitlement,
+      listManagementDelegations,
+      listManagedByDelegations,
+      putManagementDelegation,
+      deleteManagementDelegation,
       getOwner,
       assignOwner,
       transferOwner,
@@ -123,6 +141,7 @@ function renderDetail(
         items: [
           { id: "col_profile", name: "testreAccounts", label: "Test Realm Accounts", status: "applied", hasPendingChanges: false, fieldCount: 2, revisionId: "rev_profile" },
           { id: "col_articles", name: "articles", label: "Articles", status: "applied", hasPendingChanges: false, fieldCount: 3, revisionId: "rev_a" },
+          { id: "col_portal_auth", name: "portalAccounts", label: "Portal Accounts", status: "applied", hasPendingChanges: false, fieldCount: 2, revisionId: "rev_portal" },
         ],
       }),
     },
@@ -145,7 +164,7 @@ function renderDetail(
       </QueryClientProvider>
     </DisplayModeProvider>,
   );
-  return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, getOwner, listFullAccess, grantFullAccess, listCollectionEntitlements, putCollectionEntitlement, deleteCollectionEntitlement, assignOwner, router, user: userEvent.setup() };
+  return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, getOwner, listFullAccess, grantFullAccess, listCollectionEntitlements, putCollectionEntitlement, deleteCollectionEntitlement, listManagementDelegations, putManagementDelegation, deleteManagementDelegation, assignOwner, router, user: userEvent.setup() };
 }
 
 afterEach(cleanup);
@@ -449,6 +468,43 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
     expect(putCollectionEntitlement).not.toHaveBeenCalled();
   });
 
+  it("blocks exposing another realm's Auth collection through a ceiling", async () => {
+    const { user } = renderDetail(activeRealm, [], "basic");
+
+    await user.click(await screen.findByRole("tab", { name: "권한" }));
+    // The portal realm's Auth collection appears but is closed, not editable.
+    const foreignRow = (await screen.findByText("Portal Accounts")).closest("tr") as HTMLElement;
+    expect(within(foreignRow).getByText("다른 공간 인증 스키마")).toBeTruthy();
+    expect(within(foreignRow).getByText("접근 불가")).toBeTruthy();
+    expect(within(foreignRow).queryByRole("button", { name: "허용 설정" })).toBeNull();
+  });
+
+  it("delegates cross-realm user management from the access tab (advanced)", async () => {
+    const { listManagementDelegations, putManagementDelegation, user } =
+      renderDetail(activeRealm, [], "advanced");
+
+    await user.click(await screen.findByRole("tab", { name: "권한" }));
+    expect(await screen.findByRole("heading", { name: "다른 공간 사용자 관리 위임" })).toBeTruthy();
+    expect(listManagementDelegations).toHaveBeenCalledWith("rlm_testre");
+    // The other content realm appears as a delegation target with no delegation yet.
+    const targetRow = (await screen.findByText("업무포털")).closest("tr") as HTMLElement;
+    expect(within(targetRow).getByText("위임 없음")).toBeTruthy();
+
+    await user.click(within(targetRow).getByRole("button", { name: "위임 설정" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("checkbox", { name: /비밀번호 재설정/ }));
+    await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");
+    await user.click(within(dialog).getByRole("button", { name: "위임" }));
+
+    await waitFor(() => expect(putManagementDelegation).toHaveBeenCalledTimes(1));
+    expect(putManagementDelegation).toHaveBeenCalledWith("rlm_testre", "rlm_portal", {
+      actions: ["identity.credentials.reset"],
+      scopeByAction: { "identity.credentials.reset": "all" },
+      expectedRevision: null,
+      password: "admin-pw",
+    });
+  });
+
   it("starts Full Access for the current System Identity without a Realm Subject", async () => {
     const { grantFullAccess, user } = renderDetail(activeRealm, [], "basic");
 
@@ -593,7 +649,7 @@ describe("RealmEntitlementMatrixPage", () => {
     // A Accounts is A's own Auth collection → guaranteed for A only.
     const authRow = (await screen.findByText("A Accounts")).closest("tr") as HTMLElement;
     expect(within(authRow).getByText("항상 허용")).toBeTruthy();
-    // B does not own that collection and has no ceiling → not accessed.
-    expect(within(authRow).getByText("접근 안 함")).toBeTruthy();
+    // B cannot access another realm's Auth collection at all → blocked.
+    expect(within(authRow).getByText("접근 불가")).toBeTruthy();
   });
 });

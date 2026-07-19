@@ -193,7 +193,7 @@ export function IdentityRealmDetailPage() {
                             owner: owner.data,
                             systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system",
                         }).length, onOpenProfileSetup: () => setProfileSetupOpen(true), onGoMembers: () => setDetailTab("members"), onGoAccess: () => navigate(`/admin/realms/${encodeURIComponent(realm.data.realmId)}/access/${mode === "basic" ? "grades" : "roles"}`) }), realm.data.status === "provisioning" && displayModeAtLeast(mode, "advanced") ? (_jsxs(Callout, { tone: "info", children: ["\uACE0\uAE09: \uC9C1\uC811 Schema\uB97C \uC124\uACC4\uD558\uB824\uBA74 ", _jsx(Button, { size: "small", variant: "quiet", onPress: () => navigate("/admin/schema/new"), children: "\uC2A4\uD0A4\uB9C8 \uD3B8\uC9D1\uAE30\uB85C \uC774\uB3D9" }), "\uD558\uC138\uC694."] })) : null, realm.data.status === "disabled" ? (_jsxs(Callout, { tone: "warning", children: [_jsx("strong", { children: "\uC774 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC740 \uBE44\uD65C\uC131 \uC0C1\uD0DC\uC785\uB2C8\uB2E4." }), " \uC2E0\uADDC \uC138\uC158, \uC18C\uC18D provisioning\uACFC Full Access grant\uAC00 \uCC28\uB2E8\uB429\uB2C8\uB2E4."] })) : null, _jsx(RealmDetailTabs, { active: detailTab, hasProfile: realm.data.profileCollectionId !== undefined, fullAccessActive: (fullAccess.data?.activeBinding !== undefined && isActiveFullAccess(fullAccess.data.activeBinding))
-                            || fullAccess.data?.items.some(isActiveFullAccess) === true, onChange: setDetailTab }), detailTab === "overview" ? _jsx(RealmSettingsForm, { realm: realm.data }) : null, detailTab === "members" ? (_jsxs(_Fragment, { children: [_jsx(RealmOwnerSection, { realm: realm.data, owner: owner, memberships: memberships, identities: identities, systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system" }), _jsx(MembershipSection, { realm: realm.data, owner: owner, memberships: memberships, identities: identities, systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system" })] })) : null, detailTab === "profile" && realm.data.profileCollectionId !== undefined ? (_jsx(RealmProfileFieldsSection, { realm: realm.data })) : null, detailTab === "access" ? (_jsxs(_Fragment, { children: [_jsx(RealmAccessOverview, { realm: realm.data, mode: mode }), _jsx(CollectionEntitlementSection, { realm: realm.data, mode: mode }), _jsx(FullAccessSection, { realm: realm.data, bindings: fullAccess, mode: mode })] })) : null, profileSetupOpen ? (_jsx(ProfileSchemaSetupDialog, { realm: realm.data, error: createProfileSchema.error, isPending: createProfileSchema.isPending, onCancel: () => { setProfileSetupOpen(false); createProfileSchema.reset(); }, onConfirm: (input) => createProfileSchema.mutate(input) })) : null] }))] }));
+                            || fullAccess.data?.items.some(isActiveFullAccess) === true, onChange: setDetailTab }), detailTab === "overview" ? _jsx(RealmSettingsForm, { realm: realm.data }) : null, detailTab === "members" ? (_jsxs(_Fragment, { children: [_jsx(RealmOwnerSection, { realm: realm.data, owner: owner, memberships: memberships, identities: identities, systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system" }), _jsx(MembershipSection, { realm: realm.data, owner: owner, memberships: memberships, identities: identities, systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system" })] })) : null, detailTab === "profile" && realm.data.profileCollectionId !== undefined ? (_jsx(RealmProfileFieldsSection, { realm: realm.data })) : null, detailTab === "access" ? (_jsxs(_Fragment, { children: [_jsx(RealmAccessOverview, { realm: realm.data, mode: mode }), _jsx(CollectionEntitlementSection, { realm: realm.data, mode: mode }), _jsx(DisplayModeGate, { minimum: "advanced", children: _jsx(RealmManagementDelegationSection, { realm: realm.data, realms: realms.data?.items ?? [] }) }), _jsx(FullAccessSection, { realm: realm.data, bindings: fullAccess, mode: mode })] })) : null, profileSetupOpen ? (_jsx(ProfileSchemaSetupDialog, { realm: realm.data, error: createProfileSchema.error, isPending: createProfileSchema.isPending, onCancel: () => { setProfileSetupOpen(false); createProfileSchema.reset(); }, onConfirm: (input) => createProfileSchema.mutate(input) })) : null] }))] }));
 }
 const STEP_LABEL = {
     activate: "1. 스키마 연결 · 활성화",
@@ -647,13 +647,24 @@ function CollectionEntitlementSection({ realm, mode }) {
         queryKey: queryKeys.collections,
         queryFn: () => api.collections.list(),
     });
+    const realms = useQuery({
+        queryKey: queryKeys.identityRealms,
+        queryFn: () => api.identityRealms.list(),
+    });
     const byCollectionId = new Map((entitlements.data?.entitlements ?? []).map((e) => [e.collectionId, e]));
+    // Auth (profile) collections owned by OTHER realms — these can never be exposed
+    // here (they hold another realm's account data). The server enforces this too.
+    const foreignAuthCollectionIds = new Set((realms.data?.items ?? [])
+        .filter((r) => r.realmId !== realm.realmId && r.profileCollectionId !== undefined)
+        .map((r) => r.profileCollectionId));
     return (_jsxs("section", { className: styles.panel, "aria-labelledby": "realm-entitlement-title", children: [_jsx(SectionHeader, { id: "realm-entitlement-title", title: "\uC811\uADFC \uAC00\uB2A5\uD55C \uCF58\uD150\uCE20", description: "\uC774 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC774 \uB2E4\uB8F0 \uC218 \uC788\uB294 \uCF58\uD150\uCE20\uC640 \uADF8 \uBC94\uC704\uB97C CMS\uC5D0\uC11C \uC815\uD569\uB2C8\uB2E4. \uACF5\uAC04 \uC548\uC5D0\uC11C \uC544\uBB34\uB9AC \uB113\uAC8C \uAD8C\uD55C\uC744 \uC918\uB3C4 \uC5EC\uAE30\uC11C \uC815\uD55C \uBC94\uC704\uB97C \uB118\uC9C0 \uBABB\uD569\uB2C8\uB2E4." }), _jsx(Callout, { tone: "info", children: "\uD5C8\uC6A9\uD558\uC9C0 \uC54A\uC740 \uCF58\uD150\uCE20\uB294 \uACF5\uAC04 \uC548\uC5D0\uC11C \uAD8C\uD55C\uC744 \uC92C\uB354\uB77C\uB3C4 \uC811\uADFC\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }), entitlements.isPending || collections.isPending ? (_jsx(PageLoading, { label: "Collection \uC811\uADFC \uC0C1\uD55C\uC744 \uBD88\uB7EC\uC624\uB294 \uC911" })) : null, entitlements.isError ? (_jsx(LoadError, { error: entitlements.error, onRetry: () => void entitlements.refetch() })) : null, collections.isError ? (_jsx(LoadError, { error: collections.error, onRetry: () => void collections.refetch() })) : null, collections.data && collections.data.items.length === 0 ? (_jsx(EmptyState, { title: "\uCF58\uD150\uCE20 \uC720\uD615\uC774 \uC5C6\uC2B5\uB2C8\uB2E4", description: "\uC2A4\uD0A4\uB9C8\uC5D0\uC11C \uCF58\uD150\uCE20 \uC720\uD615(Collection)\uC744 \uBA3C\uC800 \uB9CC\uB4E4\uBA74 \uC5EC\uAE30\uC5D0\uC11C \uC811\uADFC \uBC94\uC704\uB97C \uC815\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." })) : null, collections.data && collections.data.items.length > 0 ? (_jsx("div", { className: styles.tableWrap, children: _jsxs("table", { className: `${styles.table} ${styles.entitlementTable}`, children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "\uCF58\uD150\uCE20 \uC720\uD615" }), _jsx("th", { children: "\uD5C8\uC6A9 \uC791\uC5C5" }), _jsx("th", { children: "\uC870\uAC74" }), _jsx("th", { children: "\uD544\uB4DC" }), _jsx("th", { className: styles.entitlementActionsHead, children: "\uC791\uC5C5" })] }) }), _jsx("tbody", { children: collections.data.items.map((collection) => {
                                 const current = byCollectionId.get(collection.id);
                                 // The realm's own Auth (profile) collection is always accessible —
                                 // it can never be gated, so the ceiling controls don't apply.
                                 const isAuthCollection = collection.id === realm.profileCollectionId;
-                                return (_jsxs("tr", { "data-has-entitlement": current !== undefined || isAuthCollection, children: [_jsx("td", { children: _jsxs("div", { className: styles.entitlementName, children: [_jsxs("span", { className: styles.entitlementNameRow, children: [_jsx("strong", { children: collection.label ?? collection.name }), isAuthCollection ? _jsx(Badge, { tone: "info", children: "\uC778\uC99D \uC2A4\uD0A4\uB9C8" }) : null] }), _jsx(DisplayModeGate, { minimum: "advanced", children: _jsx(IdValue, { label: "Collection ID", value: collection.id }) })] }) }), isAuthCollection ? (_jsxs(_Fragment, { children: [_jsx("td", { children: _jsx(Badge, { tone: "success", children: "\uD56D\uC0C1 \uD5C8\uC6A9" }) }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" }), _jsx("td", { children: _jsx("span", { className: styles.compactHint, children: "\uACF5\uAC04 \uB85C\uADF8\uC778\u00B7\uD504\uB85C\uD544\uC5D0 \uD544\uC694\uD574 \uC81C\uD55C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }) })] })) : (_jsxs(_Fragment, { children: [_jsx("td", { children: current === undefined ? (_jsx(Badge, { tone: "neutral", children: "\uC811\uADFC \uC548 \uD568" })) : (_jsx("span", { className: styles.entitlementActions, children: entitlementActionSummary(current.actions) })) }), _jsx("td", { className: current === undefined ? styles.entitlementMuted : undefined, children: current === undefined ? "—" : entitlementConstraintSummary(current) }), _jsx("td", { className: current === undefined ? styles.entitlementMuted : undefined, children: current === undefined ? "—" : entitlementFieldSummary(current) }), _jsx("td", { children: _jsxs("div", { className: styles.entitlementRowActions, children: [_jsx(Button, { size: "small", variant: "secondary", isDisabled: realm.status !== "active", onPress: () => setEditing({ collection, current }), children: current === undefined ? "허용 설정" : "편집" }), current !== undefined ? (_jsx(Button, { size: "small", variant: "danger", isDisabled: realm.status !== "active", onPress: () => setRemoving(current), children: "\uC81C\uAC70" })) : null] }) })] }))] }, collection.id));
+                                // Another realm's Auth collection can never be exposed here.
+                                const isForeignAuth = foreignAuthCollectionIds.has(collection.id);
+                                return (_jsxs("tr", { "data-has-entitlement": current !== undefined || isAuthCollection, children: [_jsx("td", { children: _jsxs("div", { className: styles.entitlementName, children: [_jsxs("span", { className: styles.entitlementNameRow, children: [_jsx("strong", { children: collection.label ?? collection.name }), isAuthCollection ? _jsx(Badge, { tone: "info", children: "\uC778\uC99D \uC2A4\uD0A4\uB9C8" }) : null, isForeignAuth ? _jsx(Badge, { tone: "neutral", children: "\uB2E4\uB978 \uACF5\uAC04 \uC778\uC99D \uC2A4\uD0A4\uB9C8" }) : null] }), _jsx(DisplayModeGate, { minimum: "advanced", children: _jsx(IdValue, { label: "Collection ID", value: collection.id }) })] }) }), isAuthCollection ? (_jsxs(_Fragment, { children: [_jsx("td", { children: _jsx(Badge, { tone: "success", children: "\uD56D\uC0C1 \uD5C8\uC6A9" }) }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" }), _jsx("td", { children: _jsx("span", { className: styles.compactHint, children: "\uACF5\uAC04 \uB85C\uADF8\uC778\u00B7\uD504\uB85C\uD544\uC5D0 \uD544\uC694\uD574 \uC81C\uD55C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }) })] })) : isForeignAuth ? (_jsxs(_Fragment, { children: [_jsx("td", { children: _jsx(Badge, { tone: "danger", children: "\uC811\uADFC \uBD88\uAC00" }) }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" }), _jsx("td", { children: _jsx("span", { className: styles.compactHint, children: "\uB2E4\uB978 \uACF5\uAC04\uC758 \uACC4\uC815\u00B7\uD504\uB85C\uD544 \uB370\uC774\uD130\uB77C \uC811\uADFC\uC744 \uC5F4 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }) })] })) : (_jsxs(_Fragment, { children: [_jsx("td", { children: current === undefined ? (_jsx(Badge, { tone: "neutral", children: "\uC811\uADFC \uC548 \uD568" })) : (_jsx("span", { className: styles.entitlementActions, children: entitlementActionSummary(current.actions) })) }), _jsx("td", { className: current === undefined ? styles.entitlementMuted : undefined, children: current === undefined ? "—" : entitlementConstraintSummary(current) }), _jsx("td", { className: current === undefined ? styles.entitlementMuted : undefined, children: current === undefined ? "—" : entitlementFieldSummary(current) }), _jsx("td", { children: _jsxs("div", { className: styles.entitlementRowActions, children: [_jsx(Button, { size: "small", variant: "secondary", isDisabled: realm.status !== "active", onPress: () => setEditing({ collection, current }), children: current === undefined ? "허용 설정" : "편집" }), current !== undefined ? (_jsx(Button, { size: "small", variant: "danger", isDisabled: realm.status !== "active", onPress: () => setRemoving(current), children: "\uC81C\uAC70" })) : null] }) })] }))] }, collection.id));
                             }) })] }) })) : null, editing ? (_jsx(EntitlementEditDialog, { realm: realm, collection: editing.collection, current: editing.current, mode: mode, onClose: () => setEditing(null), onSaved: async (saved) => {
                     queryClient.setQueryData(queryKeys.realmEntitlements(realm.realmId), (previous) => mergeEntitlement(previous, saved));
                     setEditing(null);
@@ -793,6 +804,125 @@ function EntitlementRemoveDialog({ realm, entitlement, onClose, onRemoved }) {
     });
     return (_jsx(ConfirmDialog, { title: "\uC811\uADFC \uD5C8\uC6A9 \uC81C\uAC70", confirmLabel: "\uC81C\uAC70", danger: true, isPending: remove.isPending, isConfirmDisabled: password === "", onCancel: () => { onClose(); remove.reset(); }, onConfirm: () => remove.mutate(), children: _jsxs("div", { className: styles.dialogStack, children: [_jsxs(Callout, { tone: "warning", children: [_jsx("strong", { children: "\uD5C8\uC6A9\uC744 \uC81C\uAC70\uD558\uBA74 \uC774 \uACF5\uAC04\uC740 \uC774 \uCF58\uD150\uCE20\uC5D0 \uB354 \uC774\uC0C1 \uC811\uADFC\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }), " \uB2E4\uC2DC \uC5F4\uB824\uBA74 \uD5C8\uC6A9\uC744 \uC0C8\uB85C \uC124\uC815\uD574\uC57C \uD569\uB2C8\uB2E4."] }), _jsx(TextInput, { label: "\uD604\uC7AC System \uACC4\uC815 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: password, onChange: setPassword, isRequired: true }), _jsx(MutationError, { error: remove.error })] }) }));
 }
+/** UI grouping of management actions the CMS may delegate. */
+const MANAGEMENT_ACTION_ITEMS = [
+    { action: "identity.credentials.reset", label: "비밀번호 재설정" },
+    { action: "identity.disable", label: "계정 비활성/재활성" },
+    { action: "identity.session.revoke", label: "세션 폐기" },
+    { action: "identity.update", label: "계정 정보 수정" },
+    { action: "membership.suspend", label: "소속 정지" },
+    { action: "membership.reactivate", label: "소속 재활성" },
+    { action: "membership.provision", label: "소속 부여" },
+];
+function delegationActionSummary(delegation) {
+    const labels = MANAGEMENT_ACTION_ITEMS
+        .filter((item) => delegation.actions.includes(item.action))
+        .map((item) => item.label);
+    return labels.length === 0 ? "없음" : labels.join(" · ");
+}
+/**
+ * Cross-realm user administration: which OTHER realms this realm's operators may
+ * administer, and how (per-action any/all). Declared by the CMS Owner. Read here
+ * as `managingRealmId = realm`.
+ */
+function RealmManagementDelegationSection({ realm, realms }) {
+    const api = useAdminApi();
+    const queryClient = useQueryClient();
+    const [editing, setEditing] = useState(null);
+    const [removing, setRemoving] = useState(null);
+    const delegations = useQuery({
+        queryKey: queryKeys.realmDelegations(realm.realmId),
+        queryFn: () => api.identityRealms.listManagementDelegations(realm.realmId),
+    });
+    // Candidate managed realms: other active content realms in the workspace.
+    const candidates = realms.filter((r) => r.kind === "content" && r.realmId !== realm.realmId);
+    const byManagedId = new Map((delegations.data?.delegations ?? []).map((d) => [d.managedRealmId, d]));
+    const realmName = new Map(realms.map((r) => [r.realmId, r.name]));
+    return (_jsxs("section", { className: styles.panel, "aria-labelledby": "realm-delegation-title", children: [_jsx(SectionHeader, { id: "realm-delegation-title", title: "\uB2E4\uB978 \uACF5\uAC04 \uC0AC\uC6A9\uC790 \uAD00\uB9AC \uC704\uC784", description: "\uC774 \uACF5\uAC04\uC758 \uAD00\uB9AC\uC790\uAC00 \uB2E4\uB978 \uACF5\uAC04\uC758 \uC0AC\uC6A9\uC790\uB97C \uC5B4\uB514\uAE4C\uC9C0 \uAD00\uB9AC\uD560 \uC218 \uC788\uB294\uC9C0 CMS\uC5D0\uC11C \uC815\uD569\uB2C8\uB2E4. (\uBE44\uBC00\uBC88\uD638 \uC7AC\uC124\uC815\u00B7\uACC4\uC815 \uC7A0\uAE08 \uD574\uC81C \uB4F1)" }), _jsx(Callout, { tone: "info", children: "\uC5EC\uAE30\uC11C \uD5C8\uC6A9\uD55C \uBC94\uC704 \uC548\uC5D0\uC11C\uB9CC, \uC774 \uACF5\uAC04\uC758 \uC0AC\uC6A9\uC790 \uAD00\uB9AC \uAD8C\uD55C\uC790\uAC00 \uB300\uC0C1 \uACF5\uAC04 \uC0AC\uC6A9\uC790\uB97C \uAD00\uB9AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. CMS \uACC4\uC815\uC740 \uB300\uC0C1\uC774 \uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }), delegations.isPending ? _jsx(PageLoading, { label: "\uAD00\uB9AC \uC704\uC784\uC744 \uBD88\uB7EC\uC624\uB294 \uC911" }) : null, delegations.isError ? (_jsx(LoadError, { error: delegations.error, onRetry: () => void delegations.refetch() })) : null, candidates.length === 0 ? (_jsx(EmptyState, { title: "\uC704\uC784\uD560 \uB2E4\uB978 \uACF5\uAC04\uC774 \uC5C6\uC2B5\uB2C8\uB2E4", description: "\uAC19\uC740 \uC6CC\uD06C\uC2A4\uD398\uC774\uC2A4\uC5D0 \uB2E4\uB978 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC774 \uC788\uC5B4\uC57C \uAD00\uB9AC \uC704\uC784\uC744 \uC124\uC815\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." })) : (_jsx("div", { className: styles.tableWrap, children: _jsxs("table", { className: `${styles.table} ${styles.entitlementTable}`, children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "\uB300\uC0C1 \uACF5\uAC04" }), _jsx("th", { children: "\uD5C8\uC6A9 \uAD00\uB9AC \uC791\uC5C5" }), _jsx("th", { children: "\uD310\uC815" }), _jsx("th", { className: styles.entitlementActionsHead, children: "\uC791\uC5C5" })] }) }), _jsx("tbody", { children: candidates.map((managedRealm) => {
+                                const current = byManagedId.get(managedRealm.realmId);
+                                return (_jsxs("tr", { "data-has-entitlement": current !== undefined, children: [_jsx("td", { children: _jsxs("div", { className: styles.entitlementName, children: [_jsx("span", { className: styles.entitlementNameRow, children: _jsx("strong", { children: managedRealm.name }) }), _jsx(DisplayModeGate, { minimum: "advanced", children: _jsx(IdValue, { label: "Realm ID", value: managedRealm.realmId }) })] }) }), current === undefined ? (_jsxs(_Fragment, { children: [_jsx("td", { children: _jsx(Badge, { tone: "neutral", children: "\uC704\uC784 \uC5C6\uC74C" }) }), _jsx("td", { className: styles.entitlementMuted, children: "\u2014" })] })) : (_jsxs(_Fragment, { children: [_jsx("td", { children: _jsx("span", { className: styles.entitlementActions, children: delegationActionSummary(current) }) }), _jsx("td", { children: delegationScopeSummary(current) })] })), _jsx("td", { children: _jsxs("div", { className: styles.entitlementRowActions, children: [_jsx(Button, { size: "small", variant: "secondary", isDisabled: realm.status !== "active", onPress: () => setEditing({ managedRealm, current }), children: current === undefined ? "위임 설정" : "편집" }), current !== undefined ? (_jsx(Button, { size: "small", variant: "danger", isDisabled: realm.status !== "active", onPress: () => setRemoving(current), children: "\uC81C\uAC70" })) : null] }) })] }, managedRealm.realmId));
+                            }) })] }) })), editing ? (_jsx(DelegationEditDialog, { managingRealm: realm, managedRealm: editing.managedRealm, current: editing.current, onClose: () => setEditing(null), onSaved: async (saved) => {
+                    queryClient.setQueryData(queryKeys.realmDelegations(realm.realmId), (previous) => mergeDelegation(previous, saved, realm.realmId));
+                    setEditing(null);
+                    await queryClient.invalidateQueries({
+                        queryKey: queryKeys.managedByDelegations(saved.managedRealmId),
+                    });
+                } })) : null, removing ? (_jsx(DelegationRemoveDialog, { managingRealm: realm, delegation: removing, managedRealmName: realmName.get(removing.managedRealmId) ?? removing.managedRealmId, onClose: () => setRemoving(null), onRemoved: async () => {
+                    const managedRealmId = removing.managedRealmId;
+                    queryClient.setQueryData(queryKeys.realmDelegations(realm.realmId), (previous) => previous === undefined ? previous : {
+                        ...previous,
+                        delegations: previous.delegations.filter((d) => d.managedRealmId !== managedRealmId),
+                    });
+                    setRemoving(null);
+                    await queryClient.invalidateQueries({
+                        queryKey: queryKeys.managedByDelegations(managedRealmId),
+                    });
+                } })) : null] }));
+}
+function delegationScopeSummary(delegation) {
+    const rules = new Set(delegation.actions.map((a) => delegation.scopeByAction[a] ?? "all"));
+    if (rules.size === 0)
+        return "—";
+    if (rules.size > 1)
+        return "작업별 상이";
+    return rules.has("any") ? "느슨(하나라도 관리 대상)" : "엄격(모든 소속 관리 대상)";
+}
+function mergeDelegation(previous, saved, managingRealmId) {
+    if (previous === undefined)
+        return { managingRealmId, delegations: [saved] };
+    const others = previous.delegations.filter((d) => d.managedRealmId !== saved.managedRealmId);
+    return { ...previous, delegations: [...others, saved] };
+}
+function DelegationEditDialog({ managingRealm, managedRealm, current, onClose, onSaved }) {
+    const api = useAdminApi();
+    const [actions, setActions] = useState(() => new Set(current?.actions ?? []));
+    const [scopeByAction, setScopeByAction] = useState(() => ({ ...(current?.scopeByAction ?? {}) }));
+    const [password, setPassword] = useState("");
+    const toggleAction = (action, on) => {
+        setActions((previous) => {
+            const next = new Set(previous);
+            if (on)
+                next.add(action);
+            else
+                next.delete(action);
+            return next;
+        });
+    };
+    const setScope = (action, rule) => setScopeByAction((previous) => ({ ...previous, [action]: rule }));
+    const save = useMutation({
+        mutationFn: () => {
+            const selected = MANAGEMENT_ACTION_ITEMS
+                .map((item) => item.action)
+                .filter((action) => actions.has(action));
+            const scope = {};
+            for (const action of selected)
+                scope[action] = scopeByAction[action] ?? "all";
+            return api.identityRealms.putManagementDelegation(managingRealm.realmId, managedRealm.realmId, {
+                actions: selected,
+                scopeByAction: scope,
+                expectedRevision: current?.revision ?? null,
+                password,
+            });
+        },
+        onSuccess: (saved) => { void onSaved(saved); },
+    });
+    return (_jsx(ConfirmDialog, { title: `${managedRealm.name} 사용자 관리 위임`, confirmLabel: current === undefined ? "위임" : "저장", isPending: save.isPending, isConfirmDisabled: password === "" || actions.size === 0, onCancel: () => { onClose(); save.reset(); }, onConfirm: () => save.mutate(), children: _jsxs("div", { className: styles.entitlementDialog, children: [_jsxs("p", { className: styles.compactHint, children: [_jsx("strong", { children: managingRealm.name }), "\uC758 \uC0AC\uC6A9\uC790 \uAD00\uB9AC \uAD8C\uD55C\uC790\uAC00 ", _jsx("strong", { children: managedRealm.name }), " \uC0AC\uC6A9\uC790\uC5D0\uAC8C \uD560 \uC218 \uC788\uB294 \uC791\uC5C5\uC744 \uACE0\uB985\uB2C8\uB2E4."] }), _jsxs("div", { className: styles.entitlementGroup, children: [_jsx("h4", { children: "\uD5C8\uC6A9 \uAD00\uB9AC \uC791\uC5C5" }), MANAGEMENT_ACTION_ITEMS.map((item) => (_jsxs("div", { children: [_jsx(CheckboxField, { isSelected: actions.has(item.action), onChange: (on) => toggleAction(item.action, on), children: item.label }), actions.has(item.action) ? (_jsx(SelectField, { label: `${item.label} 판정`, value: scopeByAction[item.action] ?? "all", options: [
+                                        { value: "all", label: "엄격 — 대상의 모든 소속이 관리 대상일 때만" },
+                                        { value: "any", label: "느슨 — 대상의 소속 중 하나라도 관리 대상이면" },
+                                    ], onChange: (value) => setScope(item.action, value) })) : null] }, item.action)))] }), _jsx(TextInput, { label: "\uD604\uC7AC System \uACC4\uC815 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: password, onChange: setPassword, isRequired: true }), _jsx(MutationError, { error: save.error })] }) }));
+}
+function DelegationRemoveDialog({ managingRealm, delegation, managedRealmName, onClose, onRemoved }) {
+    const api = useAdminApi();
+    const [password, setPassword] = useState("");
+    const remove = useMutation({
+        mutationFn: () => api.identityRealms.deleteManagementDelegation(managingRealm.realmId, delegation.managedRealmId, {
+            expectedRevision: delegation.revision,
+            password,
+        }),
+        onSuccess: () => { void onRemoved(); },
+    });
+    return (_jsx(ConfirmDialog, { title: "\uAD00\uB9AC \uC704\uC784 \uC81C\uAC70", confirmLabel: "\uC81C\uAC70", danger: true, isPending: remove.isPending, isConfirmDisabled: password === "", onCancel: () => { onClose(); remove.reset(); }, onConfirm: () => remove.mutate(), children: _jsxs("div", { className: styles.dialogStack, children: [_jsx(Callout, { tone: "warning", children: _jsxs("strong", { children: [managingRealm.name, "\uAC00 ", managedRealmName, " \uC0AC\uC6A9\uC790\uB97C \uB354 \uC774\uC0C1 \uAD00\uB9AC\uD560 \uC218 \uC5C6\uAC8C \uB429\uB2C8\uB2E4."] }) }), _jsx(TextInput, { label: "\uD604\uC7AC System \uACC4\uC815 \uBE44\uBC00\uBC88\uD638", type: "password", autoComplete: "current-password", value: password, onChange: setPassword, isRequired: true }), _jsx(MutationError, { error: remove.error })] }) }));
+}
 function FullAccessSection({ realm, bindings, mode }) {
     const api = useAdminApi();
     const navigate = useNavigate();
@@ -895,12 +1025,23 @@ export function RealmEntitlementMatrixPage() {
         const result = rowQueries[index]?.data;
         byCollection.set(collection.id, new Map((result?.entitlements ?? []).map((e) => [e.realmId, e])));
     });
+    // collectionId → the realm that owns it as its Auth (profile) collection.
+    const authOwnerByCollection = new Map();
+    for (const r of contentRealms) {
+        if (r.profileCollectionId !== undefined)
+            authOwnerByCollection.set(r.profileCollectionId, r.realmId);
+    }
     const loading = realms.isPending || collections.isPending || rowQueries.some((q) => q.isPending);
     const rowError = rowQueries.find((q) => q.isError);
     return (_jsxs(Page, { children: [_jsx(PageHeader, { eyebrow: "Access", title: "\uCF58\uD150\uCE20 \uC811\uADFC \uB9E4\uD2B8\uB9AD\uC2A4", description: "\uC5B4\uB5A4 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC774 \uC5B4\uB5A4 \uCF58\uD150\uCE20\uC5D0 \uC811\uADFC\uD560 \uC218 \uC788\uB294\uC9C0 \uD55C\uB208\uC5D0 \uBD05\uB2C8\uB2E4. \uC140\uC744 \uB204\uB974\uBA74 \uD574\uB2F9 \uACF5\uAC04\uC758 \uC811\uADFC \uC124\uC815\uC73C\uB85C \uC774\uB3D9\uD569\uB2C8\uB2E4.", actions: _jsx(Button, { variant: "secondary", onPress: () => navigate("/admin/realms"), children: "\uC0AC\uC6A9\uC790 \uACF5\uAC04 \uBAA9\uB85D" }) }), realms.isError ? _jsx(LoadError, { error: realms.error, onRetry: () => void realms.refetch() }) : null, collections.isError ? _jsx(LoadError, { error: collections.error, onRetry: () => void collections.refetch() }) : null, rowError !== undefined ? _jsx(LoadError, { error: rowError.error, onRetry: () => void rowError.refetch() }) : null, loading ? _jsx(PageLoading, { label: "\uC811\uADFC \uB9E4\uD2B8\uB9AD\uC2A4\uB97C \uBD88\uB7EC\uC624\uB294 \uC911" }) : null, !loading && contentRealms.length === 0 ? (_jsx(EmptyState, { title: "\uC0AC\uC6A9\uC790 \uACF5\uAC04\uC774 \uC5C6\uC2B5\uB2C8\uB2E4", description: "\uBA3C\uC800 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC744 \uB9CC\uB4E4\uBA74 \uC811\uADFC \uB9E4\uD2B8\uB9AD\uC2A4\uAC00 \uCC44\uC6CC\uC9D1\uB2C8\uB2E4." })) : null, !loading && contentRealms.length > 0 && collectionItems.length === 0 ? (_jsx(EmptyState, { title: "\uCF58\uD150\uCE20 \uC720\uD615\uC774 \uC5C6\uC2B5\uB2C8\uB2E4", description: "\uC2A4\uD0A4\uB9C8\uC5D0\uC11C \uCF58\uD150\uCE20 \uC720\uD615\uC744 \uBA3C\uC800 \uB9CC\uB4E4\uC5B4 \uC8FC\uC138\uC694." })) : null, !loading && contentRealms.length > 0 && collectionItems.length > 0 ? (_jsx("div", { className: styles.tableWrap, children: _jsxs("table", { className: `${styles.table} ${styles.entitlementMatrix}`, children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { className: styles.entitlementMatrixCorner, children: "\uCF58\uD150\uCE20 \uC720\uD615" }), contentRealms.map((realm) => (_jsx("th", { children: _jsx(Link, { to: `/admin/realms/${encodeURIComponent(realm.realmId)}?tab=access`, children: realm.name }) }, realm.realmId)))] }) }), _jsx("tbody", { children: collectionItems.map((collection) => (_jsxs("tr", { children: [_jsx("th", { scope: "row", className: styles.entitlementMatrixRowHead, children: collection.label ?? collection.name }), contentRealms.map((realm) => {
-                                        const isAuth = collection.id === realm.profileCollectionId;
+                                        const authOwnerId = authOwnerByCollection.get(collection.id);
+                                        const isAuth = authOwnerId === realm.realmId;
+                                        // Another realm's Auth collection is never accessible here.
+                                        const isForeignAuth = authOwnerId !== undefined && authOwnerId !== realm.realmId;
                                         const entitlement = byCollection.get(collection.id)?.get(realm.realmId);
-                                        return (_jsx("td", { className: styles.entitlementMatrixCell, "data-access": isAuth ? "guaranteed" : entitlement !== undefined ? "allowed" : "none", children: _jsx(Link, { to: `/admin/realms/${encodeURIComponent(realm.realmId)}?tab=access`, "aria-label": `${realm.name} · ${collection.label ?? collection.name} 접근 설정`, children: isAuth ? (_jsx(Badge, { tone: "success", children: "\uD56D\uC0C1 \uD5C8\uC6A9" })) : entitlement !== undefined ? (_jsx("span", { className: styles.entitlementMatrixActions, children: entitlementActionSummary(entitlement.actions) })) : (_jsx("span", { className: styles.entitlementMatrixNone, children: "\uC811\uADFC \uC548 \uD568" })) }) }, realm.realmId));
+                                        return (_jsx("td", { className: styles.entitlementMatrixCell, "data-access": isAuth ? "guaranteed"
+                                                : isForeignAuth ? "blocked"
+                                                    : entitlement !== undefined ? "allowed" : "none", children: _jsx(Link, { to: `/admin/realms/${encodeURIComponent(realm.realmId)}?tab=access`, "aria-label": `${realm.name} · ${collection.label ?? collection.name} 접근 설정`, children: isAuth ? (_jsx(Badge, { tone: "success", children: "\uD56D\uC0C1 \uD5C8\uC6A9" })) : isForeignAuth ? (_jsx("span", { className: styles.entitlementMatrixNone, children: "\uC811\uADFC \uBD88\uAC00" })) : entitlement !== undefined ? (_jsx("span", { className: styles.entitlementMatrixActions, children: entitlementActionSummary(entitlement.actions) })) : (_jsx("span", { className: styles.entitlementMatrixNone, children: "\uC811\uADFC \uC548 \uD568" })) }) }, realm.realmId));
                                     })] }, collection.id))) })] }) })) : null] }));
 }
 //# sourceMappingURL=identity-realm-pages.js.map

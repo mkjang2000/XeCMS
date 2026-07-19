@@ -693,6 +693,18 @@ export function createAdminApi(client = createXeCmsClient()) {
                 const result = await client.identityRealms.listEntitlementsForCollection(collectionId);
                 return { collectionId: result.collectionId, entitlements: result.items };
             }),
+            listManagementDelegations: (realmId) => call(async () => {
+                const result = await client.identityRealms.listManagementDelegations(realmId);
+                return { managingRealmId: result.managingRealmId, delegations: result.items };
+            }),
+            listManagedByDelegations: (realmId) => call(async () => {
+                const result = await client.identityRealms.listManagedByDelegations(realmId);
+                return { managedRealmId: result.managedRealmId, delegations: result.items };
+            }),
+            putManagementDelegation: (realmId, managedRealmId, input) => call(() => client.identityRealms.putManagementDelegation(realmId, managedRealmId, input)),
+            deleteManagementDelegation: (realmId, managedRealmId, input) => call(async () => {
+                await client.identityRealms.deleteManagementDelegation(realmId, managedRealmId, input);
+            }),
             authorizationFor: (realmId) => createAuthorizationAdminApi(client.identityRealms.authorizationFor(realmId)),
         },
         authorization: createAuthorizationAdminApi(client.authorization),

@@ -20,6 +20,9 @@ import {
 import {
   InMemoryRealmCollectionEntitlementStore,
 } from "./realm-collection-entitlements.js";
+import {
+  InMemoryRealmManagementDelegationStore,
+} from "./realm-management-delegations.js";
 
 const NOW = "2026-07-15T00:00:00.000Z";
 const WORKSPACE_ID = "wrk_default";
@@ -1348,5 +1351,159 @@ describe("M4 realm collection entitlement management (CMS Owner)", () => {
     const service = new IdentityRealmApplicationService(store, runtime);
     await expect(service.listRealmEntitlements(cmsOwner, realm.id))
       .rejects.toMatchObject({ code: "ENTITLEMENT_STORE_UNAVAILABLE", status: 500 });
+  });
+
+  it("refuses to expose another realm's Auth collection through a ceiling", async () => {
+    const { service, store, realm } = setup();
+    // A second realm whose Auth (profile) collection is col_portal_auth.
+    const other = contentRealm({ id: "rlm_portal", key: "portal", name: "Portal", profileCollectionId: "col_portal_auth" });
+    store.realms.set(other.id, other);
+    // Trying to grant realm (rlm_community) a ceiling on the portal's Auth collection is rejected.
+    await expect(service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_portal_auth",
+      actions: ["read"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "ENTITLEMENT_FOREIGN_AUTH_COLLECTION", status: 422 });
+  });
+});
+
+describe("M4 realm management delegation (CMS Owner)", () => {
+  const cmsOwner: ActorContext = {
+    subjectId: "subject_cms_owner",
+    identityId: "usr_cms_owner",
+    realmId: "rlm_system",
+    workspaceId: WORKSPACE_ID,
+    capabilities: ["schema:apply"],
+  };
+
+  function setup() {
+    const store = new MemoryIdentityRealmStore();
+    const managing = contentRealm({ id: "rlm_admin", key: "admin", name: "관리자전산" });
+    const managed = contentRealm({ id: "rlm_portal", key: "portal", name: "업무포탈" });
+    store.realms.set(managing.id, managing);
+    store.realms.set(managed.id, managed);
+    const delegations = new InMemoryRealmManagementDelegationStore();
+    const service = new IdentityRealmApplicationService(
+      store, runtime, undefined, undefined, undefined, undefined, delegations,
+    );
+    return { store, managing, managed, delegations, service };
+  }
+
+  it("rejects delegation management from a non-administration actor", async () => {
+    const { service, managing, managed } = setup();
+    const outsider: ActorContext = { ...cmsOwner, capabilities: [] };
+    await expect(service.listRealmDelegations(outsider, managing.id))
+      .rejects.toMatchObject({ code: "ACCESS_DENIED", status: 403 });
+    await expect(service.putRealmDelegation(outsider, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      actions: ["identity.credentials.reset"],
+      scopeByAction: {},
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "ACCESS_DENIED", status: 403 });
+  });
+
+  it("creates a delegation, defaults scope to all, and records an audit event", async () => {
+    const { service, store, managing, managed } = setup();
+    const saved = await service.putRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      actions: ["identity.credentials.reset", "identity.disable"],
+      scopeByAction: { "identity.credentials.reset": "any" },
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    });
+    // Explicit rule kept; the other action defaults to the stricter "all".
+    expect(saved.scopeByAction).toEqual({
+      "identity.credentials.reset": "any",
+      "identity.disable": "all",
+    });
+    expect(saved.revision).toBe(1);
+
+    const listed = await service.listRealmDelegations(cmsOwner, managing.id);
+    expect(listed).toHaveLength(1);
+    const reverse = await service.listManagedByDelegations(cmsOwner, managed.id);
+    expect(reverse.map((d) => d.managingRealmId)).toEqual(["rlm_admin"]);
+
+    const event = store.administrationEvents.at(-1);
+    expect(event?.event).toBe("REALM_MANAGEMENT_DELEGATION_UPDATED");
+    expect(event?.operation).toBe("create");
+    expect(event?.targetId).toBe("rlm_portal");
+  });
+
+  it("rejects a self-delegation", async () => {
+    const { service, managing } = setup();
+    await expect(service.putRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managing.id,
+      actions: ["identity.disable"],
+      scopeByAction: {},
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects unknown actions and dangling scope keys", async () => {
+    const { service, managing, managed } = setup();
+    await expect(service.putRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      actions: ["identity.teleport"],
+      scopeByAction: {},
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "IDENTITY_REALM_INPUT_INVALID", status: 422 });
+    await expect(service.putRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      actions: ["identity.disable"],
+      scopeByAction: { "identity.credentials.reset": "any" },
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("requires recent reauthentication", async () => {
+    const { service, managing, managed } = setup();
+    await expect(service.putRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      actions: ["identity.disable"],
+      scopeByAction: {},
+      expectedRevision: null,
+      reauthenticatedAt: "2026-07-14T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "RECENT_REAUTHENTICATION_REQUIRED" });
+  });
+
+  it("removes a delegation and records a removal audit event", async () => {
+    const { service, store, managing, managed, delegations } = setup();
+    const saved = await service.putRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      actions: ["identity.disable"],
+      scopeByAction: {},
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    });
+    await service.deleteRealmDelegation(cmsOwner, {
+      managingRealmId: managing.id,
+      managedRealmId: managed.id,
+      expectedRevision: saved.revision,
+      reauthenticatedAt: NOW,
+    });
+    expect(await delegations.listByManagingRealm(managing.id)).toHaveLength(0);
+    expect(store.administrationEvents.at(-1)?.event).toBe("REALM_MANAGEMENT_DELEGATION_REMOVED");
+  });
+
+  it("fails closed when the delegation store is not configured", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    store.realms.set(realm.id, realm);
+    const service = new IdentityRealmApplicationService(store, runtime);
+    await expect(service.listRealmDelegations(cmsOwner, realm.id))
+      .rejects.toMatchObject({ code: "MANAGEMENT_DELEGATION_STORE_UNAVAILABLE", status: 500 });
   });
 });

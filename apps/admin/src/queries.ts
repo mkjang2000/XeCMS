@@ -52,6 +52,10 @@ export const queryKeys = {
     ["identity-realms", realmId, "collection-entitlements"] as const,
   collectionEntitlements: (collectionId: string) =>
     ["collections", collectionId, "entitlements"] as const,
+  realmDelegations: (realmId: string) =>
+    ["identity-realms", realmId, "management-delegations"] as const,
+  managedByDelegations: (realmId: string) =>
+    ["identity-realms", realmId, "managed-by-delegations"] as const,
   jobs: (page: number, status: string, topic: string, handlerId: string) =>
     ["jobs", "list", page, status, topic, handlerId] as const,
 };

@@ -21,6 +21,8 @@ import {
   DocumentLifecycleHookRegistry,
   EventWorkerService,
   IdentityAdministrationService,
+  CrossRealmManagementService,
+  type ManagedIdentity,
   IdentityRealmApplicationService,
   WorkspaceSettingsService,
   SiteService,
@@ -96,6 +98,7 @@ import {
   PostgresDatabase,
   PostgresAuthorizationStore,
   PostgresRealmCollectionEntitlementStore,
+  PostgresRealmManagementDelegationStore,
   PostgresAdminAppStore,
   PostgresContentHierarchyStore,
   PostgresIdentityRealmStore,
@@ -121,7 +124,10 @@ import Fastify, {
 } from "fastify";
 import { loadServerConfig, type ServerConfig } from "./config.js";
 import { registerAuthorizationRoutes } from "./authorization-routes.js";
-import { registerIdentityRealmRoutes } from "./identity-realm-routes.js";
+import {
+  registerIdentityRealmRoutes,
+  type CrossRealmManagedTarget,
+} from "./identity-realm-routes.js";
 import { registerIdentityAdministrationRoutes } from "./identity-administration-routes.js";
 import { registerJobRoutes } from "./job-routes.js";
 import { registerSiteRoutes } from "./site-routes.js";
@@ -218,6 +224,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   await plugins.reconcileRuntime(DEFAULT_WORKSPACE_ID);
   const authorizationStore = new PostgresAuthorizationStore(database.pool, database.schema);
   const entitlementStore = new PostgresRealmCollectionEntitlementStore(database.pool, database.schema);
+  const delegationStore = new PostgresRealmManagementDelegationStore(database.pool, database.schema);
+  const crossRealmManagementService = new CrossRealmManagementService(delegationStore);
   const adminApps = new AdminAppApplicationService(
     new PostgresAdminAppStore(database.pool, database.schema),
     new CatalogAdminAppDependencyResolver({
@@ -484,6 +492,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       },
     },
     entitlementStore,
+    delegationStore,
   );
   const contentRealmAuthentication = new ContentRealmAuthenticationService(
     identityRealmStore,
@@ -1519,6 +1528,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         identityRealms.listCollectionEntitlements(actor, collectionId),
       putRealmEntitlement: (actor, input) => identityRealms.putRealmEntitlement(actor, input),
       deleteRealmEntitlement: (actor, input) => identityRealms.deleteRealmEntitlement(actor, input),
+      listRealmDelegations: (actor, managingRealmId) =>
+        identityRealms.listRealmDelegations(actor, managingRealmId),
+      listManagedByDelegations: (actor, managedRealmId) =>
+        identityRealms.listManagedByDelegations(actor, managedRealmId),
+      putRealmDelegation: (actor, input) => identityRealms.putRealmDelegation(actor, input),
+      deleteRealmDelegation: (actor, input) => identityRealms.deleteRealmDelegation(actor, input),
     },
     contentAuthentication: contentRealmAuthentication,
     metadata: {
@@ -1701,6 +1716,43 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       },
     },
     secureCookies: config.secureCookies,
+    crossRealmManagement: {
+      getTarget: async (identityId, workspaceId) =>
+        toCrossRealmTarget(await identityAdministration.get(identityId, workspaceId)),
+      authorize: (actor, input) =>
+        crossRealmManagementService.authorize(actor, {
+          action: input.action,
+          targetMemberships: input.target.memberships,
+        }),
+      resetPassword: async ({ actor, target, temporaryPassword }) =>
+        toCrossRealmTarget(await identityAdministration.resetPassword({
+          identityId: target.identityId,
+          workspaceId: actor.workspaceId,
+          expectedRevision: target.revision,
+          temporaryPassword,
+          revokeApiKeys: true,
+          actorIdentityId: actor.identityId ?? actor.subjectId,
+          actorSubjectId: actor.subjectId,
+        })),
+      setDisabled: async ({ actor, target, disabled }) =>
+        toCrossRealmTarget(await identityAdministration.setDisabled({
+          identityId: target.identityId,
+          workspaceId: actor.workspaceId,
+          expectedRevision: target.revision,
+          disabled,
+          actorIdentityId: actor.identityId ?? actor.subjectId,
+          actorSubjectId: actor.subjectId,
+        })),
+      revokeSessions: async ({ actor, target }) => {
+        await identityAdministration.revokeAllSessions({
+          identityId: target.identityId,
+          workspaceId: actor.workspaceId,
+          actorIdentityId: actor.identityId ?? actor.subjectId,
+        });
+        // Session revocation doesn't change the identity revision; re-read for a fresh view.
+        return toCrossRealmTarget(await identityAdministration.get(target.identityId, actor.workspaceId));
+      },
+    },
   });
 
   app.addHook("onSend", async (_request, reply) => {
@@ -3337,6 +3389,21 @@ function nonNegativeInteger(value: unknown, field: string): number {
     throw badRequest("REQUEST_BODY_INVALID", `${field} must be a non-negative safe integer.`);
   }
   return value;
+}
+
+/** Projects a managed identity onto the minimal shape entry point B needs. */
+function toCrossRealmTarget(identity: ManagedIdentity): CrossRealmManagedTarget {
+  return {
+    identityId: identity.id,
+    primaryIdentifier: identity.primaryIdentifier,
+    revision: identity.revision,
+    disabled: identity.status === "disabled",
+    memberships: identity.memberships.map((m) => ({
+      realmId: m.realmId,
+      realmKind: m.realmKind,
+      status: m.status,
+    })),
+  };
 }
 
 function requiredString(value: unknown, field: string): string {
