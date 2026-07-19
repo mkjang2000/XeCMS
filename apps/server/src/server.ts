@@ -1349,7 +1349,20 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       createProfileSchema: createDefaultRealmProfileSchema,
       createProfileField: createDefaultRealmProfileField,
       updateRealm: (actor, input) => identityRealms.updateRealm(actor, input),
-      listMemberships: (actor, realmId) => identityRealms.listMemberships(actor, realmId),
+      listMemberships: async (actor, realmId) => {
+        const memberships = await identityRealms.listMemberships(actor, realmId);
+        // Annotate each Membership with whether it holds the trusted Content
+        // Administrator binding, so the Admin UI can reflect appointment state.
+        const realm = await identityRealmStore.getRealmById(realmId);
+        if (realm === null || realm.kind !== "content") return memberships;
+        const administratorSubjectIds = new Set(
+          await realmAuthorization.listRealmAdministratorSubjectIds(realm),
+        );
+        return memberships.map((membership) => ({
+          ...membership,
+          realmAdministrator: administratorSubjectIds.has(membership.subjectId),
+        }));
+      },
       provisionMembership: (actor, input) => identityRealms.provisionMembership(actor, input),
       registerMembership: (actor, input) => identityRealms.registerMembership(actor, input),
       grantRealmAdministrator: async (actor, input) => {

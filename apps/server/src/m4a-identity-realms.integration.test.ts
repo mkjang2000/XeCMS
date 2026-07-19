@@ -39,6 +39,7 @@ interface Membership {
   readonly subjectId: string;
   readonly status: "pending" | "active" | "suspended";
   readonly revision: number;
+  readonly realmAdministrator?: boolean;
 }
 interface Policy {
   readonly revision: number;
@@ -213,9 +214,23 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
       }, 200);
       expect(loginAfterRestart.cookie).toContain("xecms_content_session=");
 
+      // Appoint the operator membership as Content Administrator, then confirm
+      // the membership list reflects the appointment (realmAdministrator flag).
+      await adminJson(
+        server,
+        owner,
+        "POST",
+        `/api/identity-realms/${realm.realmId}/memberships/${adminMembership.membershipId}/administrator`,
+        { reauthPassword: TEST_OWNER_PASSWORD },
+        201,
+      );
+
       const memberships = await getJson<{ readonly items: readonly Membership[] }>(server, `/api/identity-realms/${realm.realmId}/memberships`, owner.cookie);
+      const appointedAdmin = memberships.items.find(({ membershipId }) => membershipId === adminMembership.membershipId);
+      expect(appointedAdmin?.realmAdministrator).toBe(true);
       const memberMembership = memberships.items.find(({ subjectId }) => subjectId === signup.body.subjectId);
       expect(memberMembership).toBeDefined();
+      expect(memberMembership?.realmAdministrator).toBe(false);
       await adminJson(server, owner, "PATCH", `/api/identity-realms/${realm.realmId}/memberships/${memberMembership!.membershipId}`, {
         expectedRevision: memberMembership!.revision,
         status: "suspended",

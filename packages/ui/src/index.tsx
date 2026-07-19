@@ -251,6 +251,59 @@ export function ConfirmDialog({
   );
 }
 
+export interface FormDialogProps extends Omit<AriaDialogProps, "children" | "className"> {
+  readonly title: string;
+  readonly children: ReactNode;
+  readonly submitLabel: string;
+  readonly cancelLabel?: string;
+  readonly danger?: boolean;
+  readonly isPending?: boolean;
+  readonly isSubmitDisabled?: boolean;
+  readonly onSubmit: () => void;
+  readonly onCancel: () => void;
+}
+
+/**
+ * A modal that wraps arbitrary form content in a real <form>, so Enter submits
+ * and the primary button is a submit button. Use this for input dialogs;
+ * ConfirmDialog remains for simple confirm/cancel prompts.
+ */
+export function FormDialog({
+  title,
+  children,
+  submitLabel,
+  cancelLabel = "취소",
+  danger = false,
+  isPending = false,
+  isSubmitDisabled = false,
+  onSubmit,
+  onCancel,
+  ...props
+}: FormDialogProps): ReactElement {
+  return (
+    <ModalOverlay isOpen isDismissable={!isPending} className={styles.modalOverlay} onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <Modal className={styles.modal}>
+        <AriaDialog {...props} className={styles.dialog}>
+          <form onSubmit={(event) => { event.preventDefault(); if (!isPending && !isSubmitDisabled) onSubmit(); }}>
+            <Heading slot="title" className={styles.dialogHeading}>{title}</Heading>
+            <div>{children}</div>
+            <div className={styles.dialogActions}>
+              <Button variant="secondary" type="button" onPress={onCancel} isDisabled={isPending}>{cancelLabel}</Button>
+              <Button
+                variant={danger ? "danger" : "primary"}
+                type="submit"
+                isDisabled={isPending || isSubmitDisabled}
+              >
+                {isPending ? "처리 중…" : submitLabel}
+              </Button>
+            </div>
+          </form>
+        </AriaDialog>
+      </Modal>
+    </ModalOverlay>
+  );
+}
+
 export function Callout({
   tone = "info",
   children,

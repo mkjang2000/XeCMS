@@ -7,6 +7,9 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { LoadError, PageLoading, RealmAuthorizationError } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
+import { Tabs, TabDangerDot } from "../components/tabs.js";
+import { Checklist } from "../components/stepper.js";
+import { isRealmSetupIncomplete, ownerCandidateMemberships, realmSetupSteps } from "./realm-setup.js";
 import { DisplayModeGate, displayModeAtLeast, useDisplayMode } from "../display-mode.js";
 import { queryKeys } from "../queries.js";
 import styles from "../identity-realms.module.css";
@@ -184,17 +187,81 @@ export function IdentityRealmDetailPage() {
         return _jsx(Page, { children: _jsx(RealmAuthorizationError, { error: realm.error, context: "detail", onRetry: () => void realm.refetch() }) });
     return (_jsxs(Page, { children: [_jsx(PageHeader, { eyebrow: realm.data.kind === "system" ? "운영자 공간(System Realm)" : "사용자 공간(Content Realm)", title: realm.data.name, description: realm.data.kind === "system"
                     ? "CMS 운영 계정과 Admin 세션의 보호된 운영자 공간입니다."
-                    : "계정의 로그인 자격 증명과 이 공간의 소속·권한 대상·프로필 연결을 관리합니다.", actions: _jsxs(_Fragment, { children: [_jsx(RealmStatusBadge, { realm: realm.data }), _jsx(Button, { variant: "secondary", onPress: () => navigate("/admin/realms"), children: "\uBAA9\uB85D\uC73C\uB85C" })] }) }), _jsx(RealmIdentitySummary, { realm: realm.data }), realm.data.kind === "system" ? (_jsxs(Callout, { tone: "info", children: [_jsx("strong", { children: "\uC6B4\uC601\uC790 \uACF5\uAC04\uC740 \uC774 \uD654\uBA74\uC5D0\uC11C \uC218\uC815\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }), " \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC5D0 \uC6B4\uC601 \uACC4\uC815\uC744 \uC5F0\uACB0\uD574\uB3C4 \uC6B4\uC601 \uAD8C\uD55C\uC774 \uC804\uD30C\uB418\uC9C0\uB294 \uC54A\uC2B5\uB2C8\uB2E4."] })) : (_jsxs(_Fragment, { children: [realm.data.status === "provisioning" ? (_jsxs(Callout, { tone: "warning", children: [_jsx("strong", { children: "\uAE30\uBCF8 \uC778\uC99D \uC2A4\uD0A4\uB9C8\uB97C \uB9CC\uB4E4\uBA74 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC744 \uBC14\uB85C \uD65C\uC131\uD654\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." }), _jsx("p", { children: "\uB85C\uADF8\uC778 identifier\uC640 \uAE30\uBCF8 Profile \uD544\uB4DC\uB97C \uD655\uC778\uD558\uBA74 Collection \uC0DD\uC131, stable ID \uBC1C\uAE09, \uACF5\uAC04 \uC5F0\uACB0\uACFC Schema \uC801\uC6A9\uC744 \uD55C \uBC88\uC5D0 \uCC98\uB9AC\uD569\uB2C8\uB2E4." }), _jsxs("div", { className: styles.formActions, children: [_jsx(Button, { onPress: () => setProfileSetupOpen(true), children: "\uAE30\uBCF8 \uC778\uC99D \uC2A4\uD0A4\uB9C8 \uC0DD\uC131" }), _jsx(Button, { variant: "secondary", onPress: () => navigate("/admin/schema/new"), children: "\uC9C1\uC811 \uC124\uACC4" })] })] })) : null, realm.data.status === "disabled" ? (_jsxs(Callout, { tone: "warning", children: [_jsx("strong", { children: "\uC774 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC740 \uBE44\uD65C\uC131 \uC0C1\uD0DC\uC785\uB2C8\uB2E4." }), " \uC2E0\uADDC \uC138\uC158, \uC18C\uC18D provisioning\uACFC Full Access grant\uAC00 \uCC28\uB2E8\uB429\uB2C8\uB2E4."] })) : null, _jsx(RealmDetailTabs, { active: detailTab, hasProfile: realm.data.profileCollectionId !== undefined, fullAccessActive: (fullAccess.data?.activeBinding !== undefined && isActiveFullAccess(fullAccess.data.activeBinding))
+                    : "계정의 로그인 자격 증명과 이 공간의 소속·권한 대상·프로필 연결을 관리합니다.", actions: _jsxs(_Fragment, { children: [_jsx(RealmStatusBadge, { realm: realm.data }), _jsx(Button, { variant: "secondary", onPress: () => navigate("/admin/realms"), children: "\uBAA9\uB85D\uC73C\uB85C" })] }) }), _jsx(RealmIdentitySummary, { realm: realm.data }), realm.data.kind === "system" ? (_jsxs(Callout, { tone: "info", children: [_jsx("strong", { children: "\uC6B4\uC601\uC790 \uACF5\uAC04\uC740 \uC774 \uD654\uBA74\uC5D0\uC11C \uC218\uC815\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }), " \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC5D0 \uC6B4\uC601 \uACC4\uC815\uC744 \uC5F0\uACB0\uD574\uB3C4 \uC6B4\uC601 \uAD8C\uD55C\uC774 \uC804\uD30C\uB418\uC9C0\uB294 \uC54A\uC2B5\uB2C8\uB2E4."] })) : (_jsxs(_Fragment, { children: [_jsx(RealmSetupChecklist, { realm: realm.data, owner: owner.data, memberships: memberships.data?.items, ownerCandidateCount: ownerCandidateMemberships({
+                            memberships: memberships.data?.items,
+                            identities: identities.data?.items,
+                            owner: owner.data,
+                            systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system",
+                        }).length, onOpenProfileSetup: () => setProfileSetupOpen(true), onGoMembers: () => setDetailTab("members"), onGoAccess: () => navigate(`/admin/realms/${encodeURIComponent(realm.data.realmId)}/access/${mode === "basic" ? "grades" : "roles"}`) }), realm.data.status === "provisioning" && displayModeAtLeast(mode, "advanced") ? (_jsxs(Callout, { tone: "info", children: ["\uACE0\uAE09: \uC9C1\uC811 Schema\uB97C \uC124\uACC4\uD558\uB824\uBA74 ", _jsx(Button, { size: "small", variant: "quiet", onPress: () => navigate("/admin/schema/new"), children: "\uC2A4\uD0A4\uB9C8 \uD3B8\uC9D1\uAE30\uB85C \uC774\uB3D9" }), "\uD558\uC138\uC694."] })) : null, realm.data.status === "disabled" ? (_jsxs(Callout, { tone: "warning", children: [_jsx("strong", { children: "\uC774 \uC0AC\uC6A9\uC790 \uACF5\uAC04\uC740 \uBE44\uD65C\uC131 \uC0C1\uD0DC\uC785\uB2C8\uB2E4." }), " \uC2E0\uADDC \uC138\uC158, \uC18C\uC18D provisioning\uACFC Full Access grant\uAC00 \uCC28\uB2E8\uB429\uB2C8\uB2E4."] })) : null, _jsx(RealmDetailTabs, { active: detailTab, hasProfile: realm.data.profileCollectionId !== undefined, fullAccessActive: (fullAccess.data?.activeBinding !== undefined && isActiveFullAccess(fullAccess.data.activeBinding))
                             || fullAccess.data?.items.some(isActiveFullAccess) === true, onChange: setDetailTab }), detailTab === "overview" ? _jsx(RealmSettingsForm, { realm: realm.data }) : null, detailTab === "members" ? (_jsxs(_Fragment, { children: [_jsx(RealmOwnerSection, { realm: realm.data, owner: owner, memberships: memberships, identities: identities, systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system" }), _jsx(MembershipSection, { realm: realm.data, memberships: memberships, identities: identities, systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system" })] })) : null, detailTab === "profile" && realm.data.profileCollectionId !== undefined ? (_jsx(RealmProfileFieldsSection, { realm: realm.data })) : null, detailTab === "access" ? (_jsxs(_Fragment, { children: [_jsx(RealmAccessOverview, { realm: realm.data, mode: mode }), _jsx(FullAccessSection, { realm: realm.data, bindings: fullAccess, mode: mode })] })) : null, profileSetupOpen ? (_jsx(ProfileSchemaSetupDialog, { realm: realm.data, error: createProfileSchema.error, isPending: createProfileSchema.isPending, onCancel: () => { setProfileSetupOpen(false); createProfileSchema.reset(); }, onConfirm: (input) => createProfileSchema.mutate(input) })) : null] }))] }));
+}
+const STEP_LABEL = {
+    activate: "1. 스키마 연결 · 활성화",
+    owner: "2. 소유자 지정",
+    administrator: "3. 관리자 지정",
+    access: "4. 권한 구성",
+};
+/**
+ * Setup progress for a Content Realm, derived entirely from already-loaded
+ * queries. Turns the hidden ordering (activate → owner → administrator →
+ * access) into a visible checklist and — crucially — previews the bootstrap
+ * deadlock before the operator is bounced out of the policy screen.
+ */
+function RealmSetupChecklist({ realm, owner, memberships, ownerCandidateCount, onOpenProfileSetup, onGoMembers, onGoAccess, }) {
+    const steps = realmSetupSteps({ realm, owner, memberships, ownerCandidateCount });
+    if (!isRealmSetupIncomplete(steps))
+        return null;
+    const byId = new Map(steps.map((step) => [step.id, step.status]));
+    const stepDefs = steps.map((step) => {
+        const base = { id: step.id, label: STEP_LABEL[step.id], status: step.status };
+        if (step.id === "activate" && step.status !== "done") {
+            return {
+                ...base,
+                description: "로그인 identifier와 기본 Profile 필드를 정하면 Collection 생성·연결·활성화를 한 번에 처리합니다.",
+                action: _jsx(Button, { size: "small", onPress: onOpenProfileSetup, children: "\uAE30\uBCF8 \uC778\uC99D \uC2A4\uD0A4\uB9C8 \uC0DD\uC131" }),
+            };
+        }
+        if (step.id === "owner" && step.status === "blocked") {
+            return {
+                ...base,
+                description: "소유자로 지정할 활성 운영자가 아직 없습니다. ‘사용자’ 탭에서 기존 운영자를 먼저 연결하세요.",
+                action: _jsx(Button, { size: "small", variant: "secondary", onPress: onGoMembers, children: "\uC0AC\uC6A9\uC790 \uD0ED\uC73C\uB85C \uC774\uB3D9" }),
+            };
+        }
+        if (step.id === "owner" && step.status === "current") {
+            return {
+                ...base,
+                description: "이 공간의 사람 최고관리자를 지정해 운영 연속성을 확보하세요.",
+                action: _jsx(Button, { size: "small", onPress: onGoMembers, children: "\uC18C\uC720\uC790 \uC9C0\uC815\uD558\uB7EC \uAC00\uAE30" }),
+            };
+        }
+        if (step.id === "administrator" && step.status === "current") {
+            return {
+                ...base,
+                description: "공간을 활성화해도 만든 본인은 권한 화면에 들어갈 수 없습니다. ‘사용자’ 탭에서 본인(또는 담당자)을 관리자로 지정하세요.",
+                action: _jsx(Button, { size: "small", onPress: onGoMembers, children: "\uAD00\uB9AC\uC790 \uC9C0\uC815\uD558\uB7EC \uAC00\uAE30" }),
+            };
+        }
+        if (step.id === "access" && step.status === "current") {
+            return {
+                ...base,
+                description: "이제 권한 등급·역할·배정을 구성할 수 있습니다.",
+                action: _jsx(Button, { size: "small", variant: "secondary", onPress: onGoAccess, children: "\uAD8C\uD55C \uAD6C\uC131\uC73C\uB85C \uC774\uB3D9" }),
+            };
+        }
+        return base;
+    });
+    const tone = byId.get("owner") === "blocked" ? "warning" : "info";
+    return (_jsx(Callout, { tone: tone, children: _jsx(Checklist, { title: "\uC124\uC815 \uC9C4\uD589 \uC0C1\uD0DC", steps: stepDefs }) }));
 }
 function RealmDetailTabs({ active, hasProfile, fullAccessActive, onChange }) {
     const tabs = [
         { id: "overview", label: "개요" },
         { id: "members", label: "사용자" },
         { id: "profile", label: "프로필 필드", disabled: !hasProfile },
-        { id: "access", label: "권한" },
+        { id: "access", label: "권한", badge: fullAccessActive ? _jsx(TabDangerDot, { label: "Full Access \uC0AC\uC6A9 \uC911" }) : undefined },
     ];
-    return (_jsx("div", { className: styles.detailTabs, role: "tablist", "aria-label": "\uC0AC\uC6A9\uC790 \uACF5\uAC04 \uC0C1\uC138 \uC601\uC5ED", children: tabs.map((tab) => (_jsxs("button", { type: "button", role: "tab", "aria-selected": active === tab.id, disabled: tab.disabled, onClick: () => onChange(tab.id), children: [tab.label, tab.id === "access" && fullAccessActive ? _jsx("span", { className: styles.detailTabDangerDot, "aria-label": "Full Access \uC0AC\uC6A9 \uC911" }) : null] }, tab.id))) }));
+    return _jsx(Tabs, { ariaLabel: "\uC0AC\uC6A9\uC790 \uACF5\uAC04 \uC0C1\uC138 \uC601\uC5ED", tabs: tabs, active: active, onChange: onChange });
 }
 function RealmAccessOverview({ realm, mode }) {
     const navigate = useNavigate();
@@ -338,14 +405,12 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
     const [revokePreviousSessions, setRevokePreviousSessions] = useState(true);
     const [suspendPreviousMembership, setSuspendPreviousMembership] = useState(false);
     const identityById = new Map(identities.data?.items.map((identity) => [identity.globalIdentityId, identity]));
-    const candidates = memberships.data?.items.filter((membership) => {
-        const identity = membership.identity ?? identityById.get(membership.globalIdentityId);
-        return membership.status === "active"
-            && (owner.data?.status !== "healthy" || membership.membershipId !== owner.data.owner?.membershipId)
-            && identity?.kind === "human"
-            && identity?.originRealmId === systemRealmId
-            && identity.disabledAt === undefined;
-    }) ?? [];
+    const candidates = ownerCandidateMemberships({
+        memberships: memberships.data?.items,
+        identities: identities.data?.items,
+        owner: owner.data,
+        systemRealmId,
+    });
     const operation = owner.data?.status === "healthy"
         ? "transfer"
         : owner.data?.status === "invalid" ? "recover" : "assign";

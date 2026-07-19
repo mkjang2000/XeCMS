@@ -1,0 +1,102 @@
+.checklist {
+  display: grid;
+  gap: var(--xe-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--xe-space-3);
+  align-items: start;
+  padding: var(--xe-space-3) var(--xe-space-4);
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface);
+}
+
+.step[data-status="current"] {
+  border-color: var(--xe-color-primary-border);
+  background: var(--xe-color-primary-soft);
+}
+
+.step[data-status="blocked"] {
+  border-color: var(--xe-color-warning-border);
+  background: var(--xe-color-warning-soft);
+}
+
+.marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: 0.1rem;
+  flex: none;
+  border-radius: 999px;
+  border: 2px solid var(--xe-color-border-strong);
+  background: var(--xe-color-surface);
+  color: var(--xe-color-text-subtle);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.step[data-status="done"] .marker {
+  border-color: var(--xe-color-success-border);
+  background: var(--xe-color-success-soft);
+  color: var(--xe-color-success);
+}
+
+.step[data-status="current"] .marker {
+  border-color: var(--xe-color-primary);
+  background: var(--xe-color-primary);
+  color: #ffffff;
+}
+
+.step[data-status="blocked"] .marker {
+  border-color: var(--xe-color-warning-border);
+  background: var(--xe-color-warning-soft);
+  color: var(--xe-color-warning);
+}
+
+.body {
+  display: grid;
+  gap: var(--xe-space-2);
+}
+
+.headline {
+  display: flex;
+  align-items: center;
+  gap: var(--xe-space-2);
+  flex-wrap: wrap;
+}
+
+.label {
+  color: var(--xe-color-text-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.step[data-status="done"] .label {
+  color: var(--xe-color-text-muted);
+}
+
+.description {
+  margin: 0;
+  color: var(--xe-color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.action {
+  margin-top: var(--xe-space-1);
+}
+
+.title {
+  margin: 0 0 var(--xe-space-3);
+  color: var(--xe-color-text-strong);
+  font-size: 0.95rem;
+  font-weight: 720;
+}

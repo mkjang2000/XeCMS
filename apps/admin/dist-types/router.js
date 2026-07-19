@@ -178,7 +178,18 @@ export function createAdminRouter(api, queryClient) {
                     path: "realms/:realmId",
                     lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).IdentityRealmDetailPage }),
                 },
-                { path: "realms/:realmId/access", element: _jsx(Navigate, { to: "roles", replace: true }) },
+                {
+                    path: "realms/:realmId/access",
+                    lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessIndexRedirect }),
+                },
+                {
+                    path: "realms/:realmId/access/grades",
+                    lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessGradesPage }),
+                },
+                {
+                    path: "realms/:realmId/access/members",
+                    lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessMembersPage }),
+                },
                 {
                     path: "realms/:realmId/access/roles",
                     lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessRolesPage }),
@@ -195,7 +206,18 @@ export function createAdminRouter(api, queryClient) {
                     path: "realms/:realmId/access/audit",
                     lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessAuditPage }),
                 },
-                { path: "access", element: _jsx(Navigate, { to: "/admin/access/roles", replace: true }) },
+                {
+                    path: "access",
+                    lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessIndexRedirect }),
+                },
+                {
+                    path: "access/grades",
+                    lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessGradesPage }),
+                },
+                {
+                    path: "access/members",
+                    lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessMembersPage }),
+                },
                 {
                     path: "access/roles",
                     lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessRolesPage }),

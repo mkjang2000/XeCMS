@@ -50,7 +50,7 @@ const profileCollection = {
         { id: "fld_display_name", name: "displayName", label: "Display name", type: "text", required: false },
     ],
 };
-function renderDetail(realm, memberships = [], mode = "basic") {
+function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { realmId: "rlm_testre", status: "ownerless", policyRevision: 1 }) {
     const registerMembership = vi.fn().mockResolvedValue({});
     const grantRealmAdministrator = vi.fn().mockResolvedValue({});
     const createProfileSchema = vi.fn().mockResolvedValue({
@@ -62,7 +62,7 @@ function renderDetail(realm, memberships = [], mode = "basic") {
     const listFullAccess = vi.fn().mockResolvedValue({ items: [] });
     const grantFullAccess = vi.fn().mockResolvedValue({});
     const revokeFullAccess = vi.fn().mockResolvedValue({});
-    const getOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "ownerless", policyRevision: 1 });
+    const getOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, ...ownerStatus });
     const assignOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
     const transferOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
     const recoverOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
@@ -108,7 +108,8 @@ afterEach(cleanup);
 describe("IdentityRealmDetailPage provisioning guidance", () => {
     it("creates the provisioning Realm's Profile Schema with a directly entered login field name", async () => {
         const { createProfileSchema, user } = renderDetail(contentRealm({ status: "provisioning", realmKey: "testre" }));
-        expect(await screen.findByText(/사용자 공간을 바로 활성화할 수 있습니다/)).toBeTruthy();
+        expect(await screen.findByText("설정 진행 상태")).toBeTruthy();
+        expect(screen.getByText("1. 스키마 연결 · 활성화")).toBeTruthy();
         expect(screen.getByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeTruthy();
         await user.click(screen.getByRole("button", { name: "기본 인증 스키마 생성" }));
         const dialog = await screen.findByRole("dialog");
@@ -221,9 +222,28 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
         renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }));
         // Wait until the detail view has rendered.
         expect(await screen.findByText("사용자 공간 설정")).toBeTruthy();
-        expect(screen.queryByText(/사용자 공간을 바로 활성화할 수 있습니다/)).toBeNull();
+        // Active realm: the activation step is complete, so its setup CTA is gone.
         expect(screen.queryByRole("button", { name: "기본 인증 스키마 생성" })).toBeNull();
         expect(screen.queryByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeNull();
+    });
+    it("previews the bootstrap deadlock: warns to appoint an administrator once an Owner exists", async () => {
+        // active + healthy owner + no administrator membership → administrator step is current.
+        renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }), [], "basic", { status: "healthy", policyRevision: 3, owner: { globalIdentityId: "gid_o", membershipId: "mem_o", subjectId: "s_o", primaryIdentifier: "owner@example.com", identityActive: true, membershipStatus: "active" } });
+        expect(await screen.findByText("설정 진행 상태")).toBeTruthy();
+        // Preventive deadlock guidance appears on the detail page, before the operator is bounced.
+        expect(await screen.findByText(/만든 본인은 권한 화면에 들어갈 수 없습니다/)).toBeTruthy();
+        expect(screen.getByRole("button", { name: "관리자 지정하러 가기" })).toBeTruthy();
+    });
+    it("hides the checklist once setup is complete (owner + administrator)", async () => {
+        const adminMembership = {
+            membershipId: "mem_admin", globalIdentityId: "gid_admin", realmId: "rlm_testre",
+            subjectId: "subj_admin", status: "active", provisionedBy: "account-link", revision: 1,
+            createdAt: "2026-01-01T00:00:00.000Z", realmAdministrator: true,
+            identity: { globalIdentityId: "gid_admin", kind: "human", primaryIdentifier: "admin@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
+        };
+        renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }), [adminMembership], "basic", { status: "healthy", policyRevision: 3, owner: { globalIdentityId: "gid_admin", membershipId: "mem_admin", subjectId: "subj_admin", primaryIdentifier: "admin@example.com", identityActive: true, membershipStatus: "active" } });
+        expect(await screen.findByText("사용자 공간 설정")).toBeTruthy();
+        await waitFor(() => expect(screen.queryByText("설정 진행 상태")).toBeNull());
     });
 });
 describe("IdentityRealmDetailPage 표시 모드", () => {

@@ -32,6 +32,9 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { LoadError, PageLoading, RealmAuthorizationError } from "../components/async-state.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
+import { Tabs, TabDangerDot, type TabDef } from "../components/tabs.js";
+import { Checklist, type StepDef } from "../components/stepper.js";
+import { isRealmSetupIncomplete, ownerCandidateMemberships, realmSetupSteps, type RealmSetupStepId } from "./realm-setup.js";
 import { DisplayModeGate, displayModeAtLeast, useDisplayMode, type DisplayMode } from "../display-mode.js";
 import { queryKeys } from "../queries.js";
 import styles from "../identity-realms.module.css";
@@ -337,14 +340,23 @@ export function IdentityRealmDetailPage() {
         <Callout tone="info"><strong>운영자 공간은 이 화면에서 수정하지 않습니다.</strong> 사용자 공간에 운영 계정을 연결해도 운영 권한이 전파되지는 않습니다.</Callout>
       ) : (
         <>
-          {realm.data.status === "provisioning" ? (
-            <Callout tone="warning">
-              <strong>기본 인증 스키마를 만들면 사용자 공간을 바로 활성화할 수 있습니다.</strong>
-              <p>로그인 identifier와 기본 Profile 필드를 확인하면 Collection 생성, stable ID 발급, 공간 연결과 Schema 적용을 한 번에 처리합니다.</p>
-              <div className={styles.formActions}>
-                <Button onPress={() => setProfileSetupOpen(true)}>기본 인증 스키마 생성</Button>
-                <Button variant="secondary" onPress={() => navigate("/admin/schema/new")}>직접 설계</Button>
-              </div>
+          <RealmSetupChecklist
+            realm={realm.data}
+            owner={owner.data}
+            memberships={memberships.data?.items}
+            ownerCandidateCount={ownerCandidateMemberships({
+              memberships: memberships.data?.items,
+              identities: identities.data?.items,
+              owner: owner.data,
+              systemRealmId: realms.data?.items.find(({ kind }) => kind === "system")?.realmId ?? "rlm_system",
+            }).length}
+            onOpenProfileSetup={() => setProfileSetupOpen(true)}
+            onGoMembers={() => setDetailTab("members")}
+            onGoAccess={() => navigate(`/admin/realms/${encodeURIComponent(realm.data.realmId)}/access/${mode === "basic" ? "grades" : "roles"}`)}
+          />
+          {realm.data.status === "provisioning" && displayModeAtLeast(mode, "advanced") ? (
+            <Callout tone="info">
+              고급: 직접 Schema를 설계하려면 <Button size="small" variant="quiet" onPress={() => navigate("/admin/schema/new")}>스키마 편집기로 이동</Button>하세요.
             </Callout>
           ) : null}
           {realm.data.status === "disabled" ? (
@@ -399,32 +411,95 @@ export function IdentityRealmDetailPage() {
   );
 }
 
+const STEP_LABEL: Record<RealmSetupStepId, string> = {
+  activate: "1. 스키마 연결 · 활성화",
+  owner: "2. 소유자 지정",
+  administrator: "3. 관리자 지정",
+  access: "4. 권한 구성",
+};
+
+/**
+ * Setup progress for a Content Realm, derived entirely from already-loaded
+ * queries. Turns the hidden ordering (activate → owner → administrator →
+ * access) into a visible checklist and — crucially — previews the bootstrap
+ * deadlock before the operator is bounced out of the policy screen.
+ */
+function RealmSetupChecklist({
+  realm, owner, memberships, ownerCandidateCount, onOpenProfileSetup, onGoMembers, onGoAccess,
+}: {
+  readonly realm: IdentityRealm;
+  readonly owner: RealmOwnerStatus | undefined;
+  readonly memberships: readonly RealmMembership[] | undefined;
+  readonly ownerCandidateCount: number;
+  readonly onOpenProfileSetup: () => void;
+  readonly onGoMembers: () => void;
+  readonly onGoAccess: () => void;
+}) {
+  const steps = realmSetupSteps({ realm, owner, memberships, ownerCandidateCount });
+  if (!isRealmSetupIncomplete(steps)) return null;
+  const byId = new Map(steps.map((step) => [step.id, step.status]));
+
+  const stepDefs: StepDef[] = steps.map((step): StepDef => {
+    const base = { id: step.id, label: STEP_LABEL[step.id], status: step.status };
+    if (step.id === "activate" && step.status !== "done") {
+      return {
+        ...base,
+        description: "로그인 identifier와 기본 Profile 필드를 정하면 Collection 생성·연결·활성화를 한 번에 처리합니다.",
+        action: <Button size="small" onPress={onOpenProfileSetup}>기본 인증 스키마 생성</Button>,
+      };
+    }
+    if (step.id === "owner" && step.status === "blocked") {
+      return {
+        ...base,
+        description: "소유자로 지정할 활성 운영자가 아직 없습니다. ‘사용자’ 탭에서 기존 운영자를 먼저 연결하세요.",
+        action: <Button size="small" variant="secondary" onPress={onGoMembers}>사용자 탭으로 이동</Button>,
+      };
+    }
+    if (step.id === "owner" && step.status === "current") {
+      return {
+        ...base,
+        description: "이 공간의 사람 최고관리자를 지정해 운영 연속성을 확보하세요.",
+        action: <Button size="small" onPress={onGoMembers}>소유자 지정하러 가기</Button>,
+      };
+    }
+    if (step.id === "administrator" && step.status === "current") {
+      return {
+        ...base,
+        description: "공간을 활성화해도 만든 본인은 권한 화면에 들어갈 수 없습니다. ‘사용자’ 탭에서 본인(또는 담당자)을 관리자로 지정하세요.",
+        action: <Button size="small" onPress={onGoMembers}>관리자 지정하러 가기</Button>,
+      };
+    }
+    if (step.id === "access" && step.status === "current") {
+      return {
+        ...base,
+        description: "이제 권한 등급·역할·배정을 구성할 수 있습니다.",
+        action: <Button size="small" variant="secondary" onPress={onGoAccess}>권한 구성으로 이동</Button>,
+      };
+    }
+    return base;
+  });
+
+  const tone = byId.get("owner") === "blocked" ? "warning" : "info";
+  return (
+    <Callout tone={tone}>
+      <Checklist title="설정 진행 상태" steps={stepDefs} />
+    </Callout>
+  );
+}
+
 function RealmDetailTabs({ active, hasProfile, fullAccessActive, onChange }: {
   readonly active: RealmDetailTab;
   readonly hasProfile: boolean;
   readonly fullAccessActive: boolean;
   readonly onChange: (tab: RealmDetailTab) => void;
 }) {
-  const tabs: readonly { readonly id: RealmDetailTab; readonly label: string; readonly disabled?: boolean }[] = [
+  const tabs: readonly TabDef<RealmDetailTab>[] = [
     { id: "overview", label: "개요" },
     { id: "members", label: "사용자" },
     { id: "profile", label: "프로필 필드", disabled: !hasProfile },
-    { id: "access", label: "권한" },
+    { id: "access", label: "권한", badge: fullAccessActive ? <TabDangerDot label="Full Access 사용 중" /> : undefined },
   ];
-  return (
-    <div className={styles.detailTabs} role="tablist" aria-label="사용자 공간 상세 영역">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          aria-selected={active === tab.id}
-          disabled={tab.disabled}
-          onClick={() => onChange(tab.id)}
-        >{tab.label}{tab.id === "access" && fullAccessActive ? <span className={styles.detailTabDangerDot} aria-label="Full Access 사용 중" /> : null}</button>
-      ))}
-    </div>
-  );
+  return <Tabs ariaLabel="사용자 공간 상세 영역" tabs={tabs} active={active} onChange={onChange} />;
 }
 
 function RealmAccessOverview({ realm, mode }: { readonly realm: IdentityRealm; readonly mode: DisplayMode }) {
@@ -773,14 +848,12 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
   const [revokePreviousSessions, setRevokePreviousSessions] = useState(true);
   const [suspendPreviousMembership, setSuspendPreviousMembership] = useState(false);
   const identityById = new Map(identities.data?.items.map((identity) => [identity.globalIdentityId, identity]));
-  const candidates = memberships.data?.items.filter((membership) => {
-    const identity = membership.identity ?? identityById.get(membership.globalIdentityId);
-    return membership.status === "active"
-      && (owner.data?.status !== "healthy" || membership.membershipId !== owner.data.owner?.membershipId)
-      && identity?.kind === "human"
-      && identity?.originRealmId === systemRealmId
-      && identity.disabledAt === undefined;
-  }) ?? [];
+  const candidates = ownerCandidateMemberships({
+    memberships: memberships.data?.items,
+    identities: identities.data?.items,
+    owner: owner.data,
+    systemRealmId,
+  });
   const operation = owner.data?.status === "healthy"
     ? "transfer"
     : owner.data?.status === "invalid" ? "recover" : "assign";

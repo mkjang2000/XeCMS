@@ -1,0 +1,57 @@
+.tabs {
+  display: flex;
+  width: 100%;
+  padding: 0.25rem;
+  gap: 0.2rem;
+  overflow-x: auto;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface-subtle);
+}
+
+.tabs button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.85rem;
+  color: var(--xe-color-text-muted);
+  border: 0;
+  border-radius: calc(var(--xe-radius-md) - 3px);
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dangerDot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  margin-inline-start: 0.4rem;
+  border-radius: 999px;
+  background: var(--xe-color-danger);
+  box-shadow: 0 0 0 3px var(--xe-color-danger-soft);
+}
+
+.tabs button:hover:not(:disabled) {
+  color: var(--xe-color-text-strong);
+  background: var(--xe-color-surface);
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--xe-color-primary);
+  background: var(--xe-color-surface);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 10%);
+}
+
+.tabs button:focus-visible {
+  outline: 3px solid var(--xe-color-focus-ring);
+  outline-offset: -1px;
+}
+
+.tabs button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

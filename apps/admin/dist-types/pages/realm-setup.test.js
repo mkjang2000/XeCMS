@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+import { isRealmSetupIncomplete, realmSetupSteps } from "./realm-setup.js";
+function realm(status) {
+    return {
+        realmId: "rlm_1", realmKey: "svc", name: "서비스", kind: "content", status,
+        authentication: { acceptSystemIdentities: true, provisioning: "explicit", registration: "closed", defaultRoleIds: [] },
+        revision: 1,
+        ...(status === "active" ? { profileCollectionId: "col_p" } : {}),
+    };
+}
+function owner(status) {
+    return { realmId: "rlm_1", status, policyRevision: 1 };
+}
+function membership(overrides) {
+    return {
+        membershipId: "mem_1", globalIdentityId: "gid_1", realmId: "rlm_1", subjectId: "subj_1",
+        status: "active", provisionedBy: "explicit", revision: 1, createdAt: "2026-01-01T00:00:00.000Z",
+        ...overrides,
+    };
+}
+function statusOf(steps, id) {
+    return steps.find((s) => s.id === id).status;
+}
+describe("realmSetupSteps", () => {
+    it("provisioning realm: activate is current, the rest wait", () => {
+        const steps = realmSetupSteps({ realm: realm("provisioning"), owner: owner("ownerless"), memberships: [], ownerCandidateCount: 0 });
+        expect(statusOf(steps, "activate")).toBe("current");
+        expect(statusOf(steps, "owner")).toBe("todo");
+        expect(statusOf(steps, "administrator")).toBe("todo");
+        expect(statusOf(steps, "access")).toBe("todo");
+    });
+    it("active but ownerless with no candidate: owner is blocked", () => {
+        const steps = realmSetupSteps({ realm: realm("active"), owner: owner("ownerless"), memberships: [], ownerCandidateCount: 0 });
+        expect(statusOf(steps, "activate")).toBe("done");
+        expect(statusOf(steps, "owner")).toBe("blocked");
+        expect(statusOf(steps, "administrator")).toBe("todo");
+    });
+    it("active with an owner candidate: owner is current", () => {
+        const steps = realmSetupSteps({ realm: realm("active"), owner: owner("ownerless"), memberships: [], ownerCandidateCount: 1 });
+        expect(statusOf(steps, "owner")).toBe("current");
+    });
+    it("owner assigned, no administrator yet: administrator is current (deadlock prevention)", () => {
+        const steps = realmSetupSteps({ realm: realm("active"), owner: owner("healthy"), memberships: [membership({})], ownerCandidateCount: 0 });
+        expect(statusOf(steps, "owner")).toBe("done");
+        expect(statusOf(steps, "administrator")).toBe("current");
+        expect(statusOf(steps, "access")).toBe("todo");
+    });
+    it("administrator appointed: administrator done, access becomes current", () => {
+        const steps = realmSetupSteps({
+            realm: realm("active"), owner: owner("healthy"),
+            memberships: [membership({ realmAdministrator: true })], ownerCandidateCount: 0,
+        });
+        expect(statusOf(steps, "administrator")).toBe("done");
+        expect(statusOf(steps, "access")).toBe("current");
+    });
+    it("a suspended administrator does not count as appointed", () => {
+        const steps = realmSetupSteps({
+            realm: realm("active"), owner: owner("healthy"),
+            memberships: [membership({ realmAdministrator: true, status: "suspended" })], ownerCandidateCount: 0,
+        });
+        expect(statusOf(steps, "administrator")).toBe("current");
+    });
+    it("isRealmSetupIncomplete ignores the optional access step", () => {
+        const done = realmSetupSteps({
+            realm: realm("active"), owner: owner("healthy"),
+            memberships: [membership({ realmAdministrator: true })], ownerCandidateCount: 0,
+        });
+        expect(isRealmSetupIncomplete(done)).toBe(false);
+        const pending = realmSetupSteps({ realm: realm("provisioning"), owner: owner("ownerless"), memberships: [], ownerCandidateCount: 0 });
+        expect(isRealmSetupIncomplete(pending)).toBe(true);
+    });
+});
+//# sourceMappingURL=realm-setup.test.js.map
