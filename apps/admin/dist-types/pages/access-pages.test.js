@@ -6,6 +6,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DisplayModeProvider } from "../display-mode.js";
 import { AccessBindingsPage, AccessRolesPage, AccessSimulatorPage } from "./access-pages.js";
 const policy = {
     realmId: "system",
@@ -48,8 +49,10 @@ describe("AccessSimulatorPage", () => {
                 element: _jsx(AccessSimulatorPage, {}),
             }], { initialEntries: ["/admin/access/simulator"] });
         const user = userEvent.setup();
-        render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
+        render(_jsx(DisplayModeProvider, { initialMode: "standard", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
         await user.selectOptions(await screen.findByLabelText("확인할 사용자·그룹"), "subject-editor");
+        expect(screen.getByRole("link", { name: "사용자 권한 확인" })).toBeTruthy();
+        expect(screen.queryByText("특정 권한 상세 진단")).toBeNull();
         await user.click(screen.getByRole("button", { name: "Pages, Collection" }));
         await user.click(screen.getByRole("button", { name: "이 영역의 전체 권한 확인" }));
         expect(await screen.findByText("1/2개 가능")).toBeTruthy();
@@ -58,6 +61,7 @@ describe("AccessSimulatorPage", () => {
         expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ action: "content.update", resourceId: "collection:pages" }));
         expect(screen.getByText("필요한 역할과 권한이 적용되어 있습니다.")).toBeTruthy();
         expect(screen.getByText("이 업무를 허용하는 역할이 배정되지 않았습니다.")).toBeTruthy();
+        expect(screen.queryByText("content.read")).toBeNull();
     });
     it("separates hierarchy actions from ordinary denied permission results", async () => {
         const hierarchyPolicy = {
@@ -96,7 +100,7 @@ describe("AccessSimulatorPage", () => {
                 element: _jsx(AccessSimulatorPage, {}),
             }], { initialEntries: ["/admin/access/simulator"] });
         const user = userEvent.setup();
-        render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
+        render(_jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
         await user.selectOptions(await screen.findByLabelText("확인할 사용자·그룹"), "subject-editor");
         await user.click(screen.getByText("특정 권한 상세 진단"));
         await user.selectOptions(screen.getByLabelText("확인할 권한"), "role.update");
@@ -140,7 +144,7 @@ describe("AccessBindingsPage", () => {
                 element: _jsx(AccessBindingsPage, {}),
             }], { initialEntries: ["/admin/access/bindings"] });
         const user = userEvent.setup();
-        render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
+        render(_jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
         await user.click(await screen.findByRole("button", { name: "역할 배정하기" }));
         await user.selectOptions(screen.getByLabelText("사용자 또는 그룹"), "subject-editor");
         await user.selectOptions(screen.getByLabelText("부여할 역할"), "role-editor");
@@ -158,8 +162,127 @@ describe("AccessBindingsPage", () => {
             constraints: undefined,
         });
     });
+    it("defaults new standard bindings to descendants and preserves hidden settings on edits", async () => {
+        const bindingPolicy = {
+            ...policy,
+            levels: [{ id: "level-editor", realmId: "system", name: "Editors", rank: 40, protected: false }],
+            roles: [{
+                    id: "role-editor",
+                    realmId: "system",
+                    levelId: "level-editor",
+                    name: "Page Editor",
+                    permissions: ["content.read"],
+                    delegatablePermissions: [],
+                    fieldAccess: [],
+                    protected: false,
+                }],
+            bindings: [{
+                    id: "binding-editor",
+                    realmId: "system",
+                    subjectId: "subject-editor",
+                    roleId: "role-editor",
+                    resourceId: "content",
+                    propagation: "self",
+                    validFrom: "2026-01-01T00:00:00.000Z",
+                    validUntil: "2026-12-31T23:59:59.000Z",
+                    constraints: { statuses: ["draft"] },
+                    protected: false,
+                }],
+        };
+        const createBinding = vi.fn().mockResolvedValue(bindingPolicy);
+        const updateBinding = vi.fn().mockResolvedValue(bindingPolicy);
+        const api = {
+            authorization: {
+                getPolicy: vi.fn().mockResolvedValue(bindingPolicy),
+                createBinding,
+                updateBinding,
+            },
+        };
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+        const router = createMemoryRouter([{
+                path: "/admin/access/bindings",
+                element: _jsx(AccessBindingsPage, {}),
+            }], { initialEntries: ["/admin/access/bindings"] });
+        const user = userEvent.setup();
+        render(_jsx(DisplayModeProvider, { initialMode: "standard", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
+        expect(await screen.findByText("고급 설정 있음")).toBeTruthy();
+        await user.click(screen.getByRole("button", { name: "역할 배정하기" }));
+        expect(screen.queryByRole("radio")).toBeNull();
+        await user.selectOptions(screen.getByLabelText("사용자 또는 그룹"), "subject-editor");
+        await user.selectOptions(screen.getByLabelText("부여할 역할"), "role-editor");
+        await user.click(screen.getByRole("button", { name: "Pages, Collection" }));
+        await user.click(screen.getByRole("button", { name: "역할 배정" }));
+        expect(createBinding).toHaveBeenCalledWith({
+            expectedPolicyRevision: bindingPolicy.revision,
+            subjectId: "subject-editor",
+            roleId: "role-editor",
+            resourceId: "collection:pages",
+            propagation: "self-and-children",
+            validFrom: undefined,
+            validUntil: undefined,
+            constraints: undefined,
+        });
+        await user.click(screen.getByRole("button", { name: "수정" }));
+        expect(screen.getAllByText("고급 설정 있음").length).toBeGreaterThanOrEqual(2);
+        expect(screen.queryByRole("radio")).toBeNull();
+        expect(screen.queryByText("추가 조건")).toBeNull();
+        await user.click(screen.getByRole("button", { name: "Pages, Collection" }));
+        await user.click(screen.getByRole("button", { name: "변경 저장" }));
+        expect(updateBinding).toHaveBeenCalledWith("binding-editor", {
+            expectedPolicyRevision: bindingPolicy.revision,
+            subjectId: "subject-editor",
+            roleId: "role-editor",
+            resourceId: "collection:pages",
+            propagation: "self",
+            validFrom: "2026-01-01T00:00:00.000Z",
+            validUntil: "2026-12-31T23:59:59.000Z",
+            constraints: { statuses: ["draft"] },
+        });
+    });
 });
 describe("AccessRolesPage", () => {
+    it("renders CMS Owner oversight as read-only and hides every policy mutation entry point", async () => {
+        const readonlyPolicy = {
+            ...policy,
+            realmId: "rlm_testre",
+            administration: { accessMode: "cms-owner-readonly" },
+            levels: [{ id: "level-editor", realmId: "rlm_testre", name: "Editors", rank: 40, protected: false }],
+            roles: [{
+                    id: "role-editor",
+                    realmId: "rlm_testre",
+                    levelId: "level-editor",
+                    name: "Page Editor",
+                    permissions: ["content.read"],
+                    delegatablePermissions: [],
+                    fieldAccess: [],
+                    protected: false,
+                }],
+        };
+        const updateRole = vi.fn();
+        const api = {
+            identityRealms: {
+                authorizationFor: vi.fn().mockReturnValue({
+                    getPolicy: vi.fn().mockResolvedValue(readonlyPolicy),
+                    updateRole,
+                }),
+            },
+        };
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+        const router = createMemoryRouter([{
+                path: "/admin/realms/:realmId/access/roles",
+                element: _jsx(AccessRolesPage, {}),
+            }], { initialEntries: ["/admin/realms/rlm_testre/access/roles"] });
+        const user = userEvent.setup();
+        render(_jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
+        expect(await screen.findByText("CMS Owner 읽기 전용 보기")).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Full Access 시작" })).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "새 레벨" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "동일 레벨 역할 추가" })).toBeNull();
+        await user.click(screen.getByRole("button", { name: /Page Editor/ }));
+        expect(screen.getByLabelText("역할 이름").disabled).toBe(true);
+        expect(screen.queryByRole("button", { name: "저장" })).toBeNull();
+        expect(updateRole).not.toHaveBeenCalled();
+    });
     it("uses a selectable role list and exposes protected roles as read-only details", async () => {
         const rolesPolicy = {
             ...policy,
@@ -203,7 +326,7 @@ describe("AccessRolesPage", () => {
                 element: _jsx(AccessRolesPage, {}),
             }], { initialEntries: ["/admin/access/roles"] });
         const user = userEvent.setup();
-        render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
+        render(_jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
         await user.click(await screen.findByRole("button", { name: /Page Editor/ }));
         expect(screen.getByRole("region", { name: "역할 편집기" })).toBeTruthy();
         expect(screen.getByLabelText("권한 검색")).toBeTruthy();
@@ -214,6 +337,59 @@ describe("AccessRolesPage", () => {
         expect(screen.getByLabelText("역할 이름").disabled).toBe(true);
         expect(screen.getByText("authorization.manage")).toBeTruthy();
         expect(screen.queryByRole("button", { name: "저장" })).toBeNull();
+    });
+    it("edits standard tasks without exposing or erasing advanced role settings", async () => {
+        const fieldAccess = [{
+                resourceId: "collection:pages",
+                readableFields: ["title", "summary"],
+                writableFields: ["title"],
+            }];
+        const rolesPolicy = {
+            ...policy,
+            levels: [{ id: "level-editor", realmId: "system", name: "Editors", rank: 40, protected: false }],
+            roles: [{
+                    id: "role-editor",
+                    realmId: "system",
+                    levelId: "level-editor",
+                    name: "Page Editor",
+                    description: "페이지 작성 담당",
+                    permissions: ["content.read", "content.update"],
+                    delegatablePermissions: ["content.update"],
+                    fieldAccess,
+                    protected: false,
+                }],
+        };
+        const updateRole = vi.fn().mockResolvedValue(rolesPolicy);
+        const api = {
+            authorization: {
+                getPolicy: vi.fn().mockResolvedValue(rolesPolicy),
+                updateRole,
+            },
+        };
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+        const router = createMemoryRouter([{
+                path: "/admin/access/roles",
+                element: _jsx(AccessRolesPage, {}),
+            }], { initialEntries: ["/admin/access/roles"] });
+        const user = userEvent.setup();
+        render(_jsx(DisplayModeProvider, { initialMode: "standard", children: _jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }) }));
+        await user.click(await screen.findByRole("button", { name: /Page Editor/ }));
+        expect(screen.getAllByText("고급 설정 있음").length).toBeGreaterThanOrEqual(2);
+        expect(screen.queryByText("L40")).toBeNull();
+        expect(screen.queryByText("권한 코드 보기")).toBeNull();
+        expect(screen.queryByText("필드 접근 제한")).toBeNull();
+        await user.clear(screen.getByLabelText("역할 설명"));
+        await user.type(screen.getByLabelText("역할 설명"), "표준 화면에서 설명 수정");
+        await user.click(screen.getByRole("button", { name: "저장" }));
+        expect(updateRole).toHaveBeenCalledWith("role-editor", {
+            expectedPolicyRevision: rolesPolicy.revision,
+            name: "Page Editor",
+            description: "표준 화면에서 설명 수정",
+            levelId: "level-editor",
+            permissions: ["content.read", "content.update"],
+            delegatablePermissions: ["content.update"],
+            fieldAccess,
+        });
     });
 });
 describe("Realm 권한 부트스트랩 데드락 안내", () => {
@@ -238,7 +414,7 @@ describe("Realm 권한 부트스트랩 데드락 안내", () => {
         render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(RouterProvider, { router: router }) }) }));
         // The dead-end error is replaced by an actionable escape hatch.
         expect(await screen.findByText(/관리할 권한이 아직 없습니다/)).toBeTruthy();
-        const goToRealm = screen.getByRole("button", { name: "Realm 상세로 이동해 관리자 지정" });
+        const goToRealm = screen.getByRole("button", { name: "사용자 공간 상세로 이동해 관리자 지정" });
         expect(goToRealm).toBeTruthy();
     });
     it("shows a plain error (not the deadlock guidance) for the System workspace", async () => {

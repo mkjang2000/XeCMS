@@ -123,9 +123,9 @@ export function IdentityRealmListPage() {
     <Page>
       <PageHeader
         eyebrow="Identity federation"
-        title="Identity Realms"
-        description="Global Identity의 자격 증명은 공유하되 Membership, Subject와 권한은 Realm별로 분리합니다."
-        actions={<Button onPress={() => setCreating((value) => !value)}><Icon name="plus" size={17} />새 Content Realm</Button>}
+        title="사용자 공간 관리"
+        description="계정의 로그인 자격 증명은 공유하되 소속·권한 대상·권한은 사용자 공간별로 분리합니다."
+        actions={<Button onPress={() => setCreating((value) => !value)}><Icon name="plus" size={17} />새 사용자 공간</Button>}
       />
       {creating ? (
         <CreateRealmForm
@@ -135,13 +135,13 @@ export function IdentityRealmListPage() {
           onSubmit={(input) => create.mutate(input)}
         />
       ) : null}
-      {realms.isPending ? <PageLoading label="Identity Realm을 불러오는 중" /> : null}
+      {realms.isPending ? <PageLoading label="사용자 공간을 불러오는 중" /> : null}
       {realms.isError ? <RealmAuthorizationError error={realms.error} context="list" onRetry={() => void realms.refetch()} /> : null}
       {realms.data?.items.length === 0 ? (
         <EmptyState
-          title="등록된 Realm이 없습니다"
-          description="첫 Content Realm을 만들어 독립된 회원·고객 계정 영역을 구성하세요."
-          action={<Button onPress={() => setCreating(true)}>새 Content Realm</Button>}
+          title="등록된 사용자 공간이 없습니다"
+          description="첫 사용자 공간을 만들어 독립된 회원·고객 계정 영역을 구성하세요."
+          action={<Button onPress={() => setCreating(true)}>새 사용자 공간</Button>}
         />
       ) : null}
       {realms.data && realms.data.items.length > 0 ? (
@@ -196,7 +196,7 @@ function CreateRealmForm({ onSubmit, onCancel, isPending, error }: {
     <section className={styles.formCard} aria-labelledby="create-realm-title">
       <SectionHeader
         id="create-realm-title"
-        title="새 Content Realm"
+        title="새 사용자 공간(Realm)"
         description="Profile Collection 연결은 Schema auth 설정이 적용될 때 완료됩니다."
       />
       <form className={styles.formStack} onSubmit={(event) => {
@@ -214,7 +214,7 @@ function CreateRealmForm({ onSubmit, onCancel, isPending, error }: {
         <div className={styles.fieldGrid}>
           <TextInput label="표시 이름" value={name} onChange={setName} placeholder="Community" isRequired />
           <TextInput
-            label="Realm Key"
+            label="공간 Key (Realm Key)"
             value={key}
             onChange={(value) => setKey(value.toLocaleLowerCase("en-US"))}
             description="URL과 권한 namespace에 사용되는 변경 불가 slug입니다."
@@ -223,7 +223,7 @@ function CreateRealmForm({ onSubmit, onCancel, isPending, error }: {
           />
           <SelectField label="가입 정책" value={registration} options={registrationOptions} onChange={(value) => setRegistration(value as typeof registration)} />
           <SelectField
-            label="System Identity 연결"
+            label="운영자 계정 연결"
             value={provisioning}
             options={provisioningOptions}
             onChange={(value) => {
@@ -232,15 +232,15 @@ function CreateRealmForm({ onSubmit, onCancel, isPending, error }: {
               if (next === "jit") setAcceptSystem(true);
             }}
           />
-          <TextInput label="기본 Role IDs" value={defaultRoles} onChange={setDefaultRoles} description="쉼표로 구분합니다. 비워 두면 로그인만 허용됩니다." />
+          <TextInput label="기본 역할 ID (Role IDs)" value={defaultRoles} onChange={setDefaultRoles} description="쉼표로 구분합니다. 비워 두면 로그인만 허용됩니다." />
         </div>
         <CheckboxField isSelected={acceptSystem} onChange={setAcceptSystem} isDisabled={provisioning === "jit"}>
-          기존 System Global Identity의 Membership 생성을 허용
+          기존 운영자 계정의 소속 생성을 허용
         </CheckboxField>
         <MutationError error={error} />
         <div className={styles.formActions}>
           <Button type="button" variant="secondary" onPress={onCancel} isDisabled={isPending}>취소</Button>
-          <Button type="submit" isDisabled={!valid || isPending}>{isPending ? "생성 중…" : "Realm 생성"}</Button>
+          <Button type="submit" isDisabled={!valid || isPending}>{isPending ? "생성 중…" : "사용자 공간 생성"}</Button>
         </div>
       </form>
     </section>
@@ -315,18 +315,18 @@ export function IdentityRealmDetailPage() {
     },
   });
 
-  if (realmId === undefined) return <Page><Callout tone="error">Realm ID가 없습니다.</Callout></Page>;
-  if (realm.isPending) return <Page><PageLoading label="Realm 상세 정보를 불러오는 중" /></Page>;
+  if (realmId === undefined) return <Page><Callout tone="error">공간 ID가 없습니다.</Callout></Page>;
+  if (realm.isPending) return <Page><PageLoading label="사용자 공간 상세 정보를 불러오는 중" /></Page>;
   if (realm.isError) return <Page><RealmAuthorizationError error={realm.error} context="detail" onRetry={() => void realm.refetch()} /></Page>;
 
   return (
     <Page>
       <PageHeader
-        eyebrow={realm.data.kind === "system" ? "System identity realm" : "Content identity realm"}
+        eyebrow={realm.data.kind === "system" ? "운영자 공간(System Realm)" : "사용자 공간(Content Realm)"}
         title={realm.data.name}
         description={realm.data.kind === "system"
-          ? "CMS 운영 계정과 Admin 세션의 보호된 System Realm입니다."
-          : "Global Identity 자격 증명과 이 Realm의 Membership·Subject·Profile 연결을 관리합니다."}
+          ? "CMS 운영 계정과 Admin 세션의 보호된 운영자 공간입니다."
+          : "계정의 로그인 자격 증명과 이 공간의 소속·권한 대상·프로필 연결을 관리합니다."}
         actions={<>
           <RealmStatusBadge realm={realm.data} />
           <Button variant="secondary" onPress={() => navigate("/admin/realms")}>목록으로</Button>
@@ -334,13 +334,13 @@ export function IdentityRealmDetailPage() {
       />
       <RealmIdentitySummary realm={realm.data} />
       {realm.data.kind === "system" ? (
-        <Callout tone="info"><strong>System Realm은 이 화면에서 수정하지 않습니다.</strong> Content Realm에 운영 계정을 연결해도 System 권한이 전파되지는 않습니다.</Callout>
+        <Callout tone="info"><strong>운영자 공간은 이 화면에서 수정하지 않습니다.</strong> 사용자 공간에 운영 계정을 연결해도 운영 권한이 전파되지는 않습니다.</Callout>
       ) : (
         <>
           {realm.data.status === "provisioning" ? (
             <Callout tone="warning">
-              <strong>기본 인증 스키마를 만들면 Realm을 바로 활성화할 수 있습니다.</strong>
-              <p>로그인 identifier와 기본 Profile 필드를 확인하면 Collection 생성, stable ID 발급, Realm 연결과 Schema 적용을 한 번에 처리합니다.</p>
+              <strong>기본 인증 스키마를 만들면 사용자 공간을 바로 활성화할 수 있습니다.</strong>
+              <p>로그인 identifier와 기본 Profile 필드를 확인하면 Collection 생성, stable ID 발급, 공간 연결과 Schema 적용을 한 번에 처리합니다.</p>
               <div className={styles.formActions}>
                 <Button onPress={() => setProfileSetupOpen(true)}>기본 인증 스키마 생성</Button>
                 <Button variant="secondary" onPress={() => navigate("/admin/schema/new")}>직접 설계</Button>
@@ -348,7 +348,7 @@ export function IdentityRealmDetailPage() {
             </Callout>
           ) : null}
           {realm.data.status === "disabled" ? (
-            <Callout tone="warning"><strong>이 Realm은 비활성 상태입니다.</strong> 신규 세션, Membership provisioning과 Full Access grant가 차단됩니다.</Callout>
+            <Callout tone="warning"><strong>이 사용자 공간은 비활성 상태입니다.</strong> 신규 세션, 소속 provisioning과 Full Access grant가 차단됩니다.</Callout>
           ) : null}
           <RealmDetailTabs
             active={detailTab}
@@ -412,7 +412,7 @@ function RealmDetailTabs({ active, hasProfile, fullAccessActive, onChange }: {
     { id: "access", label: "권한" },
   ];
   return (
-    <div className={styles.detailTabs} role="tablist" aria-label="Realm 상세 영역">
+    <div className={styles.detailTabs} role="tablist" aria-label="사용자 공간 상세 영역">
       {tabs.map((tab) => (
         <button
           key={tab.id}
@@ -434,12 +434,12 @@ function RealmAccessOverview({ realm, mode }: { readonly realm: IdentityRealm; r
     <section className={styles.panel} aria-labelledby="realm-access-overview-title">
       <SectionHeader
         id="realm-access-overview-title"
-        title="Realm 권한"
-        description="이 Realm 안에서 사용할 등급, 역할과 사용자 배정을 관리합니다."
+        title="사용자 공간 권한"
+        description="이 사용자 공간 안에서 사용할 권한 등급, 역할과 사용자 배정을 관리합니다."
         actions={<Button
           onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/${target}`)}
           isDisabled={realm.status !== "active"}
-        >Realm 권한 관리</Button>}
+        >사용자 공간 권한 관리</Button>}
       />
       <p className={styles.compactHint}>일반 권한은 역할과 Scope로 관리합니다. Full Access는 CMS Owner가 기간을 정해 정책을 직접 복구할 때만 사용합니다.</p>
     </section>
@@ -477,7 +477,7 @@ function ProfileSchemaSetupDialog({ realm, error, isPending, onCancel, onConfirm
   return (
     <ConfirmDialog
       title="기본 인증 스키마 생성"
-      confirmLabel="생성하고 Realm 활성화"
+      confirmLabel="생성하고 사용자 공간 활성화"
       isPending={isPending}
       isConfirmDisabled={collectionName.trim() === ""
         || collectionLabel.trim() === ""
@@ -493,7 +493,7 @@ function ProfileSchemaSetupDialog({ realm, error, isPending, onCancel, onConfirm
       })}
     >
       <div className={styles.dialogStack}>
-        <p><strong>{realm.name}</strong> Realm의 Profile Collection을 생성하고 즉시 Schema에 적용합니다.</p>
+        <p><strong>{realm.name}</strong> 사용자 공간의 Profile Collection을 생성하고 즉시 Schema에 적용합니다.</p>
         <TextInput label="Collection 이름" value={collectionName} onChange={setCollectionName} description="API와 저장소에서 사용하는 영문 이름입니다." maxLength={64} errorMessage={collectionNameError} isRequired />
         <TextInput label="표시 이름" value={collectionLabel} onChange={setCollectionLabel} isRequired />
         <TextInput
@@ -506,7 +506,7 @@ function ProfileSchemaSetupDialog({ realm, error, isPending, onCancel, onConfirm
           isRequired
         />
         <CheckboxField isSelected={includeDisplayName} onChange={setIncludeDisplayName}>사용자 표시 이름(displayName) 필드 추가</CheckboxField>
-        <Callout tone="info">이 작업은 현재 Schema에 다른 미적용 변경이 없을 때만 실행되며, 생성과 적용이 끝나면 Realm이 활성화됩니다.</Callout>
+        <Callout tone="info">이 작업은 현재 Schema에 다른 미적용 변경이 없을 때만 실행되며, 생성과 적용이 끝나면 사용자 공간이 활성화됩니다.</Callout>
         {errorMessage ? <Callout tone="error">{errorMessage}</Callout> : null}
       </div>
     </ConfirmDialog>
@@ -546,7 +546,7 @@ function RealmProfileFieldsSection({ realm }: { readonly realm: IdentityRealm })
       <SectionHeader
         id="realm-profile-fields-title"
         title="사용자 프로필 필드"
-        description="이 Realm 회원의 Profile 문서에 저장되는 기본 정보를 관리합니다."
+        description="이 사용자 공간 회원의 Profile 문서에 저장되는 기본 정보를 관리합니다."
         actions={<div className={styles.rowActions}>
           <Button
             variant="secondary"
@@ -562,7 +562,7 @@ function RealmProfileFieldsSection({ realm }: { readonly realm: IdentityRealm })
       {profile.isError ? <LoadError error={profile.error} onRetry={() => void profile.refetch()} /> : null}
       {profile.data ? <ProfileFieldList collection={profile.data} /> : null}
       {realm.status === "disabled" ? (
-        <Callout tone="warning">프로필 필드를 추가하려면 먼저 Realm 설정에서 상태를 활성으로 변경해 주세요.</Callout>
+        <Callout tone="warning">프로필 필드를 추가하려면 먼저 사용자 공간 설정에서 상태를 활성으로 변경해 주세요.</Callout>
       ) : diagnostics.data && !editable ? (
         <Callout tone="warning">Schema mode가 <strong>{diagnostics.data.schemaMode}</strong>이므로 이 화면에서 필드를 추가할 수 없습니다.</Callout>
       ) : null}
@@ -677,11 +677,11 @@ function AddProfileFieldDialog({ collection, error, isPending, onCancel, onConfi
 
 function RealmIdentitySummary({ realm }: { readonly realm: IdentityRealm }) {
   return (
-    <section className={styles.summaryGrid} aria-label="Realm 식별 정보">
+    <section className={styles.summaryGrid} aria-label="사용자 공간 식별 정보">
       <div><span>Realm ID</span><code>{realm.realmId}</code></div>
       <div><span>Realm Key</span><code>{realm.realmKey}</code></div>
       <div><span>Profile Collection ID</span><code>{realm.profileCollectionId ?? "연결 대기"}</code></div>
-      <div><span>Realm Revision</span><strong>{realm.revision}</strong></div>
+      <div><span>공간 버전 (Revision)</span><strong>{realm.revision}</strong></div>
     </section>
   );
 }
@@ -715,9 +715,9 @@ function RealmSettingsForm({ realm }: { readonly realm: IdentityRealm }) {
 
   return (
     <section className={styles.panel} aria-labelledby="realm-settings-title">
-      <SectionHeader id="realm-settings-title" title="Realm 설정" description={`Realm Revision ${realm.revision}을 기준으로 충돌 없이 저장합니다.`} />
+      <SectionHeader id="realm-settings-title" title="사용자 공간 설정" description={`공간 버전 ${realm.revision}을 기준으로 충돌 없이 저장합니다.`} />
       {editable ? null : (
-        <Callout tone="info">Auth Collection을 연결해 Realm이 활성화되기 전까지는 설정을 변경할 수 없습니다. 위 안내에 따라 스키마를 적용해 주세요.</Callout>
+        <Callout tone="info">Auth Collection을 연결해 사용자 공간이 활성화되기 전까지는 설정을 변경할 수 없습니다. 위 안내에 따라 스키마를 적용해 주세요.</Callout>
       )}
       <form className={styles.formStack} onSubmit={(event) => { event.preventDefault(); if (editable) save.mutate(); }}>
         <div className={styles.settingsFieldGrid}>
@@ -725,7 +725,7 @@ function RealmSettingsForm({ realm }: { readonly realm: IdentityRealm }) {
           <SelectField label="상태" value={status} options={statusOptions} onChange={(value) => setStatus(value as typeof status)} isDisabled={!editable} />
           <SelectField label="가입 정책" value={registration} options={registrationOptions} onChange={(value) => setRegistration(value as typeof registration)} isDisabled={!editable} />
           <SelectField
-            label="System Identity provisioning"
+            label="운영자 계정 provisioning"
             value={provisioning}
             options={provisioningOptions}
             onChange={(value) => {
@@ -735,13 +735,13 @@ function RealmSettingsForm({ realm }: { readonly realm: IdentityRealm }) {
             }}
             isDisabled={!editable}
           />
-          <TextInput label="기본 Role IDs" value={defaultRoles} onChange={setDefaultRoles} description="새 Membership Subject에 적용할 Role ID를 쉼표로 구분합니다." isDisabled={!editable} />
+          <TextInput label="기본 역할 ID (Role IDs)" value={defaultRoles} onChange={setDefaultRoles} description="새 소속의 권한 대상에 적용할 Role ID를 쉼표로 구분합니다." isDisabled={!editable} />
         </div>
         <CheckboxField isSelected={acceptSystem} onChange={setAcceptSystem} isDisabled={!editable || provisioning === "jit"}>
-          System Global Identity가 이 Realm의 Membership을 가질 수 있음
+          운영자 계정이 이 사용자 공간의 소속을 가질 수 있음
         </CheckboxField>
         {converted?.status === 409 ? (
-          <Callout tone="warning"><strong>다른 관리자가 먼저 Realm을 변경했습니다.</strong> 최신 Revision을 다시 불러온 뒤 입력해 주세요.</Callout>
+          <Callout tone="warning"><strong>다른 관리자가 먼저 사용자 공간을 변경했습니다.</strong> 최신 버전을 다시 불러온 뒤 입력해 주세요.</Callout>
         ) : <MutationError error={save.error} />}
         <div className={styles.formActions}>
           <Button type="submit" isDisabled={!editable || name.trim() === "" || save.isPending || (provisioning === "jit" && !acceptSystem)}>
@@ -784,7 +784,7 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
   const operation = owner.data?.status === "healthy"
     ? "transfer"
     : owner.data?.status === "invalid" ? "recover" : "assign";
-  const operationLabel = operation === "transfer" ? "Owner 교체" : operation === "recover" ? "Owner 복구" : "Owner 지정";
+  const operationLabel = operation === "transfer" ? "소유자 교체" : operation === "recover" ? "소유자 복구" : "소유자 지정";
   const changeOwner = useMutation({
     mutationFn: () => {
       const base = {
@@ -827,8 +827,8 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
     <section className={styles.panel} aria-labelledby="realm-owner-title" data-owner-status={owner.data?.status}>
       <SectionHeader
         id="realm-owner-title"
-        title="Realm Owner"
-        description="이 Realm의 실제 사람 최고관리자와 운영 연속성을 관리합니다."
+        title="사용자 공간 소유자(Realm Owner)"
+        description="이 사용자 공간의 실제 사람 최고관리자와 운영 연속성을 관리합니다."
         actions={owner.data ? (
           <Button
             variant={owner.data.status === "healthy" ? "secondary" : "danger"}
@@ -837,13 +837,13 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
           >{operationLabel}</Button>
         ) : undefined}
       />
-      {owner.isPending ? <PageLoading label="Realm Owner 상태를 불러오는 중" /> : null}
+      {owner.isPending ? <PageLoading label="사용자 공간 소유자 상태를 불러오는 중" /> : null}
       {owner.isError ? <LoadError error={owner.error} onRetry={() => void owner.refetch()} /> : null}
       {owner.data?.status === "healthy" && owner.data.owner ? (
         <div className={styles.ownerSummary}>
           <div>
             <strong>{owner.data.owner.primaryIdentifier}</strong>
-            <span>Primary Realm Owner</span>
+            <span>대표 소유자</span>
           </div>
           <div className={styles.rowActions}>
             <Badge tone={owner.data.owner.identityActive ? "success" : "danger"}>{owner.data.owner.identityActive ? "계정 활성" : "계정 비활성"}</Badge>
@@ -851,18 +851,18 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
           </div>
           <DisplayModeGate minimum="advanced">
             <IdValue label="Global Identity ID" value={owner.data.owner.globalIdentityId} />
-            <IdValue label="Owner Subject ID" value={owner.data.owner.subjectId} />
+            <IdValue label="소유자 권한 대상 ID (Subject)" value={owner.data.owner.subjectId} />
           </DisplayModeGate>
         </div>
       ) : null}
       {owner.data?.status === "ownerless" ? (
-        <Callout tone="error"><strong>운영 Owner가 없습니다.</strong> 활성 운영자를 연결한 뒤 Owner를 지정해야 이 Realm의 정상적인 권한 관리 주체가 생깁니다.</Callout>
+        <Callout tone="error"><strong>운영 소유자가 없습니다.</strong> 활성 운영자를 연결한 뒤 소유자를 지정해야 이 사용자 공간의 정상적인 권한 관리 주체가 생깁니다.</Callout>
       ) : null}
       {owner.data?.status === "invalid" ? (
-        <Callout tone="error"><strong>Realm Owner 상태가 손상되었습니다.</strong> {owner.data.issueCode ? <code>{owner.data.issueCode}</code> : null} 적격 운영자를 선택해 복구하세요.</Callout>
+        <Callout tone="error"><strong>사용자 공간 소유자 상태가 손상되었습니다.</strong> {owner.data.issueCode ? <code>{owner.data.issueCode}</code> : null} 적격 운영자를 선택해 복구하세요.</Callout>
       ) : null}
       {owner.data && candidates.length === 0 ? (
-        <p className={styles.compactHint}>Owner로 지정할 다른 활성 System 운영자 Membership이 없습니다. 아래에서 기존 운영자를 먼저 연결하세요.</p>
+        <p className={styles.compactHint}>소유자로 지정할 다른 활성 운영자 계정이 없습니다. 아래에서 기존 운영자를 먼저 연결하세요.</p>
       ) : null}
       {dialogOpen && owner.data ? (
         <ConfirmDialog
@@ -875,9 +875,9 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
           onConfirm={() => changeOwner.mutate()}
         >
           <div className={styles.dialogStack}>
-            <p>CMS Owner 자신은 대상이 될 수 없습니다. 서버가 대상 계정, Membership과 사람 Subject를 다시 검증합니다.</p>
+            <p>CMS Owner 자신은 대상이 될 수 없습니다. 서버가 대상 계정, 소속과 사람 권한 대상을 다시 검증합니다.</p>
             <SelectField
-              label="새 Realm Owner"
+              label="새 사용자 공간 소유자"
               value={targetMembershipId}
               options={candidates.map((membership) => ({
                 value: membership.membershipId,
@@ -888,8 +888,8 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
             <TextAreaField label="변경 사유" value={reason} onChange={setReason} rows={3} isRequired />
             {operation === "transfer" ? (
               <div className={styles.dialogStack}>
-                <CheckboxField isSelected={revokePreviousSessions} onChange={setRevokePreviousSessions}>기존 Owner의 활성 세션 폐기</CheckboxField>
-                <CheckboxField isSelected={suspendPreviousMembership} onChange={setSuspendPreviousMembership}>기존 Owner Membership도 함께 정지</CheckboxField>
+                <CheckboxField isSelected={revokePreviousSessions} onChange={setRevokePreviousSessions}>기존 소유자의 활성 세션 폐기</CheckboxField>
+                <CheckboxField isSelected={suspendPreviousMembership} onChange={setSuspendPreviousMembership}>기존 소유자의 소속도 함께 정지</CheckboxField>
               </div>
             ) : null}
             <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
@@ -1018,7 +1018,7 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
       <SectionHeader
         id="membership-title"
         title="사용자 할당"
-        description="이 Realm에 연결된 사용자를 확인하고 필요한 연결 작업을 실행합니다."
+        description="이 사용자 공간에 연결된 사용자를 확인하고 필요한 연결 작업을 실행합니다."
         actions={<div className={styles.rowActions}>
           <Button
             onPress={() => { register.reset(); setNewProfileError(null); setMembershipAction("register"); }}
@@ -1032,15 +1032,15 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
         </div>}
       />
       {realm.status !== "active" ? (
-        <Callout tone="warning">이 Realm이 활성 상태가 되어야 사용자를 연결할 수 있습니다.</Callout>
+        <Callout tone="warning">이 사용자 공간이 활성 상태가 되어야 사용자를 연결할 수 있습니다.</Callout>
       ) : null}
       {identities.isError ? <LoadError error={identities.error} onRetry={() => void identities.refetch()} /> : null}
       {!realm.authentication.acceptSystemIdentities ? (
-        <p className={styles.compactHint}>기존 운영자 연결은 Realm 설정에서 System Identity Membership을 허용하면 사용할 수 있습니다.</p>
+        <p className={styles.compactHint}>기존 운영자 연결은 사용자 공간 설정에서 운영자 계정 소속을 허용하면 사용할 수 있습니다.</p>
       ) : realm.status === "active" && !identities.isPending && candidates.length === 0 ? (
         <p className={styles.compactHint}>연결 가능한 운영자 계정이 없습니다.</p>
       ) : null}
-      {memberships.isPending ? <PageLoading label="Membership을 불러오는 중" /> : null}
+      {memberships.isPending ? <PageLoading label="소속을 불러오는 중" /> : null}
       {memberships.isError ? <LoadError error={memberships.error} onRetry={() => void memberships.refetch()} /> : null}
       {memberships.data?.items.length === 0 ? <EmptyState title="연결된 사용자가 없습니다" description="상단 작업으로 사용자를 연결하거나 일반 사용자가 가입/JIT 로그인하면 여기에 표시됩니다." /> : null}
       {memberships.data && memberships.data.items.length > 0 ? (
@@ -1156,7 +1156,7 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
       ) : null}
       {promoting ? (
         <ConfirmDialog
-          title="Realm 관리자로 지정"
+          title="공간 관리자로 지정"
           confirmLabel="관리자로 지정"
           isPending={promote.isPending}
           isConfirmDisabled={promoteReauthPassword === ""}
@@ -1164,7 +1164,7 @@ function MembershipSection({ realm, memberships, identities, systemRealmId }: {
           onConfirm={() => promote.mutate(promoting)}
         >
           <div className={styles.dialogStack}>
-            <p><strong>{(promoting.identity ?? identityById.get(promoting.globalIdentityId))?.primaryIdentifier ?? promoting.subjectId}</strong> 님에게 이 Realm의 <strong>관리자(content-administrator)</strong> 권한을 부여합니다. 이후 이 계정으로 “Realm 권한 관리” 화면에 들어가 권한을 직접 관리할 수 있습니다.</p>
+            <p><strong>{(promoting.identity ?? identityById.get(promoting.globalIdentityId))?.primaryIdentifier ?? promoting.subjectId}</strong> 님에게 이 사용자 공간의 <strong>관리자(content-administrator)</strong> 권한을 부여합니다. 이후 이 계정으로 “사용자 공간 권한 관리” 화면에 들어가 권한을 직접 관리할 수 있습니다.</p>
             <MutationError error={promote.error} />
             <TextInput label="현재 관리자 비밀번호" type="password" autoComplete="current-password" value={promoteReauthPassword} onChange={setPromoteReauthPassword} description="본인 확인을 위해 현재 로그인한 관리자 비밀번호를 입력합니다." isRequired />
           </div>
@@ -1280,8 +1280,8 @@ function FullAccessSection({ realm, bindings, mode }: {
     <section className={`${styles.panel} ${styles.fullAccessPanel}`} data-active={activeBindings.length > 0} aria-labelledby="full-access-title">
       <SectionHeader
         id="full-access-title"
-        title="Realm Full Access"
-        description="CMS Owner가 제한된 시간 동안 이 Realm의 Admin Studio 정책을 직접 복구하는 비상 접근입니다."
+        title="사용자 공간 Full Access"
+        description="CMS Owner가 제한된 시간 동안 이 사용자 공간의 Admin Studio 정책을 직접 복구하는 비상 접근입니다."
         actions={<>
           <Button size="small" variant="secondary" onPress={() => navigate(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/audit`)}>감사 로그</Button>
           <Button
@@ -1291,7 +1291,7 @@ function FullAccessSection({ realm, bindings, mode }: {
           >{currentBinding ? "Full Access 사용 중" : "Full Access 시작"}</Button>
         </>}
       />
-      <p className={styles.compactHint}>Realm Membership이나 Content API 권한은 만들지 않습니다. 일반 운영은 사람 Realm Owner와 Role Binding으로 처리하세요.</p>
+      <p className={styles.compactHint}>사용자 공간 소속이나 Content API 권한은 만들지 않습니다. 일반 운영은 사람 소유자와 역할 연결로 처리하세요.</p>
       {bindings.isPending ? <PageLoading label="Full Access 상태를 불러오는 중" /> : null}
       {bindings.isError ? <LoadError error={bindings.error} onRetry={() => void bindings.refetch()} /> : null}
       {activeBindings.length > 0 ? (
@@ -1312,7 +1312,7 @@ function FullAccessSection({ realm, bindings, mode }: {
           ))}
         </div>
       ) : bindings.data ? (
-        <div className={styles.fullAccessInactive}><Badge tone="neutral">비활성</Badge><span>현재 사용 중인 Realm Full Access가 없습니다.</span></div>
+        <div className={styles.fullAccessInactive}><Badge tone="neutral">비활성</Badge><span>현재 사용 중인 Full Access가 없습니다.</span></div>
       ) : null}
       {displayModeAtLeast(mode, "advanced") && bindings.data && bindings.data.items.length > 0 ? (
         <div className={styles.tableWrap}>
@@ -1340,7 +1340,7 @@ function FullAccessSection({ realm, bindings, mode }: {
       <MutationError error={revoke.error} />
       {granting ? (
         <ConfirmDialog
-          title="Realm Full Access 시작"
+          title="사용자 공간 Full Access 시작"
           confirmLabel="Full Access 시작"
           danger
           isPending={grant.isPending}
@@ -1363,7 +1363,7 @@ function FullAccessSection({ realm, bindings, mode }: {
       ) : null}
       {revoking ? (
         <ConfirmDialog
-          title="Realm Full Access 즉시 해제"
+          title="사용자 공간 Full Access 즉시 해제"
           confirmLabel="즉시 해제"
           danger
           isPending={revoke.isPending}

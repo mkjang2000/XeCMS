@@ -75,7 +75,7 @@ export function UserListPage() {
       <PageHeader
         eyebrow="Users & access"
         title="사용자"
-        description="Global Identity의 상태와 Realm Membership을 한곳에서 관리합니다. 계정을 만들어도 Role은 자동 부여되지 않습니다."
+        description="계정의 상태와 사용자 공간 소속을 한곳에서 관리합니다. 계정을 만들어도 역할은 자동 부여되지 않습니다."
         actions={<>
           <Button variant="secondary" onPress={() => { setCreateKind("service"); setCreating(true); }}><Icon name="plus" size={17} />서비스 계정 생성</Button>
           <Button onPress={() => { setCreateKind("human"); setCreating(true); }}><Icon name="plus" size={17} />운영 계정 생성</Button>
@@ -83,7 +83,7 @@ export function UserListPage() {
       />
       {creating ? (
         <section className={styles.formCard} aria-labelledby="create-user-title">
-          <SectionHeader id="create-user-title" title={createKind === "human" ? "새 System 운영 계정" : "새 서비스 계정"} description={createKind === "human" ? "임시 비밀번호는 첫 로그인 후 변경 대상이 됩니다." : "서비스 계정은 password login을 할 수 없으며 Role과 API key를 별도로 구성합니다."} />
+          <SectionHeader id="create-user-title" title={createKind === "human" ? "새 운영 계정" : "새 서비스 계정"} description={createKind === "human" ? "임시 비밀번호는 첫 로그인 후 변경 대상이 됩니다." : "서비스 계정은 password login을 할 수 없으며 역할과 API key를 별도로 구성합니다."} />
           <form className={styles.formStack} onSubmit={(event) => {
             event.preventDefault();
             if (identifier.trim() === "" || (createKind === "human" && temporaryPassword.length < 12)) return;
@@ -102,7 +102,7 @@ export function UserListPage() {
         </section>
       ) : null}
       <section className={styles.panel} aria-labelledby="user-list-title">
-        <SectionHeader id="user-list-title" title="Identity 목록" description="식별자와 활성 상태로 검색할 수 있습니다." />
+        <SectionHeader id="user-list-title" title="계정 목록" description="식별자와 활성 상태로 검색할 수 있습니다." />
         <form className={styles.fieldGrid} onSubmit={submitSearch}>
           <TextInput label="식별자 검색" value={searchDraft} onChange={setSearchDraft} placeholder="이름 일부" />
           <SelectField label="상태" value={status} options={[
@@ -292,13 +292,13 @@ export function UserDetailPage() {
         <div><span>Membership</span><strong>{current.memberships.length}</strong></div>
       </div>
       <section className={styles.panel} aria-labelledby="identity-settings-title">
-        <SectionHeader id="identity-settings-title" title="Identity 설정" description="identifier 변경은 로그인 식별자와 System Subject 표시명을 함께 갱신합니다." />
+        <SectionHeader id="identity-settings-title" title="계정 설정" description="identifier 변경은 로그인 식별자와 운영자 공간 권한 대상 표시명을 함께 갱신합니다." />
         <div className={styles.fieldGrid}>
           <TextInput label="로그인 식별자" value={nextIdentifier} onChange={setIdentifier} isDisabled={current.status === "disabled"} />
         </div>
         <ErrorCallout error={update.error ?? statusMutation.error ?? transferOwner.error} />
         <div className={styles.formActions}>
-          {!current.isOwner && current.kind === "human" && current.status === "active" ? <Button variant="secondary" onPress={() => setTransferOpen(true)}>Owner로 이전</Button> : null}
+          {!current.isOwner && current.kind === "human" && current.status === "active" ? <Button variant="secondary" onPress={() => setTransferOpen(true)}>CMS 소유자로 이전</Button> : null}
           <Button variant={current.status === "active" ? "danger" : "secondary"} onPress={() => setConfirmStatus(true)} isDisabled={current.isOwner}>{current.status === "active" ? "계정 비활성화" : "계정 재활성화"}</Button>
           <Button onPress={() => update.mutate()} isDisabled={update.isPending || nextIdentifier.trim() === current.primaryIdentifier || nextIdentifier.trim() === ""}>변경 저장</Button>
         </div>
@@ -355,7 +355,7 @@ export function UserDetailPage() {
       ) : null}
       {current.kind === "service" ? (
         <section className={styles.panel} aria-labelledby="api-keys-title">
-          <SectionHeader id="api-keys-title" title="API keys" description="실제 허용 권한은 Service Subject의 Role 권한과 key scope의 교집합입니다." />
+          <SectionHeader id="api-keys-title" title="API keys" description="실제 허용 권한은 서비스 계정 권한 대상의 역할 권한과 key scope의 교집합입니다." />
           <div className={styles.formActions}><Button onPress={() => setApiKeyOpen(true)} isDisabled={current.status === "disabled"}><Icon name="plus" size={16} />API key 생성</Button></div>
           {createdApiKeySecret !== null ? (
             <Callout tone="warning"><strong>지금 한 번만 표시됩니다.</strong><br /><code>{createdApiKeySecret}</code><br /><Button size="small" variant="quiet" onPress={() => setCreatedApiKeySecret(null)}>확인</Button></Callout>
@@ -379,14 +379,14 @@ export function UserDetailPage() {
         </section>
       ) : null}
       <section className={styles.panel} aria-labelledby="memberships-title">
-        <SectionHeader id="memberships-title" title="Realm Membership" description="Membership 상태와 연결된 Subject를 확인합니다." />
+        <SectionHeader id="memberships-title" title="사용자 공간 소속(Membership)" description="소속 상태와 연결된 권한 대상을 확인합니다." />
         {current.kind === "human" && current.status === "active" && !current.memberships.some(({ realmKind }) => realmKind === "system") ? (
-          <div className={styles.formActions}><Button onPress={() => createSystemMembership.mutate()} isDisabled={createSystemMembership.isPending}>System 운영 계정으로 승격</Button></div>
+          <div className={styles.formActions}><Button onPress={() => createSystemMembership.mutate()} isDisabled={createSystemMembership.isPending}>운영 계정으로 승격</Button></div>
         ) : null}
         <ErrorCallout error={createSystemMembership.error} />
-        {current.memberships.length === 0 ? <EmptyState title="Membership이 없습니다" description="Content Realm 상세에서 명시적으로 provisioning할 수 있습니다." /> : (
+        {current.memberships.length === 0 ? <EmptyState title="소속이 없습니다" description="사용자 공간 상세에서 명시적으로 provisioning할 수 있습니다." /> : (
           <div className={styles.tableWrap}><table className={styles.table}>
-            <thead><tr><th>Realm</th><th>상태</th><th>Subject</th><th>Profile</th></tr></thead>
+            <thead><tr><th>사용자 공간</th><th>상태</th><th>권한 대상</th><th>Profile</th></tr></thead>
             <tbody>{current.memberships.map((membership) => <tr key={membership.membershipId}>
               <td><strong>{membership.realmName}</strong><span className={styles.secondaryLine}>{membership.realmKey}</span></td>
               <td><Badge tone={membership.status === "active" ? "success" : membership.status === "pending" ? "warning" : "danger"}>{membership.status}</Badge></td>
@@ -398,14 +398,14 @@ export function UserDetailPage() {
       </section>
       {confirmStatus ? (
         <ConfirmDialog
-          title={current.status === "active" ? "Identity 비활성화" : "Identity 재활성화"}
+          title={current.status === "active" ? "계정 비활성화" : "계정 재활성화"}
           confirmLabel={current.status === "active" ? "비활성화" : "재활성화"}
           danger={current.status === "active"}
           isPending={statusMutation.isPending}
           onCancel={() => setConfirmStatus(false)}
           onConfirm={() => statusMutation.mutate()}
         >
-          <p><strong>{current.primaryIdentifier}</strong>의 {current.status === "active" ? "모든 활성 session과 API key를 폐기합니다." : "Identity만 활성화하며 기존 session은 복원하지 않습니다."}</p>
+          <p><strong>{current.primaryIdentifier}</strong>의 {current.status === "active" ? "모든 활성 session과 API key를 폐기합니다." : "계정만 활성화하며 기존 session은 복원하지 않습니다."}</p>
         </ConfirmDialog>
       ) : null}
       {resetOpen ? (
@@ -454,8 +454,8 @@ export function UserDetailPage() {
       ) : null}
       {transferOpen ? (
         <ConfirmDialog
-          title="Workspace Owner 이전"
-          confirmLabel="Owner 이전"
+          title="CMS 소유자(Owner) 이전"
+          confirmLabel="소유자 이전"
           danger
           isPending={transferOwner.isPending}
           isConfirmDisabled={transferReason.trim().length < 3 || transferPassword === ""}
@@ -463,9 +463,9 @@ export function UserDetailPage() {
           onConfirm={() => transferOwner.mutate()}
         >
           <div className={styles.dialogStack}>
-            <p><strong>{current.primaryIdentifier}</strong>에게 protected Owner binding을 이전합니다. 모든 Admin session이 폐기되어 다시 로그인해야 합니다.</p>
+            <p><strong>{current.primaryIdentifier}</strong>에게 CMS 최고관리자 권한을 이전합니다. 모든 Admin session이 폐기되어 다시 로그인해야 합니다.</p>
             <TextAreaField label="이전 사유" value={transferReason} onChange={setTransferReason} rows={3} isRequired />
-            <TextInput label="현재 Owner 비밀번호" type="password" autoComplete="current-password" value={transferPassword} onChange={setTransferPassword} isRequired />
+            <TextInput label="현재 소유자 비밀번호" type="password" autoComplete="current-password" value={transferPassword} onChange={setTransferPassword} isRequired />
           </div>
         </ConfirmDialog>
       ) : null}

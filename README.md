@@ -7,9 +7,7 @@ XeCMS는 처음에는 Admin Studio에서 콘텐츠 구조와 데이터를 관리
 PostgreSQL을 공식 저장소로 사용하며 Schema부터 Migration, REST API, Admin UI까지 하나의
 모델을 공유한다.
 
-> 현재 버전은 **0.4.1**이다. MVP 기능과 전체 검증 체계는 완성됐지만
-> `@xecms/*` 패키지와 공식 컨테이너 이미지는 아직 공개 Registry에 배포하지 않았다.
-> 지금은 이 저장소를 clone하여 실행하는 방식을 지원한다.
+> 현재 버전은 **0.4.1**이다. MVP 기능과 전체 검증 체계가 완성되어 있다.
 
 ## 주요 특징
 
@@ -35,18 +33,16 @@ PostgreSQL을 공식 저장소로 사용하며 Schema부터 Migration, REST API,
 ### 요구 사항
 
 - Node.js 22.13 이상
-- pnpm 10
-- Docker와 Docker Compose
+- pnpm 10 (`corepack enable`)
+- PostgreSQL 16 이상 (Docker Compose 제공)
 
 ```bash
-git clone https://github.com/mkjang2000/XeCMS.git
-cd XeCMS
-corepack enable
-pnpm install
+pnpm create xecms my-cms
+cd my-cms
 cp .env.example .env
-pnpm db:up
-pnpm db:migrate
-pnpm dev:m1
+docker compose up -d postgres
+xecms migrate
+xecms dev
 ```
 
 실행 후 다음 주소를 사용할 수 있다.
@@ -57,6 +53,8 @@ pnpm dev:m1
 | REST API | <http://127.0.0.1:3100/api> |
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
+
+자세한 설치와 첫 요청은 [시작하기](./docs/getting-started.md)를 참고한다.
 
 빈 데이터베이스의 첫 접근은 `/admin/setup`으로 이동한다. 여기서 12자 이상의 비밀번호로
 최초 Owner 계정을 생성한다. 실행 환경과 관계없이 초기 계정은 자동 생성되지 않으며,
@@ -97,9 +95,7 @@ Project scaffold는 다음 starter를 제공한다.
 | `blog` | Posts, Pages와 Category hierarchy |
 | `community` | 인증 가능한 Members Realm과 Posts |
 
-Registry 배포 후에는 `create-xecms`로 독립 프로젝트를 생성할 수 있다. 현재 저장소에서는
-CLI와 scaffold 결과를 빌드 및 테스트할 수 있지만, 생성 프로젝트의 일반 설치는
-`@xecms/*` 패키지 공개 이후 지원한다.
+`pnpm create xecms`로 독립 프로젝트를 생성할 수 있다.
 
 주요 CLI 계약은 다음과 같다.
 
@@ -114,8 +110,8 @@ xecms backup create <directory>
 xecms backup restore <directory> --confirm-empty
 ```
 
-Migration은 forward-only다. 정식 Upgrade와 복구 절차는 공개 문서와 함께 제공할 예정이다.
-현재 지원 범위와 문서 상태는 [문서 인덱스](./docs/README.md)에서 확인할 수 있다.
+Migration은 forward-only다. Upgrade와 백업·복구 절차는 [운영 가이드](./docs/operations.md)에서
+다룬다. 전체 문서는 [문서 인덱스](./docs/README.md)에서 확인할 수 있다.
 
 ## 개발과 검증
 
@@ -149,6 +145,11 @@ Release gate에서는 이 전체 회귀와 Chromium 누적 11개 여정을 함�
 
 ## 문서
 
-- [공개 문서 인덱스](./docs/README.md)
+- [문서 인덱스](./docs/README.md)
+- [시작하기](./docs/getting-started.md) · [핵심 개념](./docs/concepts.md) · [인증](./docs/authentication.md)
+- [REST API](./docs/rest-api.md) · [TypeScript SDK](./docs/typescript-sdk.md) · [Schema](./docs/schema.md)
+- [운영 가이드](./docs/operations.md) · [확장 개발](./docs/extending.md)
 
-설치, Upgrade, 운영, API와 확장 개발 문서는 정식 배포 범위가 확정되는 순서대로 공개한다.
+> **배포 상태**: 이 문서는 정식 공개 배포를 기준으로 작성되었다. 다만 `@xecms/*` 패키지와
+> 공식 컨테이너 이미지의 공개 Registry 배포는 아직 진행되지 않았다. 배포 전까지는 이
+> 저장소를 clone하여 `pnpm install`로 동일한 CLI와 개발 서버를 사용할 수 있다.

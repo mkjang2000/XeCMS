@@ -184,20 +184,20 @@ function authConfigurationMessages(
     messages.push("싱글턴은 콘텐츠 계정 Profile Collection으로 사용할 수 없습니다.");
   }
   if (realmListUnavailable) {
-    messages.push("Realm 목록을 확인할 수 없어 인증 설정을 저장할 수 없습니다.");
+    messages.push("사용자 공간 목록을 확인할 수 없어 인증 설정을 저장할 수 없습니다.");
   } else if (!values.authRealmKey) {
-    messages.push("먼저 생성된 Content Realm을 선택해 주세요.");
+    messages.push("먼저 생성된 사용자 공간을 선택해 주세요.");
   } else if (selectedRealm === undefined || selectedRealm.kind !== "content") {
-    messages.push("선택한 Realm key와 일치하는 Content Realm이 없습니다.");
+    messages.push("선택한 공간 key와 일치하는 사용자 공간이 없습니다.");
   } else {
     if (selectedRealm.status === "disabled") {
-      messages.push("비활성화된 Realm에는 Profile Collection을 연결할 수 없습니다.");
+      messages.push("비활성화된 사용자 공간에는 Profile Collection을 연결할 수 없습니다.");
     }
     if (
       selectedRealm.profileCollectionId !== undefined
       && selectedRealm.profileCollectionId !== collectionId
     ) {
-      messages.push("선택한 Realm에는 이미 다른 Profile Collection이 연결되어 있습니다.");
+      messages.push("선택한 사용자 공간에는 이미 다른 Profile Collection이 연결되어 있습니다.");
     }
   }
   if (eligibleIds.size === 0) {
@@ -399,7 +399,7 @@ export function SchemaEditorPage() {
     realmKey === watchedValues.authRealmKey);
   const identifierCandidates = eligibleIdentifierFields(watchedValues);
   const authBlockingMessages = watchedValues.authEnabled ? [
-    ...(realms.isPending ? ["Realm 목록을 불러오는 동안 인증 설정 저장을 잠시 기다려 주세요."] : []),
+    ...(realms.isPending ? ["사용자 공간 목록을 불러오는 동안 인증 설정 저장을 잠시 기다려 주세요."] : []),
     ...authConfigurationMessages(watchedValues, contentRealms, collectionId, realms.isError),
   ] : [];
   // Deadlock: auth requires an identifier, an identifier needs a stable Field ID,
@@ -434,7 +434,7 @@ export function SchemaEditorPage() {
         throw new Error("DUPLICATE_FIELD_NAME");
       }
       const authIssues = [
-        ...(realms.isPending ? ["Realm 목록을 불러오는 동안 인증 설정을 저장할 수 없습니다."] : []),
+        ...(realms.isPending ? ["사용자 공간 목록을 불러오는 동안 인증 설정을 저장할 수 없습니다."] : []),
         ...authConfigurationMessages(values, contentRealms, collectionId, realms.isError),
       ];
       if (authIssues.length > 0) {
@@ -591,7 +591,7 @@ export function SchemaEditorPage() {
           <SectionHeader
             id="collection-auth-heading"
             title="콘텐츠 계정 인증"
-            description="이 Collection을 사전에 생성된 Content Realm의 Profile과 로그인 identifier로 연결합니다."
+            description="이 Collection을 사전에 생성된 사용자 공간의 Profile과 로그인 identifier로 연결합니다."
           />
           <div className={styles.authPanel}>
             <Controller control={control} name="authEnabled" render={({ field }) => (
@@ -602,10 +602,10 @@ export function SchemaEditorPage() {
             {watchedValues.authEnabled ? (
               <>
                 {realms.isError ? (
-                  <Callout tone="error">Realm 목록을 불러오지 못했습니다. Identity Realm 화면과 연결 상태를 확인해 주세요.</Callout>
+                  <Callout tone="error">사용자 공간 목록을 불러오지 못했습니다. 사용자 공간 관리 화면과 연결 상태를 확인해 주세요.</Callout>
                 ) : null}
                 {!realms.isPending && !realms.isError && contentRealms.length === 0 ? (
-                  <Callout tone="warning">먼저 Identity Realm 화면에서 Content Realm을 생성해 주세요.</Callout>
+                  <Callout tone="warning">먼저 사용자 공간 관리 화면에서 사용자 공간을 생성해 주세요.</Callout>
                 ) : null}
                 <div className={styles.settingsGrid}>
                   <Controller
@@ -613,8 +613,8 @@ export function SchemaEditorPage() {
                     name="authRealmKey"
                     render={({ field, fieldState }) => (
                       <SelectField
-                        label="Content Realm"
-                        description="Schema에는 Realm ID가 아니라 변경되지 않는 Realm key를 저장합니다."
+                        label="사용자 공간(Content Realm)"
+                        description="Schema에는 공간 ID가 아니라 변경되지 않는 공간 key를 저장합니다."
                         value={field.value}
                         onChange={(realmKey) => {
                           field.onChange(realmKey);

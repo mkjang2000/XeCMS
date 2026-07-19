@@ -131,7 +131,7 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
       contentRealm({ status: "provisioning", realmKey: "testre" }),
     );
 
-    expect(await screen.findByText(/Realm을 바로 활성화할 수 있습니다/)).toBeTruthy();
+    expect(await screen.findByText(/사용자 공간을 바로 활성화할 수 있습니다/)).toBeTruthy();
     expect(screen.getByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "기본 인증 스키마 생성" }));
     const dialog = await screen.findByRole("dialog");
@@ -139,7 +139,7 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
     expect((identifierField as HTMLInputElement).value).toBe("loginId");
     await user.clear(identifierField);
     await user.type(identifierField, "memberEmail");
-    await user.click(within(dialog).getByRole("button", { name: "생성하고 Realm 활성화" }));
+    await user.click(within(dialog).getByRole("button", { name: "생성하고 사용자 공간 활성화" }));
 
     await waitFor(() => expect(createProfileSchema).toHaveBeenCalledTimes(1));
     expect(createProfileSchema).toHaveBeenCalledWith("rlm_testre", {
@@ -247,13 +247,13 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
     );
 
     await user.click(await screen.findByRole("tab", { name: "사용자" }));
-    await user.click(await screen.findByRole("button", { name: "Owner 지정" }));
+    await user.click(await screen.findByRole("button", { name: "소유자 지정" }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByLabelText("새 Realm Owner"));
+    await user.click(within(dialog).getByLabelText("새 사용자 공간 소유자"));
     await user.click(await screen.findByRole("option", { name: /realm\.owner@example\.com/ }));
     await user.type(within(dialog).getByLabelText(/변경 사유/), "Initial Realm owner");
     await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");
-    await user.click(within(dialog).getByRole("button", { name: "Owner 지정" }));
+    await user.click(within(dialog).getByRole("button", { name: "소유자 지정" }));
 
     await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
     expect(assignOwner).toHaveBeenCalledWith("rlm_testre", {
@@ -268,8 +268,8 @@ describe("IdentityRealmDetailPage provisioning guidance", () => {
     renderDetail(contentRealm({ status: "active", profileCollectionId: "col_profile" }));
 
     // Wait until the detail view has rendered.
-    expect(await screen.findByText("Realm 설정")).toBeTruthy();
-    expect(screen.queryByText(/Realm을 바로 활성화할 수 있습니다/)).toBeNull();
+    expect(await screen.findByText("사용자 공간 설정")).toBeTruthy();
+    expect(screen.queryByText(/사용자 공간을 바로 활성화할 수 있습니다/)).toBeNull();
     expect(screen.queryByRole("button", { name: "기본 인증 스키마 생성" })).toBeNull();
     expect(screen.queryByText(/활성화되기 전까지는 설정을 변경할 수 없습니다/)).toBeNull();
   });
@@ -281,13 +281,13 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
   it("keeps basic mode focused and routes Realm authorization to grades", async () => {
     const { listFullAccess, router, user } = renderDetail(activeRealm, [], "basic");
 
-    await screen.findByText("Realm 설정");
+    await screen.findByText("사용자 공간 설정");
     expect(screen.queryByLabelText("초기 Profile JSON")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "사용자 공간 Full Access" })).toBeNull();
     await waitFor(() => expect(listFullAccess).toHaveBeenCalledWith("rlm_testre"));
 
     await user.click(screen.getByRole("tab", { name: "권한" }));
-    await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
+    await user.click(screen.getByRole("button", { name: "사용자 공간 권한 관리" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/grades"));
   });
 
@@ -301,11 +301,11 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
     await user.click(within(dialog).getByText("초기 Profile JSON", { selector: "summary" }));
     expect(within(dialog).getByLabelText("초기 Profile JSON")).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "취소" }));
-    expect(screen.queryByRole("heading", { name: "Realm Full Access" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "사용자 공간 Full Access" })).toBeNull();
     await waitFor(() => expect(listFullAccess).toHaveBeenCalledWith("rlm_testre"));
 
     await user.click(screen.getByRole("tab", { name: "권한" }));
-    await user.click(screen.getByRole("button", { name: "Realm 권한 관리" }));
+    await user.click(screen.getByRole("button", { name: "사용자 공간 권한 관리" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/realms/rlm_testre/access/roles"));
   });
 
@@ -313,7 +313,7 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
     const { listFullAccess, user } = renderDetail(activeRealm, [], "advanced");
 
     await user.click(await screen.findByRole("tab", { name: "권한" }));
-    expect(await screen.findByRole("heading", { name: "Realm Full Access" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "사용자 공간 Full Access" })).toBeTruthy();
     expect(listFullAccess).toHaveBeenCalledWith("rlm_testre");
   });
 
@@ -361,7 +361,7 @@ describe("Realm 권한 부트스트랩 안내 (목록·상세)", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(/Identity Realm을 관리할 권한이 없습니다/)).toBeTruthy();
+    expect(await screen.findByText(/사용자 공간을 관리할 권한이 없습니다/)).toBeTruthy();
     // The raw English server message must not leak.
     expect(screen.queryByText(/Authorization denied/)).toBeNull();
   });
@@ -388,7 +388,7 @@ describe("Realm 권한 부트스트랩 안내 (목록·상세)", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(/이 Realm을 관리할 권한이 없습니다/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Realm 목록으로" })).toBeTruthy();
+    expect(await screen.findByText(/이 사용자 공간을 관리할 권한이 없습니다/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "사용자 공간 목록으로" })).toBeTruthy();
   });
 });

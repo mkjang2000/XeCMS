@@ -56,9 +56,9 @@ export function RealmAuthorizationError({ error, onRetry, context, realmId }: {
   if (context === "list") {
     return (
       <Callout tone="warning">
-        <strong>Identity Realm을 관리할 권한이 없습니다.</strong>
+        <strong>사용자 공간을 관리할 권한이 없습니다.</strong>
         <div>
-          Realm 목록을 보고 관리하려면 운영 계정에 <code>authorization.manage</code> 권한이 필요합니다.
+          사용자 공간 목록을 보고 관리하려면 운영 계정에 <code>authorization.manage</code> 권한이 필요합니다.
           권한이 있는 운영자에게 역할 배정을 요청하세요.
         </div>
         <div><Button variant="quiet" onPress={onRetry}>다시 시도</Button></div>
@@ -69,12 +69,12 @@ export function RealmAuthorizationError({ error, onRetry, context, realmId }: {
   if (context === "detail") {
     return (
       <Callout tone="warning">
-        <strong>이 Realm을 관리할 권한이 없습니다.</strong>
+        <strong>이 사용자 공간을 관리할 권한이 없습니다.</strong>
         <div>
-          Realm 상세를 보려면 운영 계정에 <code>authorization.manage</code> 권한이 필요합니다.
+          사용자 공간 상세를 보려면 운영 계정에 <code>authorization.manage</code> 권한이 필요합니다.
           권한이 있는 운영자에게 역할 배정을 요청하세요.
         </div>
-        <div><Button variant="quiet" onPress={() => navigate("/admin/realms")}>Realm 목록으로</Button></div>
+        <div><Button variant="quiet" onPress={() => navigate("/admin/realms")}>사용자 공간 목록으로</Button></div>
       </Callout>
     );
   }
@@ -82,16 +82,16 @@ export function RealmAuthorizationError({ error, onRetry, context, realmId }: {
   // context === "policy"
   return (
     <Callout tone="warning">
-      <strong>이 Realm의 권한을 관리할 권한이 아직 없습니다.</strong>
+      <strong>이 사용자 공간의 권한을 관리할 권한이 아직 없습니다.</strong>
       <div>
-        Content Realm을 만든 직후에는 운영자 계정에 이 Realm의 권한 정책을 볼 권한이 없습니다.
-        Realm의 <strong>“사용자 할당”</strong>에서 본인(또는 담당자)을 <strong>“관리자로 지정”</strong>하면
+        사용자 공간을 만든 직후에는 운영자 계정에 이 공간의 권한 정책을 볼 권한이 없습니다.
+        사용자 공간의 <strong>“사용자 할당”</strong>에서 본인(또는 담당자)을 <strong>“관리자로 지정”</strong>하면
         이 화면에 들어올 수 있습니다.
       </div>
       <div>
         {realmId !== undefined ? (
           <Button onPress={() => navigate(`/admin/realms/${encodeURIComponent(realmId)}`)}>
-            Realm 상세로 이동해 관리자 지정
+            사용자 공간 상세로 이동해 관리자 지정
           </Button>
         ) : null}
         <Button variant="quiet" onPress={onRetry}>다시 시도</Button>

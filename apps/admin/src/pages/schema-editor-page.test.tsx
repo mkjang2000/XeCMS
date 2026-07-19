@@ -273,8 +273,8 @@ describe("SchemaEditorPage Collection auth", () => {
 
     await user.click(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }));
 
-    expect(await screen.findByText("먼저 Identity Realm 화면에서 Content Realm을 생성해 주세요.")).toBeTruthy();
-    expect(screen.getByText("먼저 생성된 Content Realm을 선택해 주세요.")).toBeTruthy();
+    expect(await screen.findByText("먼저 사용자 공간 관리 화면에서 사용자 공간을 생성해 주세요.")).toBeTruthy();
+    expect(screen.getByText("먼저 생성된 사용자 공간을 선택해 주세요.")).toBeTruthy();
     expect(screen.getByText("최상위 required + unique text 필드를 저장해 stable ID를 발급한 뒤 identifier로 선택해 주세요.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "변경 사항 검토" }) as HTMLButtonElement).disabled).toBe(true);
     expect(updateDraft).not.toHaveBeenCalled();

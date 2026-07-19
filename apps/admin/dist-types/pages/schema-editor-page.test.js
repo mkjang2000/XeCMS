@@ -57,11 +57,28 @@ function collectionFixture(kind = "collection", eligibleIdentifier = true) {
 }
 function renderEditor(input) {
     const collection = input.collection ?? collectionFixture();
+    let createdCollection;
+    const create = vi.fn().mockImplementation(async (draft) => {
+        createdCollection = {
+            ...draft,
+            id: "col_created",
+            status: "draft",
+            hasPendingChanges: true,
+            revisionId: null,
+            draftVersion: "draft-created-1",
+            fields: draft.fields.map((field, index) => ({
+                ...field,
+                id: field.id ?? `fld_created_${index + 1}`,
+            })),
+        };
+        return createdCollection;
+    });
     const updateDraft = vi.fn().mockImplementation(async (_collectionId, request) => ({
         ...collection,
         ...request.draft,
         draftVersion: "draft-2",
     }));
+    const getCollection = vi.fn().mockImplementation(async (collectionId) => createdCollection?.id === collectionId ? createdCollection : collection);
     const api = {
         collections: {
             list: vi.fn().mockResolvedValue({
@@ -75,7 +92,8 @@ function renderEditor(input) {
                         revisionId: collection.revisionId,
                     }],
             }),
-            get: vi.fn().mockResolvedValue(collection),
+            get: getCollection,
+            create,
             updateDraft,
         },
         identityRealms: {
@@ -92,11 +110,12 @@ function renderEditor(input) {
         },
     });
     const router = createMemoryRouter([
+        { path: "/admin/schema/new", element: _jsx(SchemaEditorPage, {}) },
         { path: "/admin/schema/:collectionId", element: _jsx(SchemaEditorPage, {}) },
         { path: "/admin/schema/:collectionId/changes", element: _jsx("h1", { children: "Schema review" }) },
-    ], { initialEntries: [`/admin/schema/${collection.id}`] });
+    ], { initialEntries: [input.isNew ? "/admin/schema/new" : `/admin/schema/${collection.id}`] });
     render(_jsx(AdminApiProvider, { api: api, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(RouterProvider, { router: router }) }) }) }));
-    return { router, updateDraft, user: userEvent.setup() };
+    return { create, getCollection, router, updateDraft, user: userEvent.setup() };
 }
 afterEach(cleanup);
 describe("SchemaEditorPage Collection auth", () => {
@@ -168,6 +187,27 @@ describe("SchemaEditorPage Collection auth", () => {
         const request = updateDraft.mock.calls[0]?.[1];
         expect(request.draft.auth).toBeUndefined();
     });
+    it("moves a newly created draft to its stable URL without an unsaved-changes prompt", async () => {
+        const { create, getCollection, router, user } = renderEditor({ isNew: true });
+        await screen.findByRole("heading", { name: "새 콘텐츠 타입" });
+        await user.type(screen.getByRole("textbox", { name: "이름" }), "members");
+        const firstField = screen.getByRole("group", { name: "필드 1" });
+        const scoped = within(firstField);
+        await user.type(scoped.getByRole("textbox", { name: "필드 이름" }), "loginId");
+        await user.click(scoped.getByRole("checkbox", { name: "필수 필드" }));
+        await user.click(scoped.getByText("유형별 설정과 제약 조건"));
+        await user.click(scoped.getByRole("checkbox", { name: "고유 값" }));
+        await user.click(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }));
+        const realmSelect = [...document.querySelectorAll("select")].find((select) => select.querySelector('option[value="community"]') !== null);
+        await user.selectOptions(realmSelect, "community");
+        await user.click(screen.getByRole("button", { name: "필드 먼저 저장하고 ID 발급" }));
+        await waitFor(() => expect(router.state.location.pathname).toBe("/admin/schema/col_created"));
+        expect(screen.queryByRole("heading", { name: "저장하지 않은 변경 사항" })).toBeNull();
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(await screen.findByRole("checkbox", { name: "loginId · fld_created_1" })).toBeTruthy();
+        await waitFor(() => expect(getCollection).toHaveBeenCalledWith("col_created"));
+        await waitFor(() => expect(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }).checked).toBe(true));
+    });
     it("explains and blocks missing Realm and ineligible identifier fields", async () => {
         const { updateDraft, user } = renderEditor({
             collection: collectionFixture("collection", false),
@@ -175,8 +215,8 @@ describe("SchemaEditorPage Collection auth", () => {
         });
         await screen.findByRole("heading", { name: "Members 스키마" });
         await user.click(screen.getByRole("checkbox", { name: "콘텐츠 계정 인증 사용" }));
-        expect(await screen.findByText("먼저 Identity Realm 화면에서 Content Realm을 생성해 주세요.")).toBeTruthy();
-        expect(screen.getByText("먼저 생성된 Content Realm을 선택해 주세요.")).toBeTruthy();
+        expect(await screen.findByText("먼저 사용자 공간 관리 화면에서 사용자 공간을 생성해 주세요.")).toBeTruthy();
+        expect(screen.getByText("먼저 생성된 사용자 공간을 선택해 주세요.")).toBeTruthy();
         expect(screen.getByText("최상위 required + unique text 필드를 저장해 stable ID를 발급한 뒤 identifier로 선택해 주세요.")).toBeTruthy();
         expect(screen.getByRole("button", { name: "변경 사항 검토" }).disabled).toBe(true);
         expect(updateDraft).not.toHaveBeenCalled();

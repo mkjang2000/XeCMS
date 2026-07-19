@@ -499,7 +499,7 @@ describe("Realm 권한 부트스트랩 데드락 안내", () => {
 
     // The dead-end error is replaced by an actionable escape hatch.
     expect(await screen.findByText(/관리할 권한이 아직 없습니다/)).toBeTruthy();
-    const goToRealm = screen.getByRole("button", { name: "Realm 상세로 이동해 관리자 지정" });
+    const goToRealm = screen.getByRole("button", { name: "사용자 공간 상세로 이동해 관리자 지정" });
     expect(goToRealm).toBeTruthy();
   });
 

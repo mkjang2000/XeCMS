@@ -53,7 +53,7 @@ export const navigationItems: readonly {
   { to: "/admin/schema", icon: "schema", label: "스키마", group: "content", minimum: "basic", access: ["nav.schema"] },
   { to: "/admin/users", icon: "identity", label: "사용자", group: "people", minimum: "basic", access: ["nav.users"] },
   { to: "/admin/access", icon: "shield", label: "권한", group: "people", minimum: "basic", access: ["nav.access"] },
-  { to: "/admin/realms", icon: "identity", label: "Identity Realms", group: "people", minimum: "standard", access: ["nav.realms"] },
+  { to: "/admin/realms", icon: "identity", label: "사용자 공간", group: "people", minimum: "standard", access: ["nav.realms"] },
   { to: "/admin/jobs", icon: "events", label: "이벤트 작업", group: "system", minimum: "advanced", access: ["nav.jobs"] },
   { to: "/admin/operations", icon: "shield", label: "운영 및 감사", group: "system", minimum: "advanced", access: ["nav.operations.audit", "nav.operations.retention", "nav.operations.media"] },
   { to: "/admin/plugins", icon: "schema", label: "Plugins", group: "system", minimum: "advanced", access: ["nav.plugins"] },
@@ -167,8 +167,8 @@ export function AppShell() {
               <strong>{username}</strong>
               <span>
                 {accessProfile.data
-                  ? `System Realm · Policy r${accessProfile.data.policyRevision}`
-                  : "System Realm 계정"}
+                  ? `운영자 공간 · Policy r${accessProfile.data.policyRevision}`
+                  : "운영자 공간 계정"}
               </span>
             </span>
           </div>

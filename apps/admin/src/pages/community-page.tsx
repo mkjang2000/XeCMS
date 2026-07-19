@@ -93,9 +93,9 @@ export function CommunityPage() {
     return () => { current = false; };
   }, [client, selectedCollectionId, session?.authenticated]);
 
-  if (loading) return <main className={styles.center}><div className={styles.loading}>Content Realm을 불러오는 중…</div></main>;
+  if (loading) return <main className={styles.center}><div className={styles.loading}>사용자 공간을 불러오는 중…</div></main>;
   if (metadata === null || session === null) {
-    return <main className={styles.center}><ErrorCard message={error ?? "Realm을 불러올 수 없습니다."} /></main>;
+    return <main className={styles.center}><ErrorCard message={error ?? "사용자 공간을 불러올 수 없습니다."} /></main>;
   }
 
   return (
@@ -170,7 +170,7 @@ function AuthenticationPanel({ metadata, onAuthenticate, onError }: {
     }
   };
   return (
-    <section className={styles.authCard} aria-label="Content Realm 인증">
+    <section className={styles.authCard} aria-label="사용자 공간 인증">
       <div className={styles.tabs}>
         <button type="button" data-active={mode === "login"} onClick={() => setMode("login")}>로그인</button>
         <button type="button" data-active={mode === "signup"} disabled={metadata.registration !== "open"} onClick={() => setMode("signup")}>회원가입</button>
