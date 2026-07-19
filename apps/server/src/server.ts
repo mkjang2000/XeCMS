@@ -483,6 +483,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         return realmAuthorization.setPrimaryOwner({ realm, actor, ...input });
       },
     },
+    entitlementStore,
   );
   const contentRealmAuthentication = new ContentRealmAuthenticationService(
     identityRealmStore,
@@ -674,6 +675,11 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         "schema.apply",
       );
       await syncConfiguredContentRealmResources(applied.revision.schema.collections);
+      // Drop entitlement ceilings for any collection retired by this apply.
+      await entitlementStore.pruneRetiredCollectionEntitlements(
+        actor.workspaceId,
+        applied.revision.schema.collections.map(({ id }) => String(id)),
+      );
     } catch (error: unknown) {
       // Schema is already committed; keep the durable fence until startup/retry reconcile.
       throw error;
@@ -1507,6 +1513,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         identityRealms.listFullAccessBindings(actor, realmId),
       grantFullAccess: (actor, input) => identityRealms.grantFullAccess(actor, input),
       revokeFullAccess: (actor, input) => identityRealms.revokeFullAccess(actor, input),
+      listRealmEntitlements: (actor, realmId) =>
+        identityRealms.listRealmEntitlements(actor, realmId),
+      listCollectionEntitlements: (actor, collectionId) =>
+        identityRealms.listCollectionEntitlements(actor, collectionId),
+      putRealmEntitlement: (actor, input) => identityRealms.putRealmEntitlement(actor, input),
+      deleteRealmEntitlement: (actor, input) => identityRealms.deleteRealmEntitlement(actor, input),
     },
     contentAuthentication: contentRealmAuthentication,
     metadata: {

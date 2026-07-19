@@ -175,6 +175,10 @@ export function createAdminRouter(api, queryClient) {
                     lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).IdentityRealmListPage }),
                 },
                 {
+                    path: "realms/entitlements",
+                    lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).RealmEntitlementMatrixPage }),
+                },
+                {
                     path: "realms/:realmId",
                     lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).IdentityRealmDetailPage }),
                 },

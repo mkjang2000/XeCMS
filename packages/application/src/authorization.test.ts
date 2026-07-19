@@ -1376,4 +1376,47 @@ describe("Collection entitlement gate (enforced)", () => {
     await expect(service.authorize(OWNER, { action: "content.read", resourceId: collectionResourceId("posts") }))
       .resolves.toMatchObject({ allowed: true });
   });
+
+  it("always allows the realm's own Auth collection, even with no ceiling under enforcement", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    // Mark "posts" as this realm's guaranteed Auth (profile) collection.
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced", "posts");
+    // No entitlement seeded — for any other collection this would deny, but the
+    // guaranteed collection is structurally exempt from the ceiling.
+    await expect(service.authorize(owner, { action: "content.read", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: true });
+    await expect(service.authorize(owner, { action: "content.update", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: true });
+  });
+
+  it("does not restrict fields on the guaranteed Auth collection", async () => {
+    const { service, entitlements, owner, posts } = await gateSetup();
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced", "posts");
+    // No readableFields ceiling applies to the guaranteed collection.
+    await expect(service.filterReadableData(owner, {
+      resourceId: posts, data: { title: "Visible", secret: "AlsoVisible" },
+    })).resolves.toEqual({ title: "Visible", secret: "AlsoVisible" });
+    await expect(service.assertWritableData(owner, { resourceId: posts, data: { secret: "ok" } }))
+      .resolves.toBeUndefined();
+  });
+
+  it("still gates other collections when one is guaranteed", async () => {
+    const store = new MultiRealmMemoryAuthorizationStore();
+    const entitlements = new InMemoryRealmCollectionEntitlementStore();
+    const service = new AuthorizationApplicationService(store, runtime(), entitlements);
+    const owner = await initializeRealm(service, "rlm_community", "subject:community-owner");
+    await service.syncCoreResources(owner, {
+      expectedRevision: realmState(store, owner.realmId).revision,
+      collections: [{ id: "members", name: "Members" }, { id: "posts", name: "Posts" }],
+    });
+    // "members" is the Auth collection (guaranteed); "posts" is ordinary content.
+    entitlements.setEnforcement(owner.realmId, WORKSPACE, "enforced", "members");
+    const members = realmCollectionResourceId(owner.realmId, "members");
+    const posts = realmCollectionResourceId(owner.realmId, "posts");
+    await expect(service.authorize(owner, { action: "content.read", resourceId: members }))
+      .resolves.toMatchObject({ allowed: true });
+    // No ceiling for "posts" → denied, proving the guarantee is scoped to the Auth collection.
+    await expect(service.authorize(owner, { action: "content.read", resourceId: posts }))
+      .resolves.toMatchObject({ allowed: false, reasonCode: "DENY_ENTITLEMENT_GATE" });
+  });
 });

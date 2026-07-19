@@ -7,6 +7,7 @@ import {
   type IdentityRealmRecord,
   type RealmFullAccessBindingRecord,
   type RealmMembershipRecord,
+  type RealmCollectionEntitlement,
 } from "@xecms/application";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -287,6 +288,68 @@ describe("registerIdentityRealmRoutes", () => {
       true,
       true,
     ]);
+  });
+
+  it("manages collection entitlements via the CMS-owner control plane", async () => {
+    const harness = await createHarness();
+
+    const list = await harness.app.inject({
+      method: "GET",
+      url: "/api/identity-realms/rlm_community/collection-entitlements",
+    });
+    const created = await harness.app.inject({
+      method: "PUT",
+      url: "/api/identity-realms/rlm_community/collection-entitlements/col_articles",
+      payload: {
+        actions: ["read", "update"],
+        constraint: { ownerOnly: true },
+        expectedRevision: null,
+        password: "admin-password",
+      },
+    });
+    const removed = await harness.app.inject({
+      method: "DELETE",
+      url: "/api/identity-realms/rlm_community/collection-entitlements/col_articles",
+      payload: { expectedRevision: 1, password: "admin-password" },
+    });
+    const reverse = await harness.app.inject({
+      method: "GET",
+      url: "/api/collections/col_articles/entitlements",
+    });
+
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({ status: null, items: [] });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({
+      realmId: "rlm_community",
+      collectionId: "col_articles",
+      actions: ["read", "update"],
+      revision: 1,
+    });
+    expect(removed.statusCode).toBe(204);
+    expect(reverse.statusCode).toBe(200);
+    expect(reverse.json()).toMatchObject({ collectionId: "col_articles", items: [] });
+
+    // Writes carry the reauthenticated timestamp; reads do not require CSRF.
+    expect(harness.administration.putRealmEntitlement.mock.calls[0]?.[1].reauthenticatedAt)
+      .toBe(VERIFIED_REAUTHENTICATED_AT);
+    expect(harness.administration.deleteRealmEntitlement.mock.calls[0]?.[1].expectedRevision)
+      .toBe(1);
+  });
+
+  it("rejects an unknown action in an entitlement PUT before reaching the service", async () => {
+    const harness = await createHarness();
+    const response = await harness.app.inject({
+      method: "PUT",
+      url: "/api/identity-realms/rlm_community/collection-entitlements/col_articles",
+      payload: {
+        actions: ["read", 42],
+        expectedRevision: null,
+        password: "admin-password",
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(harness.administration.putRealmEntitlement).not.toHaveBeenCalled();
   });
 
   it("registers a brand-new user, reauthenticating with the operator's own password", async () => {
@@ -726,6 +789,27 @@ async function createHarness(): Promise<{
         revokedAt: VERIFIED_REAUTHENTICATED_AT,
         revokedByIdentityId: "identity_admin",
       }),
+    ),
+    listRealmEntitlements: vi.fn<IdentityRealmAdministrationRouteService["listRealmEntitlements"]>(
+      async () => ({ status: null, entitlements: [] }),
+    ),
+    listCollectionEntitlements:
+      vi.fn<IdentityRealmAdministrationRouteService["listCollectionEntitlements"]>(
+        async () => [],
+      ),
+    putRealmEntitlement: vi.fn<IdentityRealmAdministrationRouteService["putRealmEntitlement"]>(
+      async (_actor, input) => ({
+        workspaceId: "ws_default",
+        realmId: input.realmId,
+        collectionId: input.collectionId,
+        actions: [...input.actions] as RealmCollectionEntitlement["actions"],
+        revision: (input.expectedRevision ?? 0) + 1,
+        updatedAt: VERIFIED_REAUTHENTICATED_AT,
+        updatedBy: "identity_admin",
+      }),
+    ),
+    deleteRealmEntitlement: vi.fn<IdentityRealmAdministrationRouteService["deleteRealmEntitlement"]>(
+      async () => undefined,
     ),
   };
 

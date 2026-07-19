@@ -1148,6 +1148,75 @@ export interface RealmFullAccessListDto {
   readonly activeBinding?: RealmFullAccessBindingDto;
 }
 
+export type CollectionActionDto =
+  | "list"
+  | "read"
+  | "create"
+  | "update"
+  | "delete"
+  | "publish"
+  | "unpublish"
+  | "purge"
+  | "restore"
+  | "revision.read"
+  | "revision.restore";
+
+export type RealmEntitlementEnforcementDto = "disabled" | "enforced";
+
+export interface CollectionEntitlementConstraintDto {
+  readonly ownerOnly?: boolean;
+  readonly statuses?: readonly string[];
+}
+
+export interface RealmCollectionEntitlementDto {
+  readonly workspaceId: string;
+  readonly realmId: string;
+  readonly collectionId: string;
+  readonly actions: readonly CollectionActionDto[];
+  readonly readableFields?: readonly string[];
+  readonly writableFields?: readonly string[];
+  readonly constraint?: CollectionEntitlementConstraintDto;
+  readonly revision: number;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+}
+
+export interface RealmEntitlementStatusDto {
+  readonly realmId: string;
+  readonly workspaceId: string;
+  readonly state: RealmEntitlementEnforcementDto;
+  readonly version: number;
+}
+
+/** Per-realm view: enforcement state + every collection ceiling for that realm. */
+export interface RealmCollectionEntitlementListDto {
+  readonly status: RealmEntitlementStatusDto | null;
+  readonly items: readonly RealmCollectionEntitlementDto[];
+}
+
+/** Reverse view: every realm holding a ceiling on one collection. */
+export interface CollectionEntitlementListDto {
+  readonly collectionId: string;
+  readonly items: readonly RealmCollectionEntitlementDto[];
+}
+
+export interface PutRealmCollectionEntitlementRequest {
+  readonly actions: readonly CollectionActionDto[];
+  readonly readableFields?: readonly string[];
+  readonly writableFields?: readonly string[];
+  readonly constraint?: CollectionEntitlementConstraintDto;
+  /** `null` to create; a positive revision to update (CAS). */
+  readonly expectedRevision: number | null;
+  /** Current System account password; never persisted or returned. */
+  readonly password: string;
+}
+
+export interface DeleteRealmCollectionEntitlementRequest {
+  readonly expectedRevision: number;
+  /** Current System account password; never persisted or returned. */
+  readonly password: string;
+}
+
 export interface RealmOwnerStatusDto {
   readonly realmId: string;
   readonly status: "healthy" | "ownerless" | "invalid";

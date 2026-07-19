@@ -400,6 +400,52 @@ describe("createXeCmsClient", () => {
     expect(new Headers(revokeRequest?.headers).get("x-csrf-token")).toBe("csrf-admin");
   });
 
+  it("maps the collection entitlement control-plane routes", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: "csrf-admin" }))
+      .mockResolvedValueOnce(jsonResponse({ status: null, items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ realmId: "realm / 1", collectionId: "col / a", actions: ["read"], revision: 1 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ collectionId: "col / a", items: [] }));
+    const client = createXeCmsClient({ fetch });
+    const realmId = "realm / 1";
+    const collectionId = "col / a";
+
+    await client.auth.getSession();
+    await client.identityRealms.listCollectionEntitlements(realmId);
+    await client.identityRealms.putCollectionEntitlement(realmId, collectionId, {
+      actions: ["read"],
+      constraint: { ownerOnly: true },
+      expectedRevision: null,
+      password: "correct horse battery staple",
+    });
+    await client.identityRealms.deleteCollectionEntitlement(realmId, collectionId, {
+      expectedRevision: 1,
+      password: "correct horse battery staple",
+    });
+    await client.identityRealms.listEntitlementsForCollection(collectionId);
+
+    expect(fetch.mock.calls[1]?.[0]).toBe(
+      "/api/identity-realms/realm%20%2F%201/collection-entitlements",
+    );
+    const [putUrl, putRequest] = fetch.mock.calls[2] ?? [];
+    expect(putUrl).toBe(
+      "/api/identity-realms/realm%20%2F%201/collection-entitlements/col%20%2F%20a",
+    );
+    expect(putRequest?.method).toBe("PUT");
+    expect(putRequest?.body).toContain('"ownerOnly":true');
+    expect(new Headers(putRequest?.headers).get("x-csrf-token")).toBe("csrf-admin");
+    const [deleteUrl, deleteRequest] = fetch.mock.calls[3] ?? [];
+    expect(deleteUrl).toBe(
+      "/api/identity-realms/realm%20%2F%201/collection-entitlements/col%20%2F%20a",
+    );
+    expect(deleteRequest?.method).toBe("DELETE");
+    expect(fetch.mock.calls[4]?.[0]).toBe(
+      "/api/collections/col%20%2F%20a/entitlements",
+    );
+  });
+
   it("maps a Realm-scoped Content client and stores only that Realm's response token", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

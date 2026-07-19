@@ -38,7 +38,10 @@ export const queryKeys = {
     identityRealms: ["identity-realms", "list"],
     identityRealm: (realmId) => ["identity-realms", realmId, "detail"],
     realmMemberships: (realmId) => ["identity-realms", realmId, "memberships"],
+    realmOwner: (realmId) => ["identity-realms", realmId, "owner"],
     realmFullAccess: (realmId) => ["identity-realms", realmId, "full-access"],
+    realmEntitlements: (realmId) => ["identity-realms", realmId, "collection-entitlements"],
+    collectionEntitlements: (collectionId) => ["collections", collectionId, "entitlements"],
     jobs: (page, status, topic, handlerId) => ["jobs", "list", page, status, topic, handlerId],
 };
 //# sourceMappingURL=queries.js.map

@@ -17,6 +17,9 @@ import {
   type RealmMembershipRecord,
   type RealmOwnerCoordinator,
 } from "./identity-realms.js";
+import {
+  InMemoryRealmCollectionEntitlementStore,
+} from "./realm-collection-entitlements.js";
 
 const NOW = "2026-07-15T00:00:00.000Z";
 const WORKSPACE_ID = "wrk_default";
@@ -1192,5 +1195,158 @@ describe("M4-A Identity Realm", () => {
       realmKey: realm.key,
       sessionToken: "session-token",
     })).rejects.toMatchObject({ code: "CONTENT_SESSION_INVALID", status: 401 });
+  });
+});
+
+describe("M4 realm collection entitlement management (CMS Owner)", () => {
+  const cmsOwner: ActorContext = {
+    subjectId: "subject_cms_owner",
+    identityId: "usr_cms_owner",
+    realmId: "rlm_system",
+    workspaceId: WORKSPACE_ID,
+    capabilities: ["schema:apply"],
+  };
+
+  function setup() {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    store.realms.set(realm.id, realm);
+    const entitlements = new InMemoryRealmCollectionEntitlementStore();
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      undefined,
+      undefined,
+      undefined,
+      entitlements,
+    );
+    return { store, realm, entitlements, service };
+  }
+
+  it("rejects entitlement management from an actor without administration capability", async () => {
+    const { service, realm } = setup();
+    const outsider: ActorContext = { ...cmsOwner, capabilities: [] };
+    await expect(service.listRealmEntitlements(outsider, realm.id))
+      .rejects.toMatchObject({ code: "ACCESS_DENIED", status: 403 });
+    await expect(service.putRealmEntitlement(outsider, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      actions: ["read"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "ACCESS_DENIED", status: 403 });
+  });
+
+  it("creates an entitlement, normalizes actions, and records an audit event", async () => {
+    const { service, store, realm } = setup();
+    const saved = await service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      // Deliberately out of canonical order + duplicate to prove normalization.
+      actions: ["update", "read", "read"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    });
+    expect(saved.actions).toEqual(["read", "update"]);
+    expect(saved.workspaceId).toBe(WORKSPACE_ID);
+    expect(saved.revision).toBe(1);
+    expect(saved.updatedBy).toBe("usr_cms_owner");
+
+    const listed = await service.listRealmEntitlements(cmsOwner, realm.id);
+    expect(listed.entitlements).toHaveLength(1);
+    expect(listed.entitlements[0]?.collectionId).toBe("col_articles");
+
+    const event = store.administrationEvents.at(-1);
+    expect(event?.event).toBe("REALM_COLLECTION_ENTITLEMENT_UPDATED");
+    expect(event?.operation).toBe("create");
+    expect(event?.targetId).toBe("col_articles");
+  });
+
+  it("rejects unknown actions before writing anything", async () => {
+    const { service, realm, entitlements } = setup();
+    await expect(service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      actions: ["read", "teleport"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "IDENTITY_REALM_INPUT_INVALID", status: 422 });
+    expect(await entitlements.listByRealm(realm.id)).toHaveLength(0);
+  });
+
+  it("enforces writableFields ⊆ readableFields (no blind writes)", async () => {
+    const { service, realm } = setup();
+    await expect(service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      actions: ["read", "update"],
+      readableFields: ["title"],
+      writableFields: ["title", "body"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({ code: "ENTITLEMENT_FIELD_INVALID", status: 422 });
+  });
+
+  it("requires recent reauthentication for writes", async () => {
+    const { service, realm } = setup();
+    await expect(service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      actions: ["read"],
+      expectedRevision: null,
+      reauthenticatedAt: "2026-07-14T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "RECENT_REAUTHENTICATION_REQUIRED" });
+  });
+
+  it("drops an entitlement and records a removal audit event", async () => {
+    const { service, store, realm, entitlements } = setup();
+    const saved = await service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      actions: ["read"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    });
+    await service.deleteRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      expectedRevision: saved.revision,
+      reauthenticatedAt: NOW,
+    });
+    expect(await entitlements.listByRealm(realm.id)).toHaveLength(0);
+    expect(store.administrationEvents.at(-1)?.event)
+      .toBe("REALM_COLLECTION_ENTITLEMENT_REMOVED");
+  });
+
+  it("lists entitlements in reverse by collection across realms", async () => {
+    const { service, store, realm, entitlements } = setup();
+    const other = contentRealm({ id: "rlm_blog", key: "blog", name: "Blog" });
+    store.realms.set(other.id, other);
+    await service.putRealmEntitlement(cmsOwner, {
+      realmId: realm.id,
+      collectionId: "col_articles",
+      actions: ["read"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    });
+    await service.putRealmEntitlement(cmsOwner, {
+      realmId: other.id,
+      collectionId: "col_articles",
+      actions: ["read", "create"],
+      expectedRevision: null,
+      reauthenticatedAt: NOW,
+    });
+    void entitlements;
+    const reverse = await service.listCollectionEntitlements(cmsOwner, "col_articles");
+    expect(reverse.map((e) => e.realmId).sort()).toEqual(["rlm_blog", "rlm_community"]);
+  });
+
+  it("fails closed when the entitlement store is not configured", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    store.realms.set(realm.id, realm);
+    const service = new IdentityRealmApplicationService(store, runtime);
+    await expect(service.listRealmEntitlements(cmsOwner, realm.id))
+      .rejects.toMatchObject({ code: "ENTITLEMENT_STORE_UNAVAILABLE", status: 500 });
   });
 });

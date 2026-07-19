@@ -129,6 +129,8 @@ export function decisionReasonName(code: string): string {
     RESOURCE_NOT_IN_SCOPE: "역할이 적용되는 영역 밖에 있습니다.",
     SUBJECT_DISABLED: "사용자 또는 그룹이 비활성화되어 있습니다.",
     HIERARCHY_CONTEXT_REQUIRED: "대상과의 권한 레벨 정보가 더 필요합니다.",
+    DENY_ENTITLEMENT_GATE: "CMS에서 이 콘텐츠에 대한 공간의 접근 범위를 허용하지 않았습니다. 공간 안 권한과 무관하게 상위 상한에서 차단됩니다.",
+    ENTITLEMENT_RESOURCE_UNRESOLVED: "이 콘텐츠를 접근 상한이 적용되는 콘텐츠 유형으로 확인할 수 없어 차단되었습니다.",
   };
   return names[code] ?? "현재 정책 조건에 따라 판정되었습니다.";
 }

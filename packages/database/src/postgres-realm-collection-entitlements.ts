@@ -30,6 +30,7 @@ interface EnforcementRow extends QueryResultRow {
   readonly workspace_id: string;
   readonly state: "disabled" | "enforced";
   readonly version: string | number;
+  readonly profile_collection_id: string | null;
 }
 
 function entitlementFromRow(row: EntitlementRow): RealmCollectionEntitlement {
@@ -87,9 +88,10 @@ export class PostgresRealmCollectionEntitlementStore implements RealmCollectionE
 
   public async getEnforcement(realmId: string): Promise<RealmEntitlementStatus | null> {
     const result = await this.pool.query<EnforcementRow>(
-      `SELECT realm_id, workspace_id, state, version
-         FROM ${this.q("_xecms_realm_entitlement_enforcement")}
-        WHERE realm_id = $1`,
+      `SELECT e.realm_id, e.workspace_id, e.state, e.version, r.profile_collection_id
+         FROM ${this.q("_xecms_realm_entitlement_enforcement")} e
+         JOIN ${this.q("_xecms_realms")} r ON r.id = e.realm_id
+        WHERE e.realm_id = $1`,
       [realmId],
     );
     const row = result.rows[0];
@@ -99,6 +101,10 @@ export class PostgresRealmCollectionEntitlementStore implements RealmCollectionE
       workspaceId: row.workspace_id,
       state: row.state,
       version: Number(row.version),
+      // The realm's own Auth collection is always accessible to the realm.
+      ...(row.profile_collection_id === null
+        ? {}
+        : { guaranteedCollectionId: row.profile_collection_id }),
     };
   }
 
@@ -298,6 +304,40 @@ export class PostgresRealmCollectionEntitlementStore implements RealmCollectionE
          ON CONFLICT (realm_id, collection_id) DO NOTHING`,
         [realmId, workspaceId],
       );
+      await client.query("COMMIT");
+    } catch (error: unknown) {
+      await client.query("ROLLBACK");
+      throw mapEntitlementError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async pruneRetiredCollectionEntitlements(
+    workspaceId: string,
+    activeCollectionIds: readonly string[],
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Drop ceilings whose collection is no longer in the active schema, then
+      // bump each affected realm's version so cached ceilings invalidate.
+      const removed = await client.query<{ readonly realm_id: string }>(
+        `DELETE FROM ${this.q("_xecms_realm_collection_entitlements")}
+          WHERE workspace_id = $1
+            AND NOT (collection_id = ANY($2::text[]))
+        RETURNING realm_id`,
+        [workspaceId, [...activeCollectionIds]],
+      );
+      const affectedRealmIds = [...new Set(removed.rows.map((row) => row.realm_id))];
+      if (affectedRealmIds.length > 0) {
+        await client.query(
+          `UPDATE ${this.q("_xecms_realm_entitlement_enforcement")}
+              SET version = version + 1, updated_at = now()
+            WHERE realm_id = ANY($1::text[])`,
+          [affectedRealmIds],
+        );
+      }
       await client.query("COMMIT");
     } catch (error: unknown) {
       await client.query("ROLLBACK");

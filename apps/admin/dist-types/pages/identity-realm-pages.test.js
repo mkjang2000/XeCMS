@@ -7,7 +7,7 @@ import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DisplayModeProvider } from "../display-mode.js";
-import { IdentityRealmDetailPage, IdentityRealmListPage } from "./identity-realm-pages.js";
+import { IdentityRealmDetailPage, IdentityRealmListPage, RealmEntitlementMatrixPage } from "./identity-realm-pages.js";
 Object.defineProperty(globalThis, "CSS", {
     configurable: true,
     value: { escape: (value) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&") },
@@ -62,6 +62,17 @@ function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { r
     const listFullAccess = vi.fn().mockResolvedValue({ items: [] });
     const grantFullAccess = vi.fn().mockResolvedValue({});
     const revokeFullAccess = vi.fn().mockResolvedValue({});
+    const listCollectionEntitlements = vi.fn().mockResolvedValue({ status: null, entitlements: [] });
+    const putCollectionEntitlement = vi.fn().mockResolvedValue({
+        workspaceId: "wrk_default",
+        realmId: realm.realmId,
+        collectionId: "col_profile",
+        actions: ["list", "read"],
+        revision: 1,
+        updatedAt: "2026-07-19T00:00:00.000Z",
+        updatedBy: "usr_admin",
+    });
+    const deleteCollectionEntitlement = vi.fn().mockResolvedValue(undefined);
     const getOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, ...ownerStatus });
     const assignOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
     const transferOwner = vi.fn().mockResolvedValue({ realmId: realm.realmId, status: "healthy", policyRevision: 2 });
@@ -79,6 +90,9 @@ function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { r
             listFullAccess,
             grantFullAccess,
             revokeFullAccess,
+            listCollectionEntitlements,
+            putCollectionEntitlement,
+            deleteCollectionEntitlement,
             getOwner,
             assignOwner,
             transferOwner,
@@ -90,6 +104,12 @@ function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { r
         },
         collections: {
             getApplied: vi.fn().mockResolvedValue(profileCollection),
+            list: vi.fn().mockResolvedValue({
+                items: [
+                    { id: "col_profile", name: "testreAccounts", label: "Test Realm Accounts", status: "applied", hasPendingChanges: false, fieldCount: 2, revisionId: "rev_profile" },
+                    { id: "col_articles", name: "articles", label: "Articles", status: "applied", hasPendingChanges: false, fieldCount: 3, revisionId: "rev_a" },
+                ],
+            }),
         },
         settings: {
             diagnostics: vi.fn().mockResolvedValue({ schemaMode: "editable" }),
@@ -102,7 +122,7 @@ function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { r
         { path: "/admin/realms/:realmId/access/roles", element: _jsx("div", { children: "Realm \uC5ED\uD560 \uD654\uBA74" }) },
     ], { initialEntries: [`/admin/realms/${realm.realmId}`] });
     render(_jsx(DisplayModeProvider, { initialMode: mode, children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(AdminApiProvider, { api: api, children: _jsx(RouterProvider, { router: router }) }) }) }));
-    return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, getOwner, listFullAccess, grantFullAccess, assignOwner, router, user: userEvent.setup() };
+    return { createProfileSchema, createProfileField, registerMembership, grantRealmAdministrator, getOwner, listFullAccess, grantFullAccess, listCollectionEntitlements, putCollectionEntitlement, deleteCollectionEntitlement, assignOwner, router, user: userEvent.setup() };
 }
 afterEach(cleanup);
 describe("IdentityRealmDetailPage provisioning guidance", () => {
@@ -307,6 +327,36 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
         expect(await screen.findByRole("heading", { name: "사용자 공간 Full Access" })).toBeTruthy();
         expect(listFullAccess).toHaveBeenCalledWith("rlm_testre");
     });
+    it("sets a collection access ceiling from the access tab", async () => {
+        const { listCollectionEntitlements, putCollectionEntitlement, user } = renderDetail(activeRealm, [], "basic");
+        await user.click(await screen.findByRole("tab", { name: "권한" }));
+        expect(await screen.findByRole("heading", { name: "접근 가능한 콘텐츠" })).toBeTruthy();
+        expect(listCollectionEntitlements).toHaveBeenCalledWith("rlm_testre");
+        // A collection with no ceiling row reads as not-accessed (fail-closed).
+        expect(await screen.findByText("접근 안 함")).toBeTruthy();
+        await user.click(await screen.findByRole("button", { name: "허용 설정" }));
+        const dialog = await screen.findByRole("dialog");
+        await user.click(within(dialog).getByRole("checkbox", { name: /조회/ }));
+        await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");
+        await user.click(within(dialog).getByRole("button", { name: "허용" }));
+        await waitFor(() => expect(putCollectionEntitlement).toHaveBeenCalledTimes(1));
+        expect(putCollectionEntitlement).toHaveBeenCalledWith("rlm_testre", "col_articles", {
+            actions: ["list", "read"],
+            expectedRevision: null,
+            password: "admin-pw",
+        });
+    });
+    it("marks the realm's own Auth collection as always allowed and non-editable", async () => {
+        const { putCollectionEntitlement, user } = renderDetail(activeRealm, [], "basic");
+        await user.click(await screen.findByRole("tab", { name: "권한" }));
+        // The Auth (profile) collection row is guaranteed access, not a ceiling to edit.
+        const authRow = (await screen.findByText("Test Realm Accounts")).closest("tr");
+        expect(authRow).not.toBeNull();
+        expect(within(authRow).getByText("항상 허용")).toBeTruthy();
+        expect(within(authRow).queryByRole("button", { name: "허용 설정" })).toBeNull();
+        expect(within(authRow).queryByRole("button", { name: "제거" })).toBeNull();
+        expect(putCollectionEntitlement).not.toHaveBeenCalled();
+    });
     it("starts Full Access for the current System Identity without a Realm Subject", async () => {
         const { grantFullAccess, user } = renderDetail(activeRealm, [], "basic");
         await user.click(await screen.findByRole("tab", { name: "권한" }));
@@ -363,6 +413,65 @@ describe("Realm 권한 부트스트랩 안내 (목록·상세)", () => {
         render(_jsx(QueryClientProvider, { client: queryClient, children: _jsx(AdminApiProvider, { api: api, children: _jsx(RouterProvider, { router: router }) }) }));
         expect(await screen.findByText(/이 사용자 공간을 관리할 권한이 없습니다/)).toBeTruthy();
         expect(screen.getByRole("button", { name: "사용자 공간 목록으로" })).toBeTruthy();
+    });
+});
+describe("RealmEntitlementMatrixPage", () => {
+    function renderMatrix() {
+        const listRealms = vi.fn().mockResolvedValue({
+            items: [
+                { realmId: "rlm_sys", realmKey: "system", name: "System", kind: "system", status: "active", authentication: { acceptSystemIdentities: true, provisioning: "explicit", registration: "closed", defaultRoleIds: [] }, revision: 1 },
+                { realmId: "rlm_a", realmKey: "a", name: "공간 A", kind: "content", status: "active", profileCollectionId: "col_a_auth", authentication: { acceptSystemIdentities: false, provisioning: "jit", registration: "open", defaultRoleIds: [] }, revision: 1 },
+                { realmId: "rlm_b", realmKey: "b", name: "공간 B", kind: "content", status: "active", authentication: { acceptSystemIdentities: false, provisioning: "jit", registration: "open", defaultRoleIds: [] }, revision: 1 },
+            ],
+        });
+        const listCollections = vi.fn().mockResolvedValue({
+            items: [
+                { id: "col_articles", name: "articles", label: "Articles", status: "applied", hasPendingChanges: false, fieldCount: 3, revisionId: "rev_a" },
+                { id: "col_a_auth", name: "aAccounts", label: "A Accounts", status: "applied", hasPendingChanges: false, fieldCount: 2, revisionId: "rev_auth" },
+            ],
+        });
+        const listEntitlementsForCollection = vi.fn(async (collectionId) => {
+            if (collectionId === "col_articles") {
+                return {
+                    collectionId,
+                    entitlements: [
+                        { workspaceId: "wrk", realmId: "rlm_a", collectionId, actions: ["list", "read"], revision: 1, updatedAt: "2026-07-19T00:00:00.000Z", updatedBy: "cms" },
+                    ],
+                };
+            }
+            return { collectionId, entitlements: [] };
+        });
+        const api = {
+            identityRealms: { list: listRealms, listEntitlementsForCollection },
+            collections: { list: listCollections },
+        };
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const router = createMemoryRouter([
+            { path: "/admin/realms/entitlements", element: _jsx(RealmEntitlementMatrixPage, {}) },
+            { path: "/admin/realms/:realmId", element: _jsx("div", { children: "\uACF5\uAC04 \uC0C1\uC138" }) },
+            { path: "/admin/realms", element: _jsx("div", { children: "\uACF5\uAC04 \uBAA9\uB85D" }) },
+        ], { initialEntries: ["/admin/realms/entitlements"] });
+        render(_jsx(DisplayModeProvider, { initialMode: "advanced", children: _jsx(QueryClientProvider, { client: queryClient, children: _jsx(AdminApiProvider, { api: api, children: _jsx(RouterProvider, { router: router }) }) }) }));
+        return { listEntitlementsForCollection };
+    }
+    it("renders a collection × content-realm matrix and marks each cell's access", async () => {
+        const { listEntitlementsForCollection } = renderMatrix();
+        // Content realms are columns; the System realm is excluded.
+        expect(await screen.findByRole("link", { name: "공간 A" })).toBeTruthy();
+        expect(screen.getByRole("link", { name: "공간 B" })).toBeTruthy();
+        expect(screen.queryByText("System")).toBeNull();
+        // One reverse request per collection.
+        expect(listEntitlementsForCollection).toHaveBeenCalledWith("col_articles");
+        expect(listEntitlementsForCollection).toHaveBeenCalledWith("col_a_auth");
+        // Articles row: A has a read ceiling, B has none.
+        const articlesRow = (await screen.findByText("Articles")).closest("tr");
+        expect(within(articlesRow).getByText(/조회/)).toBeTruthy();
+        expect(within(articlesRow).getByText("접근 안 함")).toBeTruthy();
+        // A Accounts is A's own Auth collection → guaranteed for A only.
+        const authRow = (await screen.findByText("A Accounts")).closest("tr");
+        expect(within(authRow).getByText("항상 허용")).toBeTruthy();
+        // B does not own that collection and has no ceiling → not accessed.
+        expect(within(authRow).getByText("접근 안 함")).toBeTruthy();
     });
 });
 //# sourceMappingURL=identity-realm-pages.test.js.map

@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   SCHEMA_NAME_ERROR_MESSAGE,
   SCHEMA_NAME_PATTERN,
   toAdminApiError,
   useAdminApi,
+  documentDisplayStateLabel,
   type CollectionDetail,
   type CollectionField,
+  type CollectionSummary,
+  type CollectionEntitlementAction,
+  type DocumentDisplayState,
   type GlobalIdentity,
   type IdentityRealm,
   type PageResult,
+  type RealmCollectionEntitlement,
+  type RealmCollectionEntitlementList,
   type RealmFullAccessBinding,
   type RealmFullAccessPage,
   type RealmMembership,
@@ -128,7 +134,12 @@ export function IdentityRealmListPage() {
         eyebrow="Identity federation"
         title="사용자 공간 관리"
         description="계정의 로그인 자격 증명은 공유하되 소속·권한 대상·권한은 사용자 공간별로 분리합니다."
-        actions={<Button onPress={() => setCreating((value) => !value)}><Icon name="plus" size={17} />새 사용자 공간</Button>}
+        actions={<>
+          <DisplayModeGate minimum="advanced">
+            <Button variant="secondary" onPress={() => navigate("/admin/realms/entitlements")}>접근 매트릭스</Button>
+          </DisplayModeGate>
+          <Button onPress={() => setCreating((value) => !value)}><Icon name="plus" size={17} />새 사용자 공간</Button>
+        </>}
       />
       {creating ? (
         <CreateRealmForm
@@ -394,6 +405,7 @@ export function IdentityRealmDetailPage() {
           {detailTab === "access" ? (
             <>
               <RealmAccessOverview realm={realm.data} mode={mode} />
+              <CollectionEntitlementSection realm={realm.data} mode={mode} />
               <FullAccessSection realm={realm.data} bindings={fullAccess} mode={mode} />
             </>
           ) : null}
@@ -1288,6 +1300,455 @@ function remainingFullAccessTime(validUntil: string): string {
   return minutes === 0 ? `${hours}시간 후 만료` : `${hours}시간 ${minutes}분 후 만료`;
 }
 
+/**
+ * UI grouping of the 11 canonical content actions. The model keeps them
+ * separate (no information loss); the operator toggles them in meaningful
+ * bundles. Each group maps to a set of `CollectionAction`s that are granted or
+ * removed together.
+ */
+const ENTITLEMENT_ACTION_GROUPS: readonly {
+  readonly id: string;
+  readonly label: string;
+  readonly hint: string;
+  readonly actions: readonly CollectionEntitlementAction[];
+  readonly advanced?: boolean;
+}[] = [
+  { id: "read", label: "조회", hint: "목록·상세 보기", actions: ["list", "read"] },
+  { id: "create", label: "작성", hint: "새 문서 생성", actions: ["create"] },
+  { id: "update", label: "수정", hint: "기존 문서 편집", actions: ["update"] },
+  { id: "delete", label: "삭제", hint: "문서 삭제", actions: ["delete"] },
+  { id: "publish", label: "발행", hint: "발행·발행 취소", actions: ["publish", "unpublish"] },
+  {
+    id: "lifecycle",
+    label: "생명주기",
+    hint: "영구 삭제·복원·리비전",
+    actions: ["purge", "restore", "revision.read", "revision.restore"],
+    advanced: true,
+  },
+];
+
+function entitlementActionSummary(actions: readonly CollectionEntitlementAction[]): string {
+  const set = new Set(actions);
+  const labels = ENTITLEMENT_ACTION_GROUPS
+    .filter((group) => group.actions.some((action) => set.has(action)))
+    .map((group) => group.label);
+  return labels.length === 0 ? "없음" : labels.join(" · ");
+}
+
+/**
+ * CMS-level collection access ceiling for one Realm. The ceiling only removes
+ * access — final access = Realm policy AND this ceiling — and a collection with
+ * no row here is unreachable once enforcement is on (fail-closed). Editable by
+ * the CMS Owner only.
+ */
+function CollectionEntitlementSection({ realm, mode }: {
+  readonly realm: IdentityRealm;
+  readonly mode: DisplayMode;
+}) {
+  const api = useAdminApi();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState<{
+    readonly collection: CollectionSummary;
+    readonly current: RealmCollectionEntitlement | undefined;
+  } | null>(null);
+  const [removing, setRemoving] = useState<RealmCollectionEntitlement | null>(null);
+
+  const entitlements = useQuery({
+    queryKey: queryKeys.realmEntitlements(realm.realmId),
+    queryFn: () => api.identityRealms.listCollectionEntitlements(realm.realmId),
+  });
+  const collections = useQuery({
+    queryKey: queryKeys.collections,
+    queryFn: () => api.collections.list(),
+  });
+
+  const byCollectionId = new Map(
+    (entitlements.data?.entitlements ?? []).map((e) => [e.collectionId, e] as const),
+  );
+
+  return (
+    <section className={styles.panel} aria-labelledby="realm-entitlement-title">
+      <SectionHeader
+        id="realm-entitlement-title"
+        title="접근 가능한 콘텐츠"
+        description="이 사용자 공간이 다룰 수 있는 콘텐츠와 그 범위를 CMS에서 정합니다. 공간 안에서 아무리 넓게 권한을 줘도 여기서 정한 범위를 넘지 못합니다."
+      />
+      <Callout tone="info">
+        허용하지 않은 콘텐츠는 공간 안에서 권한을 줬더라도 접근할 수 없습니다.
+      </Callout>
+      {entitlements.isPending || collections.isPending ? (
+        <PageLoading label="Collection 접근 상한을 불러오는 중" />
+      ) : null}
+      {entitlements.isError ? (
+        <LoadError error={entitlements.error} onRetry={() => void entitlements.refetch()} />
+      ) : null}
+      {collections.isError ? (
+        <LoadError error={collections.error} onRetry={() => void collections.refetch()} />
+      ) : null}
+      {collections.data && collections.data.items.length === 0 ? (
+        <EmptyState title="콘텐츠 유형이 없습니다" description="스키마에서 콘텐츠 유형(Collection)을 먼저 만들면 여기에서 접근 범위를 정할 수 있습니다." />
+      ) : null}
+      {collections.data && collections.data.items.length > 0 ? (
+        <div className={styles.tableWrap}>
+          <table className={`${styles.table} ${styles.entitlementTable}`}>
+            <thead>
+              <tr>
+                <th>콘텐츠 유형</th>
+                <th>허용 작업</th>
+                <th>조건</th>
+                <th>필드</th>
+                <th className={styles.entitlementActionsHead}>작업</th>
+              </tr>
+            </thead>
+            <tbody>
+              {collections.data.items.map((collection) => {
+                const current = byCollectionId.get(collection.id);
+                // The realm's own Auth (profile) collection is always accessible —
+                // it can never be gated, so the ceiling controls don't apply.
+                const isAuthCollection = collection.id === realm.profileCollectionId;
+                return (
+                  <tr key={collection.id} data-has-entitlement={current !== undefined || isAuthCollection}>
+                    <td>
+                      <div className={styles.entitlementName}>
+                        <span className={styles.entitlementNameRow}>
+                          <strong>{collection.label ?? collection.name}</strong>
+                          {isAuthCollection ? <Badge tone="info">인증 스키마</Badge> : null}
+                        </span>
+                        <DisplayModeGate minimum="advanced">
+                          <IdValue label="Collection ID" value={collection.id} />
+                        </DisplayModeGate>
+                      </div>
+                    </td>
+                    {isAuthCollection ? (
+                      <>
+                        <td><Badge tone="success">항상 허용</Badge></td>
+                        <td className={styles.entitlementMuted}>—</td>
+                        <td className={styles.entitlementMuted}>—</td>
+                        <td><span className={styles.compactHint}>공간 로그인·프로필에 필요해 제한할 수 없습니다.</span></td>
+                      </>
+                    ) : (
+                      <>
+                        <td>
+                          {current === undefined ? (
+                            <Badge tone="neutral">접근 안 함</Badge>
+                          ) : (
+                            <span className={styles.entitlementActions}>{entitlementActionSummary(current.actions)}</span>
+                          )}
+                        </td>
+                        <td className={current === undefined ? styles.entitlementMuted : undefined}>{current === undefined ? "—" : entitlementConstraintSummary(current)}</td>
+                        <td className={current === undefined ? styles.entitlementMuted : undefined}>{current === undefined ? "—" : entitlementFieldSummary(current)}</td>
+                        <td>
+                          <div className={styles.entitlementRowActions}>
+                            <Button
+                              size="small"
+                              variant="secondary"
+                              isDisabled={realm.status !== "active"}
+                              onPress={() => setEditing({ collection, current })}
+                            >{current === undefined ? "허용 설정" : "편집"}</Button>
+                            {current !== undefined ? (
+                              <Button
+                                size="small"
+                                variant="danger"
+                                isDisabled={realm.status !== "active"}
+                                onPress={() => setRemoving(current)}
+                              >제거</Button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {editing ? (
+        <EntitlementEditDialog
+          realm={realm}
+          collection={editing.collection}
+          current={editing.current}
+          mode={mode}
+          onClose={() => setEditing(null)}
+          onSaved={async (saved) => {
+            queryClient.setQueryData<RealmCollectionEntitlementList>(
+              queryKeys.realmEntitlements(realm.realmId),
+              (previous) => mergeEntitlement(previous, saved),
+            );
+            setEditing(null);
+            await queryClient.invalidateQueries({
+              queryKey: queryKeys.collectionEntitlements(saved.collectionId),
+            });
+          }}
+        />
+      ) : null}
+      {removing ? (
+        <EntitlementRemoveDialog
+          realm={realm}
+          entitlement={removing}
+          onClose={() => setRemoving(null)}
+          onRemoved={async () => {
+            const collectionId = removing.collectionId;
+            queryClient.setQueryData<RealmCollectionEntitlementList>(
+              queryKeys.realmEntitlements(realm.realmId),
+              (previous) => previous === undefined ? previous : {
+                ...previous,
+                entitlements: previous.entitlements.filter((e) => e.collectionId !== collectionId),
+              },
+            );
+            setRemoving(null);
+            await queryClient.invalidateQueries({
+              queryKey: queryKeys.collectionEntitlements(collectionId),
+            });
+          }}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function entitlementConstraintSummary(entitlement: RealmCollectionEntitlement): string {
+  const parts: string[] = [];
+  if (entitlement.constraint?.ownerOnly === true) parts.push("본인 소유만");
+  if (entitlement.constraint?.statuses && entitlement.constraint.statuses.length > 0) {
+    parts.push(`상태: ${entitlement.constraint.statuses.join(", ")}`);
+  }
+  return parts.length === 0 ? "제한 없음" : parts.join(" · ");
+}
+
+function entitlementFieldSummary(entitlement: RealmCollectionEntitlement): string {
+  const read = entitlement.readableFields;
+  const write = entitlement.writableFields;
+  if (read === undefined && write === undefined) return "전체";
+  const readText = read === undefined ? "전체" : `${read.length}개`;
+  const writeText = write === undefined ? "전체" : `${write.length}개`;
+  return `읽기 ${readText} · 쓰기 ${writeText}`;
+}
+
+/** Optimistically merge a saved entitlement into the cached realm list. */
+function mergeEntitlement(
+  previous: RealmCollectionEntitlementList | undefined,
+  saved: RealmCollectionEntitlement,
+): RealmCollectionEntitlementList {
+  if (previous === undefined) return { status: null, entitlements: [saved] };
+  const others = previous.entitlements.filter((e) => e.collectionId !== saved.collectionId);
+  return { ...previous, entitlements: [...others, saved] };
+}
+
+/** Display states an operator can gate on. `deleted` is excluded — deleted documents aren't an access target. */
+const SELECTABLE_DISPLAY_STATES: readonly DocumentDisplayState[] = [
+  "draft",
+  "published",
+  "published-with-draft",
+  "archived",
+];
+
+function toggleInSet<T>(set: ReadonlySet<T>, value: T, on: boolean): Set<T> {
+  const next = new Set(set);
+  if (on) next.add(value); else next.delete(value);
+  return next;
+}
+
+function EntitlementEditDialog({ realm, collection, current, mode, onClose, onSaved }: {
+  readonly realm: IdentityRealm;
+  readonly collection: CollectionSummary;
+  readonly current: RealmCollectionEntitlement | undefined;
+  readonly mode: DisplayMode;
+  readonly onClose: () => void;
+  readonly onSaved: (saved: RealmCollectionEntitlement) => void | Promise<void>;
+}) {
+  const api = useAdminApi();
+  const advanced = displayModeAtLeast(mode, "advanced");
+  const [selectedActions, setSelectedActions] = useState<ReadonlySet<CollectionEntitlementAction>>(
+    () => new Set(current?.actions ?? []),
+  );
+  const [ownerOnly, setOwnerOnly] = useState(current?.constraint?.ownerOnly === true);
+  const [statuses, setStatuses] = useState<ReadonlySet<string>>(
+    () => new Set(current?.constraint?.statuses ?? []),
+  );
+  const [limitReadable, setLimitReadable] = useState(current?.readableFields !== undefined);
+  const [readable, setReadable] = useState<ReadonlySet<string>>(
+    () => new Set(current?.readableFields ?? []),
+  );
+  const [limitWritable, setLimitWritable] = useState(current?.writableFields !== undefined);
+  const [writable, setWritable] = useState<ReadonlySet<string>>(
+    () => new Set(current?.writableFields ?? []),
+  );
+  const [password, setPassword] = useState("");
+
+  // The applied schema gives the real field list so the operator picks rather than types.
+  const detail = useQuery({
+    queryKey: [...queryKeys.collections, collection.id, "applied"] as const,
+    queryFn: () => api.collections.getApplied(collection.id),
+    enabled: advanced,
+  });
+  const fields = detail.data?.fields ?? [];
+
+  const toggleGroup = (groupActions: readonly CollectionEntitlementAction[], on: boolean) => {
+    setSelectedActions((previous) => {
+      const next = new Set(previous);
+      for (const action of groupActions) {
+        if (on) next.add(action); else next.delete(action);
+      }
+      return next;
+    });
+  };
+  // Writing a field the ceiling won't let you read is forbidden; keep writable ⊆ readable in the UI too.
+  const setReadableField = (name: string, on: boolean) => {
+    setReadable((previous) => toggleInSet(previous, name, on));
+    if (!on) setWritable((previous) => toggleInSet(previous, name, false));
+  };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const actions = ENTITLEMENT_ACTION_GROUPS
+        .flatMap((group) => group.actions)
+        .filter((action) => selectedActions.has(action));
+      const readableFields = limitReadable ? [...readable] : undefined;
+      const writableFields = limitWritable ? [...writable] : undefined;
+      const statusList = [...statuses];
+      const constraint = ownerOnly || statusList.length > 0
+        ? {
+            ...(ownerOnly ? { ownerOnly: true } : {}),
+            ...(statusList.length > 0 ? { statuses: statusList } : {}),
+          }
+        : undefined;
+      return api.identityRealms.putCollectionEntitlement(realm.realmId, collection.id, {
+        actions,
+        ...(readableFields === undefined ? {} : { readableFields }),
+        ...(writableFields === undefined ? {} : { writableFields }),
+        ...(constraint === undefined ? {} : { constraint }),
+        expectedRevision: current?.revision ?? null,
+        password,
+      });
+    },
+    onSuccess: (saved) => { void onSaved(saved); },
+  });
+
+  const hasAction = (groupActions: readonly CollectionEntitlementAction[]): boolean =>
+    groupActions.some((action) => selectedActions.has(action));
+
+  return (
+    <ConfirmDialog
+      title={`${collection.label ?? collection.name} — 접근 허용 범위`}
+      confirmLabel={current === undefined ? "허용" : "저장"}
+      isPending={save.isPending}
+      isConfirmDisabled={password === ""}
+      onCancel={() => { onClose(); save.reset(); }}
+      onConfirm={() => save.mutate()}
+    >
+      <div className={styles.entitlementDialog}>
+        <p className={styles.compactHint}>여기서 고른 범위가 이 공간의 <strong>최대치</strong>입니다. 공간 안에서 더 넓게 주더라도 넘지 못합니다.</p>
+
+        <div className={styles.entitlementGroup}>
+          <h4>허용 작업</h4>
+          <div className={styles.entitlementCheckGrid}>
+            {ENTITLEMENT_ACTION_GROUPS
+              .filter((group) => group.advanced !== true || advanced)
+              .map((group) => (
+                <CheckboxField
+                  key={group.id}
+                  isSelected={hasAction(group.actions)}
+                  onChange={(on) => toggleGroup(group.actions, on)}
+                >{group.label} <span className={styles.secondaryLine}>{group.hint}</span></CheckboxField>
+              ))}
+          </div>
+        </div>
+
+        <DisplayModeGate minimum="advanced">
+          <div className={styles.entitlementGroup}>
+            <h4>조건</h4>
+            <CheckboxField isSelected={ownerOnly} onChange={setOwnerOnly}>본인이 작성한 문서만</CheckboxField>
+            <p className={styles.compactHint}>특정 상태의 문서로만 제한 (아무것도 안 고르면 모든 상태 허용)</p>
+            <div className={styles.entitlementCheckGrid}>
+              {SELECTABLE_DISPLAY_STATES.map((state) => (
+                <CheckboxField
+                  key={state}
+                  isSelected={statuses.has(state)}
+                  onChange={(on) => setStatuses((previous) => toggleInSet(previous, state, on))}
+                >{documentDisplayStateLabel(state)}</CheckboxField>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.entitlementGroup}>
+            <h4>필드 범위</h4>
+            {detail.isPending ? <PageLoading label="필드 목록을 불러오는 중" /> : null}
+            {detail.isError ? <LoadError error={detail.error} onRetry={() => void detail.refetch()} /> : null}
+            <CheckboxField isSelected={limitReadable} onChange={setLimitReadable}>읽을 수 있는 필드를 제한</CheckboxField>
+            {limitReadable && fields.length > 0 ? (
+              <div className={styles.entitlementCheckGrid}>
+                {fields.map((field) => (
+                  <CheckboxField
+                    key={field.id}
+                    isSelected={readable.has(field.name)}
+                    onChange={(on) => setReadableField(field.name, on)}
+                  >{field.label ?? field.name}</CheckboxField>
+                ))}
+              </div>
+            ) : null}
+            <CheckboxField isSelected={limitWritable} onChange={setLimitWritable}>쓸 수 있는 필드를 제한</CheckboxField>
+            {limitWritable && fields.length > 0 ? (
+              <div className={styles.entitlementCheckGrid}>
+                {fields.map((field) => {
+                  const readAllowed = !limitReadable || readable.has(field.name);
+                  return (
+                    <CheckboxField
+                      key={field.id}
+                      isSelected={writable.has(field.name)}
+                      isDisabled={!readAllowed}
+                      onChange={(on) => setWritable((previous) => toggleInSet(previous, field.name, on))}
+                    >{field.label ?? field.name}{readAllowed ? "" : " (읽기 미허용)"}</CheckboxField>
+                  );
+                })}
+              </div>
+            ) : null}
+            <p className={styles.compactHint}>쓰기는 읽기를 허용한 필드에서만 켤 수 있습니다.</p>
+          </div>
+        </DisplayModeGate>
+
+        <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
+        <MutationError error={save.error} />
+      </div>
+    </ConfirmDialog>
+  );
+}
+
+function EntitlementRemoveDialog({ realm, entitlement, onClose, onRemoved }: {
+  readonly realm: IdentityRealm;
+  readonly entitlement: RealmCollectionEntitlement;
+  readonly onClose: () => void;
+  readonly onRemoved: () => void | Promise<void>;
+}) {
+  const api = useAdminApi();
+  const [password, setPassword] = useState("");
+  const remove = useMutation({
+    mutationFn: () => api.identityRealms.deleteCollectionEntitlement(realm.realmId, entitlement.collectionId, {
+      expectedRevision: entitlement.revision,
+      password,
+    }),
+    onSuccess: () => { void onRemoved(); },
+  });
+  return (
+    <ConfirmDialog
+      title="접근 허용 제거"
+      confirmLabel="제거"
+      danger
+      isPending={remove.isPending}
+      isConfirmDisabled={password === ""}
+      onCancel={() => { onClose(); remove.reset(); }}
+      onConfirm={() => remove.mutate()}
+    >
+      <div className={styles.dialogStack}>
+        <Callout tone="warning"><strong>허용을 제거하면 이 공간은 이 콘텐츠에 더 이상 접근할 수 없습니다.</strong> 다시 열려면 허용을 새로 설정해야 합니다.</Callout>
+        <TextInput label="현재 System 계정 비밀번호" type="password" autoComplete="current-password" value={password} onChange={setPassword} isRequired />
+        <MutationError error={remove.error} />
+      </div>
+    </ConfirmDialog>
+  );
+}
+
 function FullAccessSection({ realm, bindings, mode }: {
   readonly realm: IdentityRealm;
   readonly bindings: FullAccessQueryResult;
@@ -1460,5 +1921,115 @@ function FullAccessSection({ realm, bindings, mode }: {
         </ConfirmDialog>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Cross-space access matrix: rows are collections, columns are Content Realms,
+ * each cell shows the ceiling (allowed actions) for that (collection, realm)
+ * pair. The reverse endpoint (`listEntitlementsForCollection`) fills one row per
+ * collection with a single request. Read-only overview; editing stays on the
+ * per-space "권한" tab, reachable by clicking a cell.
+ */
+export function RealmEntitlementMatrixPage() {
+  const api = useAdminApi();
+  const navigate = useNavigate();
+
+  const realms = useQuery({ queryKey: queryKeys.identityRealms, queryFn: () => api.identityRealms.list() });
+  const collections = useQuery({ queryKey: queryKeys.collections, queryFn: () => api.collections.list() });
+
+  // Only Content Realms are gated; the System realm never appears.
+  const contentRealms = (realms.data?.items ?? []).filter((r) => r.kind === "content");
+  const collectionItems = collections.data?.items ?? [];
+
+  // One reverse query per collection → a full matrix row.
+  const rowQueries = useQueries({
+    queries: collectionItems.map((collection) => ({
+      queryKey: queryKeys.collectionEntitlements(collection.id),
+      queryFn: () => api.identityRealms.listEntitlementsForCollection(collection.id),
+    })),
+  });
+
+  // collectionId → (realmId → entitlement)
+  const byCollection = new Map<string, Map<string, RealmCollectionEntitlement>>();
+  collectionItems.forEach((collection, index) => {
+    const result = rowQueries[index]?.data;
+    byCollection.set(
+      collection.id,
+      new Map((result?.entitlements ?? []).map((e) => [e.realmId, e] as const)),
+    );
+  });
+
+  const loading = realms.isPending || collections.isPending || rowQueries.some((q) => q.isPending);
+  const rowError = rowQueries.find((q) => q.isError);
+
+  return (
+    <Page>
+      <PageHeader
+        eyebrow="Access"
+        title="콘텐츠 접근 매트릭스"
+        description="어떤 사용자 공간이 어떤 콘텐츠에 접근할 수 있는지 한눈에 봅니다. 셀을 누르면 해당 공간의 접근 설정으로 이동합니다."
+        actions={<Button variant="secondary" onPress={() => navigate("/admin/realms")}>사용자 공간 목록</Button>}
+      />
+      {realms.isError ? <LoadError error={realms.error} onRetry={() => void realms.refetch()} /> : null}
+      {collections.isError ? <LoadError error={collections.error} onRetry={() => void collections.refetch()} /> : null}
+      {rowError !== undefined ? <LoadError error={rowError.error} onRetry={() => void rowError.refetch()} /> : null}
+      {loading ? <PageLoading label="접근 매트릭스를 불러오는 중" /> : null}
+      {!loading && contentRealms.length === 0 ? (
+        <EmptyState title="사용자 공간이 없습니다" description="먼저 사용자 공간을 만들면 접근 매트릭스가 채워집니다." />
+      ) : null}
+      {!loading && contentRealms.length > 0 && collectionItems.length === 0 ? (
+        <EmptyState title="콘텐츠 유형이 없습니다" description="스키마에서 콘텐츠 유형을 먼저 만들어 주세요." />
+      ) : null}
+      {!loading && contentRealms.length > 0 && collectionItems.length > 0 ? (
+        <div className={styles.tableWrap}>
+          <table className={`${styles.table} ${styles.entitlementMatrix}`}>
+            <thead>
+              <tr>
+                <th className={styles.entitlementMatrixCorner}>콘텐츠 유형</th>
+                {contentRealms.map((realm) => (
+                  <th key={realm.realmId}>
+                    <Link to={`/admin/realms/${encodeURIComponent(realm.realmId)}?tab=access`}>{realm.name}</Link>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {collectionItems.map((collection) => (
+                <tr key={collection.id}>
+                  <th scope="row" className={styles.entitlementMatrixRowHead}>
+                    {collection.label ?? collection.name}
+                  </th>
+                  {contentRealms.map((realm) => {
+                    const isAuth = collection.id === realm.profileCollectionId;
+                    const entitlement = byCollection.get(collection.id)?.get(realm.realmId);
+                    return (
+                      <td
+                        key={realm.realmId}
+                        className={styles.entitlementMatrixCell}
+                        data-access={isAuth ? "guaranteed" : entitlement !== undefined ? "allowed" : "none"}
+                      >
+                        <Link
+                          to={`/admin/realms/${encodeURIComponent(realm.realmId)}?tab=access`}
+                          aria-label={`${realm.name} · ${collection.label ?? collection.name} 접근 설정`}
+                        >
+                          {isAuth ? (
+                            <Badge tone="success">항상 허용</Badge>
+                          ) : entitlement !== undefined ? (
+                            <span className={styles.entitlementMatrixActions}>{entitlementActionSummary(entitlement.actions)}</span>
+                          ) : (
+                            <span className={styles.entitlementMatrixNone}>접근 안 함</span>
+                          )}
+                        </Link>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </Page>
   );
 }

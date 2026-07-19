@@ -9,6 +9,14 @@ import type {
   RealmOwnerCommandActor,
   RealmPrimaryOwnerStatus,
 } from "./authorization.js";
+import { COLLECTION_ACTIONS } from "./realm-collection-entitlements.js";
+import type {
+  CollectionAction,
+  CollectionEntitlementConstraint,
+  RealmCollectionEntitlement,
+  RealmCollectionEntitlementStore,
+  RealmEntitlementStatus,
+} from "./realm-collection-entitlements.js";
 
 export type IdentityRealmKind = "system" | "content";
 export type IdentityRealmStatus = "provisioning" | "active" | "disabled";
@@ -115,7 +123,9 @@ export type RealmAdministrationAuditEvent =
   | "REALM_OWNER_REPLACED"
   | "REALM_OWNER_RECOVERED"
   | "REALM_FULL_ACCESS_ENTERED"
-  | "REALM_FULL_ACCESS_OPERATION";
+  | "REALM_FULL_ACCESS_OPERATION"
+  | "REALM_COLLECTION_ENTITLEMENT_UPDATED"
+  | "REALM_COLLECTION_ENTITLEMENT_REMOVED";
 
 export interface RealmAdministrationAuditRecord {
   readonly event: RealmAdministrationAuditEvent;
@@ -506,6 +516,7 @@ export class IdentityRealmApplicationService {
     private readonly provisioner?: RealmIdentityProvisioner,
     private readonly passwords?: PasswordHasher,
     private readonly owners?: RealmOwnerCoordinator,
+    private readonly entitlements?: RealmCollectionEntitlementStore,
   ) {}
 
   public async listRealms(actor: ActorContext): Promise<readonly IdentityRealmRecord[]> {
@@ -619,6 +630,164 @@ export class IdentityRealmApplicationService {
       const identity = byId.get(membership.identityId);
       return identity === undefined ? membership : { ...membership, identity };
     });
+  }
+
+  /**
+   * CMS-level (control-plane) collection access ceiling management. Only a CMS
+   * Owner (`requireRealmAdministration`) may read or change entitlements — these
+   * are the ceiling that constrains a Realm's own policy, so a Realm operator
+   * must never be able to widen them.
+   */
+  public async listRealmEntitlements(
+    actor: ActorContext,
+    realmId: string,
+  ): Promise<{
+    readonly status: RealmEntitlementStatus | null;
+    readonly entitlements: readonly RealmCollectionEntitlement[];
+  }> {
+    await requireRealmAdministration(actor);
+    await this.requireContentRealm(actor.workspaceId, realmId);
+    const store = this.requireEntitlementStore();
+    const [status, entitlements] = await Promise.all([
+      store.getEnforcement(realmId),
+      store.listByRealm(realmId),
+    ]);
+    return { status, entitlements };
+  }
+
+  /** Reverse view: which Realms hold a ceiling on a given collection. */
+  public async listCollectionEntitlements(
+    actor: ActorContext,
+    collectionId: string,
+  ): Promise<readonly RealmCollectionEntitlement[]> {
+    await requireRealmAdministration(actor);
+    const store = this.requireEntitlementStore();
+    return store.listByCollection(actor.workspaceId, normalizedId(collectionId, "collectionId"));
+  }
+
+  public async putRealmEntitlement(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly collectionId: string;
+      readonly actions: readonly string[];
+      readonly readableFields?: readonly string[];
+      readonly writableFields?: readonly string[];
+      readonly constraint?: {
+        readonly ownerOnly?: boolean;
+        readonly statuses?: readonly string[];
+      };
+      readonly expectedRevision: number | null;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+      readonly sessionId?: string;
+    },
+  ): Promise<RealmCollectionEntitlement> {
+    await requireRealmAdministration(actor);
+    const now = this.runtime.now();
+    requireRecentReauthentication(input.reauthenticatedAt, now);
+    const realm = await this.requireContentRealm(actor.workspaceId, input.realmId);
+    const store = this.requireEntitlementStore();
+
+    const collectionId = normalizedId(input.collectionId, "collectionId");
+    const actions = normalizedActions(input.actions);
+    const readableFields = normalizedFields(input.readableFields, "readableFields");
+    const writableFields = normalizedFields(input.writableFields, "writableFields");
+    assertWritableSubset(readableFields, writableFields);
+    const constraint = normalizedConstraint(input.constraint);
+    if (input.expectedRevision !== null
+      && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1)) {
+      invalid("expectedRevision must be null (create) or a positive safe integer (update).");
+    }
+
+    const updatedBy = actor.identityId ?? actor.subjectId;
+    const before = (await store.listByRealm(input.realmId))
+      .find((e) => e.collectionId === collectionId);
+    const saved = await store.put({
+      workspaceId: realm.workspaceId,
+      realmId: input.realmId,
+      collectionId,
+      actions,
+      ...(readableFields === undefined ? {} : { readableFields }),
+      ...(writableFields === undefined ? {} : { writableFields }),
+      ...(constraint === undefined ? {} : { constraint }),
+      expectedRevision: input.expectedRevision,
+      updatedAt: now,
+      updatedBy,
+    });
+    await this.store.recordRealmAdministrationEvent({
+      event: "REALM_COLLECTION_ENTITLEMENT_UPDATED",
+      systemIdentityId: updatedBy,
+      realmId: input.realmId,
+      accessMode: "cms-owner-control-plane",
+      occurredAt: now,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      operation: before === undefined ? "create" : "update",
+      targetType: "realm-collection-entitlement",
+      targetId: collectionId,
+      before,
+      after: saved,
+      result: "success",
+      details: { reauthenticatedAt: input.reauthenticatedAt },
+    });
+    return saved;
+  }
+
+  public async deleteRealmEntitlement(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly collectionId: string;
+      readonly expectedRevision: number;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+      readonly sessionId?: string;
+    },
+  ): Promise<void> {
+    await requireRealmAdministration(actor);
+    const now = this.runtime.now();
+    requireRecentReauthentication(input.reauthenticatedAt, now);
+    await this.requireContentRealm(actor.workspaceId, input.realmId);
+    const store = this.requireEntitlementStore();
+
+    const collectionId = normalizedId(input.collectionId, "collectionId");
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+      invalid("expectedRevision must be a positive safe integer.");
+    }
+    const before = (await store.listByRealm(input.realmId))
+      .find((e) => e.collectionId === collectionId);
+    await store.remove({
+      realmId: input.realmId,
+      collectionId,
+      expectedRevision: input.expectedRevision,
+    });
+    await this.store.recordRealmAdministrationEvent({
+      event: "REALM_COLLECTION_ENTITLEMENT_REMOVED",
+      systemIdentityId: actor.identityId ?? actor.subjectId,
+      realmId: input.realmId,
+      accessMode: "cms-owner-control-plane",
+      occurredAt: now,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      operation: "remove",
+      targetType: "realm-collection-entitlement",
+      targetId: collectionId,
+      before,
+      result: "success",
+      details: { reauthenticatedAt: input.reauthenticatedAt },
+    });
+  }
+
+  private requireEntitlementStore(): RealmCollectionEntitlementStore {
+    if (this.entitlements === undefined) {
+      throw new ApplicationError(
+        "ENTITLEMENT_STORE_UNAVAILABLE",
+        500,
+        "Collection entitlement management is not configured on this server.",
+      );
+    }
+    return this.entitlements;
   }
 
   /** Explicitly gives an existing System Identity a Content Realm Membership. */
@@ -1565,6 +1734,91 @@ function displayName(value: string, label: string): string {
   const normalized = value.normalize("NFKC").trim();
   if (normalized.length < 1 || normalized.length > 120) invalid(`${label} must contain 1-120 characters.`);
   return normalized;
+}
+
+function normalizedId(value: string, label: string): string {
+  if (typeof value !== "string") invalid(`${label} must be a string.`);
+  const normalized = value.trim();
+  if (normalized.length < 1 || normalized.length > 200) {
+    invalid(`${label} must contain 1-200 characters.`);
+  }
+  return normalized;
+}
+
+const COLLECTION_ACTION_SET = new Set<string>(COLLECTION_ACTIONS);
+
+function normalizedActions(value: readonly string[]): readonly CollectionAction[] {
+  if (!Array.isArray(value)) invalid("actions must be an array.");
+  const seen = new Set<CollectionAction>();
+  for (const raw of value) {
+    if (typeof raw !== "string" || !COLLECTION_ACTION_SET.has(raw)) {
+      invalid(`Unknown collection action: ${JSON.stringify(raw)}.`);
+    }
+    seen.add(raw as CollectionAction);
+  }
+  return COLLECTION_ACTIONS.filter((action) => seen.has(action));
+}
+
+function normalizedFields(
+  value: readonly string[] | undefined,
+  label: string,
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) invalid(`${label} must be an array or omitted.`);
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "string") invalid(`${label} entries must be strings.`);
+    const field = raw.trim();
+    if (field.length < 1 || field.length > 200) {
+      invalid(`${label} entries must contain 1-200 characters.`);
+    }
+    seen.add(field);
+  }
+  return [...seen];
+}
+
+/** Enforce writable ⊆ readable so a ceiling can never permit a blind write. */
+function assertWritableSubset(
+  readableFields: readonly string[] | undefined,
+  writableFields: readonly string[] | undefined,
+): void {
+  if (writableFields === undefined) return;
+  if (readableFields === undefined) return;
+  const readable = new Set(readableFields);
+  for (const field of writableFields) {
+    if (!readable.has(field)) {
+      throw new ApplicationError(
+        "ENTITLEMENT_FIELD_INVALID",
+        422,
+        `writableFields must be a subset of readableFields (offending field: ${field}).`,
+      );
+    }
+  }
+}
+
+function normalizedConstraint(
+  value: { readonly ownerOnly?: boolean; readonly statuses?: readonly string[] } | undefined,
+): CollectionEntitlementConstraint | undefined {
+  if (value === undefined) return undefined;
+  const constraint: { ownerOnly?: boolean; statuses?: readonly string[] } = {};
+  if (value.ownerOnly !== undefined) {
+    if (typeof value.ownerOnly !== "boolean") invalid("constraint.ownerOnly must be a boolean.");
+    if (value.ownerOnly) constraint.ownerOnly = true;
+  }
+  if (value.statuses !== undefined) {
+    if (!Array.isArray(value.statuses)) invalid("constraint.statuses must be an array.");
+    const seen = new Set<string>();
+    for (const raw of value.statuses) {
+      if (typeof raw !== "string") invalid("constraint.statuses entries must be strings.");
+      const status = raw.trim();
+      if (status.length < 1 || status.length > 100) {
+        invalid("constraint.statuses entries must contain 1-100 characters.");
+      }
+      seen.add(status);
+    }
+    if (seen.size > 0) constraint.statuses = [...seen];
+  }
+  return Object.keys(constraint).length === 0 ? undefined : constraint;
 }
 
 function requireRecentReauthentication(reauthenticatedAt: string, now: string): void {

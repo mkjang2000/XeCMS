@@ -38,7 +38,10 @@ export declare const queryKeys: {
     identityRealms: readonly ["identity-realms", "list"];
     identityRealm: (realmId: string) => readonly ["identity-realms", string, "detail"];
     realmMemberships: (realmId: string) => readonly ["identity-realms", string, "memberships"];
+    realmOwner: (realmId: string) => readonly ["identity-realms", string, "owner"];
     realmFullAccess: (realmId: string) => readonly ["identity-realms", string, "full-access"];
+    realmEntitlements: (realmId: string) => readonly ["identity-realms", string, "collection-entitlements"];
+    collectionEntitlements: (collectionId: string) => readonly ["collections", string, "entitlements"];
     jobs: (page: number, status: string, topic: string, handlerId: string) => readonly ["jobs", "list", number, string, string, string];
 };
 //# sourceMappingURL=queries.d.ts.map

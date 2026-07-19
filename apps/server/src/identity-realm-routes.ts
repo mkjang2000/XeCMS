@@ -7,6 +7,8 @@ import {
   type IdentityRealmRecord,
   type RealmFullAccessBindingRecord,
   type RealmMembershipRecord,
+  type RealmCollectionEntitlement,
+  type RealmEntitlementStatus,
 } from "@xecms/application";
 import type {
   CollectionListDto,
@@ -31,6 +33,13 @@ import type {
   DocumentRecordDto,
   RealmFullAccessBindingDto,
   RealmFullAccessListDto,
+  CollectionActionDto,
+  RealmCollectionEntitlementDto,
+  RealmCollectionEntitlementListDto,
+  CollectionEntitlementListDto,
+  RealmEntitlementStatusDto,
+  PutRealmCollectionEntitlementRequest,
+  DeleteRealmCollectionEntitlementRequest,
   RealmMembershipDto,
   RealmMembershipListDto,
   RealmOwnerStatusDto,
@@ -172,6 +181,44 @@ export interface IdentityRealmAdministrationRouteService {
       readonly reauthenticatedAt: string;
     },
   ): Promise<RealmFullAccessBindingRecord>;
+  listRealmEntitlements(
+    actor: ActorContext,
+    realmId: string,
+  ): Promise<{
+    readonly status: RealmEntitlementStatus | null;
+    readonly entitlements: readonly RealmCollectionEntitlement[];
+  }>;
+  listCollectionEntitlements(
+    actor: ActorContext,
+    collectionId: string,
+  ): Promise<readonly RealmCollectionEntitlement[]>;
+  putRealmEntitlement(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly collectionId: string;
+      readonly actions: readonly string[];
+      readonly readableFields?: readonly string[];
+      readonly writableFields?: readonly string[];
+      readonly constraint?: {
+        readonly ownerOnly?: boolean;
+        readonly statuses?: readonly string[];
+      };
+      readonly expectedRevision: number | null;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+    },
+  ): Promise<RealmCollectionEntitlement>;
+  deleteRealmEntitlement(
+    actor: ActorContext,
+    input: {
+      readonly realmId: string;
+      readonly collectionId: string;
+      readonly expectedRevision: number;
+      readonly reauthenticatedAt: string;
+      readonly requestId?: string;
+    },
+  ): Promise<void>;
 }
 
 export interface RealmAdministrationMembershipRecord extends RealmMembershipRecord {
@@ -615,6 +662,74 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
         bindingId,
         reauthenticatedAt: trustedReauthenticationTimestamp(verified),
       }));
+    },
+  );
+
+  app.get(
+    "/api/identity-realms/:realmId/collection-entitlements",
+    async (request): Promise<RealmCollectionEntitlementListDto> => {
+      const actor = await systemActor(request, false);
+      const { realmId } = pathParams(request.params, ["realmId"]);
+      const { status, entitlements } = await administration.listRealmEntitlements(actor, realmId);
+      return {
+        status: status === null ? null : toEntitlementStatusDto(status),
+        items: entitlements.map(toEntitlementDto),
+      };
+    },
+  );
+
+  app.put(
+    "/api/identity-realms/:realmId/collection-entitlements/:collectionId",
+    async (request, reply): Promise<RealmCollectionEntitlementDto> => {
+      const actor = await systemActor(request, true);
+      const { realmId, collectionId } = pathParams(request.params, ["realmId", "collectionId"]);
+      const body = parseEntitlementPut(request.body);
+      const verified = await actors.verifySystemReauthentication(request, actor, body.password);
+      const before = (await administration.listRealmEntitlements(actor, realmId)).entitlements
+        .some((e) => e.collectionId === collectionId);
+      const saved = await administration.putRealmEntitlement(actor, {
+        realmId,
+        collectionId,
+        actions: body.actions,
+        ...(body.readableFields === undefined ? {} : { readableFields: body.readableFields }),
+        ...(body.writableFields === undefined ? {} : { writableFields: body.writableFields }),
+        ...(body.constraint === undefined ? {} : { constraint: body.constraint }),
+        expectedRevision: body.expectedRevision,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+        requestId: request.id,
+      });
+      if (!before) reply.code(201);
+      return toEntitlementDto(saved);
+    },
+  );
+
+  app.delete(
+    "/api/identity-realms/:realmId/collection-entitlements/:collectionId",
+    async (request, reply): Promise<null> => {
+      const actor = await systemActor(request, true);
+      const { realmId, collectionId } = pathParams(request.params, ["realmId", "collectionId"]);
+      const body = parseEntitlementDelete(request.body);
+      const verified = await actors.verifySystemReauthentication(request, actor, body.password);
+      await administration.deleteRealmEntitlement(actor, {
+        realmId,
+        collectionId,
+        expectedRevision: body.expectedRevision,
+        reauthenticatedAt: trustedReauthenticationTimestamp(verified),
+        requestId: request.id,
+      });
+      reply.code(204);
+      return null;
+    },
+  );
+
+  app.get(
+    "/api/collections/:collectionId/entitlements",
+    async (request): Promise<CollectionEntitlementListDto> => {
+      const actor = await systemActor(request, false);
+      const { collectionId } = pathParams(request.params, ["collectionId"]);
+      const items = (await administration.listCollectionEntitlements(actor, collectionId))
+        .map(toEntitlementDto);
+      return { collectionId, items };
     },
   );
 
@@ -1171,6 +1286,55 @@ function parseFullAccessRevoke(value: unknown): { readonly password: string } {
   return { password: requiredString(body, "password") };
 }
 
+function parseEntitlementPut(value: unknown): PutRealmCollectionEntitlementRequest {
+  const body = exactObject(value, [
+    "actions",
+    "readableFields",
+    "writableFields",
+    "constraint",
+    "expectedRevision",
+    "password",
+  ], "Collection entitlement request");
+  return {
+    // The application layer whitelists these against the 11 canonical actions.
+    actions: requiredStringArray(body, "actions") as readonly CollectionActionDto[],
+    ...(body["readableFields"] === undefined
+      ? {}
+      : { readableFields: requiredStringArray(body, "readableFields") }),
+    ...(body["writableFields"] === undefined
+      ? {}
+      : { writableFields: requiredStringArray(body, "writableFields") }),
+    ...(body["constraint"] === undefined
+      ? {}
+      : { constraint: parseEntitlementConstraint(body["constraint"]) }),
+    expectedRevision: nullableRevision(body, "expectedRevision"),
+    password: requiredString(body, "password"),
+  };
+}
+
+function parseEntitlementConstraint(
+  value: unknown,
+): { readonly ownerOnly?: boolean; readonly statuses?: readonly string[] } {
+  const body = exactObject(value, ["ownerOnly", "statuses"], "Entitlement constraint");
+  return {
+    ...(body["ownerOnly"] === undefined ? {} : { ownerOnly: requiredBoolean(body, "ownerOnly") }),
+    ...(body["statuses"] === undefined ? {} : { statuses: requiredStringArray(body, "statuses") }),
+  };
+}
+
+function nullableRevision(body: Readonly<Record<string, unknown>>, key: string): number | null {
+  if (body[key] === null) return null;
+  return positiveRevision(body, key);
+}
+
+function parseEntitlementDelete(value: unknown): DeleteRealmCollectionEntitlementRequest {
+  const body = exactObject(value, ["expectedRevision", "password"], "Entitlement delete request");
+  return {
+    expectedRevision: positiveRevision(body, "expectedRevision"),
+    password: requiredString(body, "password"),
+  };
+}
+
 function parseSignup(value: unknown): ContentRealmSignupRequest {
   const body = exactObject(value, ["identifier", "password", "profile"], "Realm signup request");
   return {
@@ -1319,6 +1483,36 @@ function toFullAccessDto(binding: RealmFullAccessBindingRecord): RealmFullAccess
     ...(binding.terminationReason === undefined
       ? {}
       : { terminationReason: binding.terminationReason }),
+  };
+}
+
+function toEntitlementDto(
+  entitlement: RealmCollectionEntitlement,
+): RealmCollectionEntitlementDto {
+  return {
+    workspaceId: entitlement.workspaceId,
+    realmId: entitlement.realmId,
+    collectionId: entitlement.collectionId,
+    actions: entitlement.actions,
+    ...(entitlement.readableFields === undefined
+      ? {}
+      : { readableFields: entitlement.readableFields }),
+    ...(entitlement.writableFields === undefined
+      ? {}
+      : { writableFields: entitlement.writableFields }),
+    ...(entitlement.constraint === undefined ? {} : { constraint: entitlement.constraint }),
+    revision: entitlement.revision,
+    updatedAt: entitlement.updatedAt,
+    updatedBy: entitlement.updatedBy,
+  };
+}
+
+function toEntitlementStatusDto(status: RealmEntitlementStatus): RealmEntitlementStatusDto {
+  return {
+    realmId: status.realmId,
+    workspaceId: status.workspaceId,
+    state: status.state,
+    version: status.version,
   };
 }
 

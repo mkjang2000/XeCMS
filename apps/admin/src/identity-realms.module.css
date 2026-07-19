@@ -489,6 +489,177 @@
   text-align: right;
 }
 
+/* Collection access ceiling table: roomier rows, cells centred against the
+   name column, and a right-aligned actions column. */
+.entitlementTable {
+  min-width: 48rem;
+}
+
+.entitlementTable th,
+.entitlementTable td {
+  padding: 0.85rem 0.9rem;
+  vertical-align: middle;
+}
+
+/* The name column carries the title, badge and (advanced) id — keep it top-aligned. */
+.entitlementTable td:first-child {
+  vertical-align: top;
+}
+
+.entitlementName {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.entitlementNameRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.entitlementName .idValue {
+  min-width: 0;
+  margin-top: 0.15rem;
+}
+
+.entitlementActions {
+  color: var(--xe-color-text);
+  line-height: 1.5;
+}
+
+.entitlementMuted {
+  color: var(--xe-color-text-muted);
+}
+
+.entitlementActionsHead {
+  text-align: right;
+}
+
+.entitlementRowActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+/* Cross-space access matrix: collections down, realms across. First column and
+   header stay put while the grid scrolls. */
+.entitlementMatrix {
+  min-width: 44rem;
+}
+
+.entitlementMatrix th,
+.entitlementMatrix td {
+  padding: 0.7rem 0.85rem;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.entitlementMatrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.entitlementMatrix thead th a {
+  color: var(--xe-color-text);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.entitlementMatrix thead th a:hover {
+  text-decoration: underline;
+}
+
+.entitlementMatrixCorner,
+.entitlementMatrixRowHead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  text-align: left;
+  background: var(--xe-color-surface-subtle);
+}
+
+.entitlementMatrixCorner {
+  z-index: 3;
+}
+
+.entitlementMatrixRowHead {
+  color: var(--xe-color-text-strong);
+  font-weight: 640;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.entitlementMatrixCell a {
+  display: block;
+  padding: 0.25rem 0.35rem;
+  border-radius: var(--xe-radius-sm);
+  text-decoration: none;
+}
+
+.entitlementMatrixCell a:hover {
+  background: color-mix(in srgb, var(--xe-color-primary-soft) 45%, transparent);
+}
+
+.entitlementMatrixActions {
+  color: var(--xe-color-text);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.entitlementMatrixNone {
+  color: var(--xe-color-text-muted);
+  font-size: 0.76rem;
+}
+
+.entitlementMatrixCell[data-access="none"] {
+  background: color-mix(in srgb, var(--xe-color-surface-subtle) 55%, transparent);
+}
+
+/* Entitlement edit dialog: the body scrolls on its own so the scrollbar sits
+   inside the padded content and never clips the modal's rounded corner. */
+.entitlementDialog {
+  display: grid;
+  gap: 1rem;
+  max-height: min(60vh, 34rem);
+  overflow-y: auto;
+  /* Room for the scrollbar so checkboxes don't sit under it. */
+  padding-right: 0.5rem;
+  margin-right: -0.5rem;
+}
+
+.entitlementGroup {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface-muted, transparent);
+}
+
+.entitlementGroup > h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--xe-color-text-strong);
+}
+
+.entitlementCheckGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.5rem 1rem;
+}
+
+@media (max-width: 560px) {
+  .entitlementCheckGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
   .summaryGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

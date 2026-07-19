@@ -957,7 +957,11 @@ export class AuthorizationApplicationService {
    */
   readonly #entitlementCache = new Map<
     string,
-    { readonly version: number; readonly byCollectionId: Map<string, RealmCollectionEntitlement> } | null
+    {
+      readonly version: number;
+      readonly byCollectionId: Map<string, RealmCollectionEntitlement>;
+      readonly guaranteedCollectionId?: string;
+    } | null
   >();
 
   public constructor(
@@ -2689,7 +2693,10 @@ export class AuthorizationApplicationService {
    */
   private async loadEntitlements(
     realmId: string,
-  ): Promise<{ readonly byCollectionId: Map<string, RealmCollectionEntitlement> } | null> {
+  ): Promise<{
+    readonly byCollectionId: Map<string, RealmCollectionEntitlement>;
+    readonly guaranteedCollectionId?: string;
+  } | null> {
     // The ceiling only applies to Content Realms.
     if (realmId === SYSTEM_AUTHORIZATION_REALM_ID) return null;
     const enforcement = await this.entitlementStore.getEnforcement(realmId);
@@ -2705,7 +2712,13 @@ export class AuthorizationApplicationService {
     }
     const entitlements = await this.entitlementStore.listByRealm(realmId);
     const byCollectionId = new Map(entitlements.map((e) => [e.collectionId, e]));
-    const entry = { version: enforcement.version, byCollectionId };
+    const entry = {
+      version: enforcement.version,
+      byCollectionId,
+      ...(enforcement.guaranteedCollectionId === undefined
+        ? {}
+        : { guaranteedCollectionId: enforcement.guaranteedCollectionId }),
+    };
     this.#entitlementCache.set(realmId, entry);
     return entry;
   }
@@ -2717,7 +2730,10 @@ export class AuthorizationApplicationService {
    * mapped to a collection.
    */
   private resolveEntitlementForResource(
-    ceiling: { readonly byCollectionId: Map<string, RealmCollectionEntitlement> },
+    ceiling: {
+      readonly byCollectionId: Map<string, RealmCollectionEntitlement>;
+      readonly guaranteedCollectionId?: string;
+    },
     snapshot: PolicySnapshot,
     realmId: string,
     resourceId: string,
@@ -2732,6 +2748,9 @@ export class AuthorizationApplicationService {
         "The content resource could not be mapped to a collection for entitlement enforcement.",
       );
     }
+    // A realm can never be cut off from its own Auth (profile) collection —
+    // the ceiling does not apply there. Skip the gate so realm policy governs.
+    if (resolution.collectionId === ceiling.guaranteedCollectionId) return { kind: "skip" };
     return { kind: "gate", entitlement: ceiling.byCollectionId.get(resolution.collectionId) };
   }
 

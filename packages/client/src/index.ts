@@ -90,6 +90,11 @@ import {
   type RestoreRevisionRequest,
   type RealmFullAccessBindingDto,
   type RealmFullAccessListDto,
+  type RealmCollectionEntitlementDto,
+  type RealmCollectionEntitlementListDto,
+  type CollectionEntitlementListDto,
+  type PutRealmCollectionEntitlementRequest,
+  type DeleteRealmCollectionEntitlementRequest,
   type RealmMembershipDto,
   type RealmMembershipListDto,
   type RealmMembershipRevisionRequest,
@@ -450,6 +455,18 @@ export interface XeCmsClient {
       bindingId: string,
       input: RevokeRealmFullAccessRequest,
     ): Promise<RealmFullAccessBindingDto>;
+    listCollectionEntitlements(realmId: string): Promise<RealmCollectionEntitlementListDto>;
+    putCollectionEntitlement(
+      realmId: string,
+      collectionId: string,
+      input: PutRealmCollectionEntitlementRequest,
+    ): Promise<RealmCollectionEntitlementDto>;
+    deleteCollectionEntitlement(
+      realmId: string,
+      collectionId: string,
+      input: DeleteRealmCollectionEntitlementRequest,
+    ): Promise<void>;
+    listEntitlementsForCollection(collectionId: string): Promise<CollectionEntitlementListDto>;
     authorizationFor(realmId: string): AuthorizationClient;
   };
   readonly contentRealms: {
@@ -1149,6 +1166,32 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
             body: json(input),
             csrf: true,
           },
+        ),
+      listCollectionEntitlements: (realmId) =>
+        request<RealmCollectionEntitlementListDto>(
+          `${identityRealmPath(realmId)}/collection-entitlements`,
+        ),
+      putCollectionEntitlement: (realmId, collectionId, input) =>
+        request<RealmCollectionEntitlementDto>(
+          `${identityRealmPath(realmId)}/collection-entitlements/${encodeURIComponent(collectionId)}`,
+          {
+            method: "PUT",
+            body: json(input),
+            csrf: true,
+          },
+        ),
+      deleteCollectionEntitlement: (realmId, collectionId, input) =>
+        request<void>(
+          `${identityRealmPath(realmId)}/collection-entitlements/${encodeURIComponent(collectionId)}`,
+          {
+            method: "DELETE",
+            body: json(input),
+            csrf: true,
+          },
+        ),
+      listEntitlementsForCollection: (collectionId) =>
+        request<CollectionEntitlementListDto>(
+          `/collections/${encodeURIComponent(collectionId)}/entitlements`,
         ),
       authorizationFor: (realmId) => createAuthorizationClient((kind, id) =>
         `${identityRealmPath(realmId)}/authorization${kind === undefined ? "" : `/${kind}`}${

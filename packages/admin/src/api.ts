@@ -313,6 +313,75 @@ export interface GrantRealmFullAccessInput {
   readonly validUntil: string;
 }
 
+export type CollectionEntitlementAction =
+  | "list"
+  | "read"
+  | "create"
+  | "update"
+  | "delete"
+  | "publish"
+  | "unpublish"
+  | "purge"
+  | "restore"
+  | "revision.read"
+  | "revision.restore";
+
+export type RealmEntitlementEnforcement = "disabled" | "enforced";
+
+export interface CollectionEntitlementConstraint {
+  readonly ownerOnly?: boolean;
+  readonly statuses?: readonly string[];
+}
+
+export interface RealmCollectionEntitlement {
+  readonly workspaceId: string;
+  readonly realmId: string;
+  readonly collectionId: string;
+  readonly actions: readonly CollectionEntitlementAction[];
+  readonly readableFields?: readonly string[];
+  readonly writableFields?: readonly string[];
+  readonly constraint?: CollectionEntitlementConstraint;
+  readonly revision: number;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+}
+
+export interface RealmEntitlementStatus {
+  readonly realmId: string;
+  readonly workspaceId: string;
+  readonly state: RealmEntitlementEnforcement;
+  readonly version: number;
+}
+
+/** Per-realm: enforcement state (null before the feature is on) + every collection ceiling. */
+export interface RealmCollectionEntitlementList {
+  readonly status: RealmEntitlementStatus | null;
+  readonly entitlements: readonly RealmCollectionEntitlement[];
+}
+
+/** Reverse view: every realm that holds a ceiling on one collection. */
+export interface CollectionEntitlementList {
+  readonly collectionId: string;
+  readonly entitlements: readonly RealmCollectionEntitlement[];
+}
+
+export interface PutRealmCollectionEntitlementInput {
+  readonly actions: readonly CollectionEntitlementAction[];
+  readonly readableFields?: readonly string[];
+  readonly writableFields?: readonly string[];
+  readonly constraint?: CollectionEntitlementConstraint;
+  /** `null` to create; a positive revision to update (CAS). */
+  readonly expectedRevision: number | null;
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly password: string;
+}
+
+export interface DeleteRealmCollectionEntitlementInput {
+  readonly expectedRevision: number;
+  /** Operator's own current System password, used to re-authenticate this action. */
+  readonly password: string;
+}
+
 export interface CollectionField {
   readonly id: string;
   readonly name: string;
@@ -1135,6 +1204,18 @@ export interface AdminApi {
       bindingId: string,
       password: string,
     ): Promise<RealmFullAccessBinding>;
+    listCollectionEntitlements(realmId: string): Promise<RealmCollectionEntitlementList>;
+    putCollectionEntitlement(
+      realmId: string,
+      collectionId: string,
+      input: PutRealmCollectionEntitlementInput,
+    ): Promise<RealmCollectionEntitlement>;
+    deleteCollectionEntitlement(
+      realmId: string,
+      collectionId: string,
+      input: DeleteRealmCollectionEntitlementInput,
+    ): Promise<void>;
+    listEntitlementsForCollection(collectionId: string): Promise<CollectionEntitlementList>;
     authorizationFor(realmId: string): AuthorizationAdminApi;
   };
   readonly authorization: AuthorizationAdminApi;
