@@ -10,7 +10,7 @@ import { pipeline } from "node:stream/promises";
 import { PostgresDatabase, qualifiedName, quoteIdentifier } from "@xecms/database";
 import { cliError, type LoadedProject } from "./config.js";
 
-const CURRENT_XECMS_VERSION = "0.4.1";
+const CURRENT_XECMS_VERSION = "0.5.0";
 const DATABASE_ARTIFACT = "database.dump";
 const MEDIA_ARTIFACT = "media.tar.gz";
 const SHA256 = /^[a-f0-9]{64}$/;

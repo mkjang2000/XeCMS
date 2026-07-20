@@ -121,8 +121,8 @@ describe.runIf(RUN)("P2 scalability characterization", () => {
       const table = `_xecms_plugin_${id.replaceAll("-", "_")}_rows`;
       const module = definePlugin({
         manifest: { manifestVersion: 1, id, packageName: `@test/${id}`, version: "1.0.0",
-          displayName: `Export ${size}`, compatibility: { core: ">=0.4.0 <0.5.0",
-            admin: ">=0.4.0 <0.5.0", sdk: "1.x" }, serverEntry: "server",
+          displayName: `Export ${size}`, compatibility: { core: ">=0.5.0 <0.6.0",
+            admin: ">=0.5.0 <0.6.0", sdk: "1.x" }, serverEntry: "server",
           migrations: [{ id: "0001_rows", checksum: `sha256:${id}:v1` }], dataTables: [table] },
         server: { migrations: [{ id: "0001_rows", checksum: `sha256:${id}:v1`,
           up: async ({ query, table: tableName }) => { await query(`CREATE TABLE ${tableName(table)}(id bigint PRIMARY KEY,payload text NOT NULL)`); },

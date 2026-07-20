@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 
 export const XECMS_PLUGIN_MANIFEST_VERSION = 1 as const;
 export const XECMS_PLUGIN_SDK_VERSION = "1.0.0";
-export const XECMS_CORE_VERSION = "0.4.1";
-export const XECMS_ADMIN_VERSION = "0.4.1";
+export const XECMS_CORE_VERSION = "0.5.0";
+export const XECMS_ADMIN_VERSION = "0.5.0";
 
 export type PluginHttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type PluginDocumentHookStage = "beforeValidate" | "afterValidate" | "beforeCreate" | "beforeUpdate" | "beforeDelete";

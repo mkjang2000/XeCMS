@@ -5,7 +5,7 @@ import { cliError } from "./config.js";
 import { starterArtifacts,type StarterName } from "./starters.js";
 
 export async function scaffold(directory:string,starter:StarterName):Promise<string>{const root=resolve(directory);await mkdir(root,{recursive:true});if((await readdir(root)).length>0)throw cliError("DIRECTORY_NOT_EMPTY",`Refusing to initialize non-empty directory '${root}'.`);const projectName=safeName(basename(root)),artifacts=starterArtifacts(starter);const files:Record<string,string>={
-  "package.json":`${JSON.stringify({name:projectName,version:"0.1.0",private:true,type:"module",scripts:{dev:"xecms dev",build:"xecms schema validate && xecms generate types",migrate:"xecms migrate",doctor:"xecms doctor",backup:"xecms backup create ./backups/manual"},dependencies:{"@xecms/cli":"^0.4.1","@xecms/server":"^0.4.1","@xecms/admin-app":"^0.4.1"}},null,2)}\n`,
+  "package.json":`${JSON.stringify({name:projectName,version:"0.1.0",private:true,type:"module",scripts:{dev:"xecms dev",build:"xecms schema validate && xecms generate types",migrate:"xecms migrate",doctor:"xecms doctor",backup:"xecms backup create ./backups/manual"},dependencies:{"@xecms/cli":"^0.5.0","@xecms/server":"^0.5.0","@xecms/admin-app":"^0.5.0"}},null,2)}\n`,
   "xecms.config.json":`${JSON.stringify({projectName,starter,databaseSchema:"xecms",schemaFile:"xecms.schema.json",typesFile:"xecms.generated.ts",mediaStorageRoot:".xecms/media",adminDist:"node_modules/@xecms/admin-app/dist"},null,2)}\n`,
   "xecms.schema.json":artifacts.manifest,
   "xecms.generated.ts":artifacts.types,

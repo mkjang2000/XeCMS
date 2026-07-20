@@ -10,7 +10,7 @@ TypeScript API, Realm 권한 모델과 Plugin으로 확장할 수 있다.
 PostgreSQL을 공식 저장소로 사용하며 Schema, Migration, REST API, 관리 UI와 권한 판정이
 하나의 모델을 공유한다.
 
-> 현재 버전은 **0.4.1**이다. MVP 기능과 전체 검증 체계가 완성되어 있으며, Realm별 콘텐츠
+> 현재 버전은 **0.5.0**이다. MVP 기능과 전체 검증 체계가 완성되어 있으며, Realm별 콘텐츠
 > 접근 상한과 교차 Realm 사용자 관리 위임까지 포함한다.
 
 ## 주요 특징
@@ -184,7 +184,7 @@ Release gate에서는 이 전체 회귀와 Chromium 누적 사용자 여정을 �
 
 ## 현재 범위
 
-0.4.1은 MVP 안정화 릴리스다. 다음 항목은 의도적으로 현재 범위에서 제외한다.
+0.5.0은 MVP 안정화 릴리스다. 다음 항목은 의도적으로 현재 범위에서 제외한다.
 
 - 여러 Workspace를 제공하는 완전한 SaaS multi-tenancy
 - 명시적 Deny와 임의 JavaScript policy language

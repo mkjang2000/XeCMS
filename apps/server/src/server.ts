@@ -142,7 +142,7 @@ import {
   toEvaluateAccessBatchResponse,
 } from "./access-evaluation-request.js";
 
-const XECMS_VERSION = "0.4.1";
+const XECMS_VERSION = "0.5.0";
 const SESSION_COOKIE = "xecms_session";
 
 function pluginExtensionIds(module: XeCmsPluginModule): ReadonlySet<string> {

@@ -28,8 +28,8 @@ export default definePlugin({
     displayName: "My Plugin",
     description: "예시 플러그인",
     compatibility: {
-      core: ">=0.4.0 <0.5.0",
-      admin: ">=0.4.0 <0.5.0",
+      core: ">=0.5.0 <0.6.0",
+      admin: ">=0.5.0 <0.6.0",
       sdk: "1.x",
     },
   },
