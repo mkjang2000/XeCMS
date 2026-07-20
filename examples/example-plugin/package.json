@@ -1,5 +1,6 @@
 {
   "name": "@xecms/example-plugin",
+  "private": true,
   "version": "1.0.0",
   "type": "module",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
