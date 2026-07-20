@@ -172,9 +172,16 @@ export interface XeCmsServer {
   close(): Promise<void>;
 }
 
+/**
+ * Plugin packages this build ships. Exported so tooling that has to reason
+ * about installed Plugins without a running server (the CLI recovery path for
+ * manifest drift) sees exactly the catalogue the server would load.
+ */
+export const DEFAULT_PLUGIN_MODULES: readonly XeCmsPluginModule[] = [examplePlugin];
+
 export async function buildServer(options: BuildServerOptions = {}): Promise<XeCmsServer> {
   const config = options.config ?? loadServerConfig();
-  const pluginModules=options.plugins??[examplePlugin];
+  const pluginModules=options.plugins??[...DEFAULT_PLUGIN_MODULES];
   const pluginCatalog=new PluginCatalog(pluginModules);
   const database =
     options.database ??

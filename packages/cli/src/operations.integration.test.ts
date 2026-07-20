@@ -5,10 +5,11 @@ import { resolve } from "node:path";
 import { CORE_MIGRATION_IDS,PostgresDatabase,qualifiedName,quoteIdentifier } from "@xecms/database";
 import { pluginManifestDigest,type XeCmsPluginManifestV1 } from "@xecms/plugin-sdk";
 import { serializeSchema } from "@xecms/schema";
-import { buildServer } from "@xecms/server";
+import { buildServer,DEFAULT_PLUGIN_MODULES } from "@xecms/server";
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
 import { createBackup,restoreBackup } from "./backup.js";
 import { doctor } from "./doctor.js";
+import { syncPluginManifests } from "./plugin-sync.js";
 import { scaffold } from "./scaffold.js";
 import { starterSchema } from "./starters.js";
 import type { LoadedProject } from "./config.js";
@@ -28,6 +29,54 @@ describe.runIf(RUN).sequential("C5 doctor, backup and empty restore",()=>{
     await source.pool.query(`CREATE DATABASE ${quoteIdentifier(targetDatabase)}`);const targetUrl=withDatabase(DATABASE_URL,targetDatabase),service=process.env["XECMS_C5_DB_SERVICE"]??"xecms-postgres-e2e-1",internalUrl="postgresql://xecms:xecms@127.0.0.1:5432/postgres";process.env["XECMS_PG_DUMP_COMMAND_JSON"]=JSON.stringify(["docker","exec","-i",service,"pg_dump"]);process.env["XECMS_PG_RESTORE_COMMAND_JSON"]=JSON.stringify(["docker","exec","-i",service,"pg_restore"]);process.env["XECMS_BACKUP_DATABASE_URL"]=withDatabase(internalUrl,databaseName(DATABASE_URL));process.env["XECMS_RESTORE_DATABASE_URL"]=withDatabase(internalUrl,targetDatabase);const backupDir=resolve(sourceRoot,"backups","verified");const backup=await createBackup(sourceProject,backupDir);expect(backup).toMatchObject({activeSchemaHash:schemaHash,xecmsVersion:"0.5.0"});const targetProject=project(targetRoot,targetUrl,schema);await expect(restoreBackup(targetProject,backupDir,false)).rejects.toMatchObject({code:"RESTORE_CONFIRMATION_REQUIRED"});await restoreBackup(targetProject,backupDir,true);target=new PostgresDatabase({connectionString:targetUrl,schema,maxConnections:3});for(const table of ["_xecms_identities","_xecms_auth_roles","_xecms_documents","_xecms_document_revisions","_xecms_plugins","_xecms_media"]){const sourceCount=await source.pool.query<{count:string}>(`SELECT count(*)::text count FROM ${q(table)}`),targetCount=await target.pool.query<{count:string}>(`SELECT count(*)::text count FROM ${qualifiedName(schema,table)}`);expect(targetCount.rows[0]!.count,table).toBe(sourceCount.rows[0]!.count)}expect(await readFile(resolve(targetRoot,".xecms/media/probe/file.txt"),"utf8")).toBe("C5 media integrity\n");expect((await doctor(targetProject)).status).toBe("healthy");
   }finally{restoreEnvironment(previous);await target?.close();await source.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(()=>undefined);await source.pool.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(targetDatabase)} WITH (FORCE)`).catch(()=>undefined);await source.close()}},60_000)
   it("upgrades a populated pre-C4 release fixture and remains idempotent",async()=>{const schema=`xecms_c5_upgrade_${randomUUID().replaceAll("-","")}`,database=new PostgresDatabase({connectionString:DATABASE_URL,schema,maxConnections:3}),q=(name:string)=>qualifiedName(schema,name);try{await database.migrate();await database.pool.query(`INSERT INTO ${q("_xecms_audit_log")}(event_type,occurred_at,metadata) VALUES('fixture.pre-c4',now(),'{"mustSurvive":true}')`);await database.pool.query(`DELETE FROM ${q("_xecms_auth_role_permissions")} WHERE permission_key IN ('plugin.enable','plugin.disable','plugin.uninstall')`);await database.pool.query(`DELETE FROM ${q("_xecms_auth_permissions")} WHERE permission_key IN ('plugin.enable','plugin.disable','plugin.uninstall')`);for(const table of ["_xecms_plugin_exports","_xecms_plugin_plans","_xecms_plugin_migrations","_xecms_plugins"])await database.pool.query(`DROP TABLE ${q(table)}`);await database.pool.query(`DELETE FROM ${q("_xecms_core_migrations")} WHERE id IN ('0018_m4c4_plugin_platform','0019_owner_delegation_reconciliation')`);await database.migrate();await database.migrate();expect((await database.pool.query(`SELECT metadata FROM ${q("_xecms_audit_log")} WHERE event_type='fixture.pre-c4'`)).rows[0]).toEqual({metadata:{mustSurvive:true}});expect((await database.pool.query(`SELECT id FROM ${q("_xecms_core_migrations")} ORDER BY id`)).rows.map(row=>row.id)).toHaveLength(CORE_MIGRATION_IDS.length);expect((await database.pool.query("SELECT to_regclass($1) name",[`${schema}._xecms_plugins`])).rows[0].name).toBe(`${schema}._xecms_plugins`)}finally{await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(()=>undefined);await database.close()}},30_000)
+  it("recovers a boot-blocking Plugin manifest drift from the CLI",async()=>{
+    // Manifest drift makes buildServer throw, so Admin Studio — where a
+    // reinstall plan would normally be applied — is unreachable. `plugin sync`
+    // is the only way out, and it must refuse when migrations also moved.
+    const schema=`xecms_c5_pluginsync_${randomUUID().replaceAll("-","")}`;
+    const root=await projectRoot("blog"),database=new PostgresDatabase({connectionString:DATABASE_URL,schema,maxConnections:3});
+    const q=(name:string)=>qualifiedName(schema,name);
+    try{
+      await database.migrate();
+      const loaded=project(root,DATABASE_URL,schema);
+      const module=DEFAULT_PLUGIN_MODULES[0]!;
+      const manifest=module.manifest;
+      const now=new Date().toISOString();
+      await database.pool.query(
+        `INSERT INTO ${q("_xecms_plugins")}(workspace_id,plugin_id,package_name,version,manifest,manifest_digest,desired_state,config,revision,restart_required,installed_at,installed_by,updated_at,updated_by)
+         VALUES('wrk_default',$1,$2,$3,$4::jsonb,'stale-digest','enabled','{}',1,false,$5,'usr_test',$5,'usr_test')`,
+        [manifest.id,manifest.packageName,manifest.version,JSON.stringify(manifest),now],
+      );
+      for(const[index,migration]of(manifest.migrations??[]).entries())
+        await database.pool.query(
+          `INSERT INTO ${q("_xecms_plugin_migrations")}(workspace_id,plugin_id,migration_id,checksum,sequence,applied_at,applied_by) VALUES('wrk_default',$1,$2,$3,$4,$5,'usr_test')`,
+          [manifest.id,migration.id,migration.checksum,index+1,now],
+        );
+
+      // Dry run reports the drift without touching anything.
+      const preview=await syncPluginManifests(loaded,DEFAULT_PLUGIN_MODULES,false);
+      expect(preview.entries).toMatchObject([{pluginId:manifest.id,status:"drifted"}]);
+      expect(preview.updated).toEqual([]);
+      expect((await database.pool.query<{manifest_digest:string}>(`SELECT manifest_digest FROM ${q("_xecms_plugins")}`)).rows[0]!.manifest_digest).toBe("stale-digest");
+
+      const applied=await syncPluginManifests(loaded,DEFAULT_PLUGIN_MODULES,true);
+      expect(applied.updated).toEqual([manifest.id]);
+      expect((await database.pool.query<{manifest_digest:string}>(`SELECT manifest_digest FROM ${q("_xecms_plugins")}`)).rows[0]!.manifest_digest)
+        .toBe(pluginManifestDigest(manifest));
+      expect((await syncPluginManifests(loaded,DEFAULT_PLUGIN_MODULES,false)).entries).toMatchObject([{status:"in-sync"}]);
+
+      // Migration drift means schema work: sync must refuse rather than paper over it.
+      await database.pool.query(`UPDATE ${q("_xecms_plugins")} SET manifest_digest='stale-again' WHERE plugin_id=$1`,[manifest.id]);
+      await database.pool.query(`DELETE FROM ${q("_xecms_plugin_migrations")} WHERE plugin_id=$1`,[manifest.id]);
+      const blocked=await syncPluginManifests(loaded,DEFAULT_PLUGIN_MODULES,true);
+      expect(blocked.entries).toMatchObject([{status:"blocked"}]);
+      expect(blocked.updated).toEqual([]);
+      expect((await database.pool.query<{manifest_digest:string}>(`SELECT manifest_digest FROM ${q("_xecms_plugins")}`)).rows[0]!.manifest_digest).toBe("stale-again");
+    }finally{
+      await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(()=>undefined);
+      await database.close();
+    }
+  },30_000);
   it("leaves an empty retryable target when integrity fails after media promotion",async()=>{
     const token=randomUUID().replaceAll("-","").slice(0,12),schema=`xecms_c5_cleanup_${token}`,targetDatabase=`xecms_c5_cleanup_target_${token}`;
     const sourceRoot=await projectRoot("blog"),targetRoot=await projectRoot("blog"),source=new PostgresDatabase({connectionString:DATABASE_URL,schema,maxConnections:3});

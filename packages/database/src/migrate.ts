@@ -75,8 +75,55 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
 ] as const);
 
+/** Connection faults that mean "the server is not accepting clients yet". */
+const TRANSIENT_CONNECT_CODES = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "ECONNRESET", "EPIPE",
+  "57P03", // cannot_connect_now — server is starting up
+]);
+
+export function isTransientConnectError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && TRANSIENT_CONNECT_CODES.has(code)) return true;
+  // A container that is still initialising runs a temporary server and restarts
+  // it, which drops in-flight connections with no error code attached.
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string"
+    && /starting up|the database system is|connection terminated|socket hang up/i.test(message);
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Waits for the database to accept connections before migrating.
+ *
+ * A freshly started Postgres container serves its unix socket before it opens
+ * TCP, so orchestration that reports "healthy" can still hand us a port that
+ * refuses connections. Without this the first `xecms migrate` of a clean
+ * install fails on ECONNREFUSED and only succeeds when run a second time.
+ */
+async function waitForDatabase(pool: Pool, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let wait = 250;
+  for (;;) {
+    try {
+      const client = await pool.connect();
+      client.release();
+      return;
+    } catch (error) {
+      if (!isTransientConnectError(error) || Date.now() + wait >= deadline) throw error;
+      await delay(wait);
+      wait = Math.min(wait * 2, 2_000);
+    }
+  }
+}
+
+/** Overridable so tests do not have to sit through the real backoff. */
+const CONNECT_TIMEOUT_MS = Number(process.env["XECMS_DB_CONNECT_TIMEOUT_MS"] ?? 30_000);
+
 export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> {
   const schema = validateDatabaseSchema(rawSchema);
+  await waitForDatabase(pool, CONNECT_TIMEOUT_MS);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

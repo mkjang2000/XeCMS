@@ -12,9 +12,12 @@ services:
     volumes:
       - xecms-postgres-data:/var/lib/postgresql
     healthcheck:
+      # Probe TCP, not the unix socket: during first-run initialisation Postgres
+      # serves the socket while TCP is still closed, so a socket-only check
+      # reports healthy before clients on the published port can connect.
       test:
         - CMD-SHELL
-        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+        - pg_isready -h 127.0.0.1 -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 2s
       timeout: 5s
       retries: 20
@@ -36,7 +39,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+        - pg_isready -h 127.0.0.1 -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 1s
       timeout: 5s
       retries: 30
