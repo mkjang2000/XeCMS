@@ -1,8 +1,17 @@
 import { useRef, useState } from "react";
 import { ConfirmDialog, TextInput } from "@xecms/ui";
 import type { MediaRecord } from "@xecms/admin";
-import { FormatIcon } from "./format-icons.js";
 import styles from "./rich-text-editor.module.css";
+
+function UploadGlyph() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="9" cy="10" r="1.8" />
+      <path d="m5 18 5-5 3 3 3.5-3.5L21 17" />
+    </svg>
+  );
+}
 
 /**
  * Picks an image for the body: either an existing library item or a file
@@ -83,7 +92,7 @@ export function RichTextImageDialog({ mediaItems, canUpload, onUpload, onSelect,
                 if (file !== undefined) void upload(file);
               }}
             >
-              <span className={styles.pickerUploadIcon}><FormatIcon name="image" size={24} /></span>
+              <span className={styles.pickerUploadIcon}><UploadGlyph /></span>
               <span className={styles.pickerUploadTitle}>
                 {isUploading ? "업로드 중…" : "이미지를 끌어다 놓거나 클릭해 선택"}
               </span>

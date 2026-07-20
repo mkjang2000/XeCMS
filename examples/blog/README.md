@@ -39,11 +39,14 @@ pnpm test:e2e:m2
 ```json
 {
   "format": "xecms.rich-text",
-  "formatVersion": 1,
+  "formatVersion": 2,
   "content": [
     {
+      "id": "blk-1",
       "type": "paragraph",
-      "content": [{ "type": "text", "text": "Hello XeCMS" }]
+      "props": {},
+      "content": [{ "type": "text", "text": "Hello XeCMS", "styles": {} }],
+      "children": []
     }
   ]
 }

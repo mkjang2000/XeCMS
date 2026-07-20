@@ -226,16 +226,19 @@ function JsonEditor({ field, value, errorMessage, onChange, onBlur, isDisabled }
 }
 
 /**
- * Flattens a rich-text tree to plain text. Read-only: marks, attrs and nesting
- * are dropped, so this must never feed a write path — see RichTextFallbackEditor.
+ * Flattens a rich-text block tree to plain text. Read-only: styles, props and
+ * nesting are dropped, so this must never feed a write path — see
+ * RichTextFallbackEditor. Walks the v2 structural keys only (content, children,
+ * table rows/cells) so block props like alt text stay out of the preview.
  */
 function richTextPlainValue(value: unknown): string {
   if (!value || typeof value !== "object" || !("content" in value) || !Array.isArray(value.content)) return "";
   const collect = (node: unknown): string => {
+    if (Array.isArray(node)) return node.map(collect).join("");
     if (!node || typeof node !== "object") return "";
-    if ("text" in node && typeof node.text === "string") return node.text;
-    if ("content" in node && Array.isArray(node.content)) return node.content.map(collect).join("");
-    return "";
+    const record = node as Record<string, unknown>;
+    const text = typeof record["text"] === "string" ? record["text"] : "";
+    return text + collect(record["content"]) + collect(record["rows"]) + collect(record["cells"]) + collect(record["children"]);
   };
   return value.content.map(collect).join("\n");
 }
@@ -361,7 +364,7 @@ const DEFAULT_FIELD_DEFINITIONS: readonly FieldAdminDefinition[] = [
   { type: "array", label: "배열", initialValue: [], Editor: JsonEditor },
   { type: "component", label: "컴포넌트", initialValue: {}, Editor: JsonEditor },
   { type: "blocks", label: "블록", initialValue: [], Editor: JsonEditor },
-  { type: "rich-text", label: "리치 텍스트", initialValue: { format: "xecms.rich-text", formatVersion: 1, content: [] }, Editor: RichTextFallbackEditor },
+  { type: "rich-text", label: "리치 텍스트", initialValue: { format: "xecms.rich-text", formatVersion: 2, content: [] }, Editor: RichTextFallbackEditor },
   { type: "relation", label: "관계", initialValue: null, Editor: RelationEditor },
   { type: "upload", label: "업로드", initialValue: null, Editor: UploadEditor },
 ];

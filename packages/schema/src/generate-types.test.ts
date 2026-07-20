@@ -75,7 +75,7 @@ describe("deterministic TypeScript generation", () => {
     expect(output).toContain('readonly "status": "draft" | "published";');
     expect(output).toContain('readonly "metadata"?: SchemaJsonValue;');
     expect(output).toContain('readonly "seo"?: SeoComponent;');
-    expect(output).toContain('readonly "body"?: RichTextDocumentV1;');
+    expect(output).toContain('readonly "body"?: RichTextDocumentV2;');
     expect(output).toContain('readonly "col_site_settings": SiteSettingsDocument;');
     expect(output).toContain('export type XeCmsRepeatableCollectionName = "posts";');
     expect(output).toContain('export type XeCmsSingletonName = "siteSettings";');

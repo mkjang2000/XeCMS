@@ -5,9 +5,8 @@ import type {
   ComponentDefinition,
   FieldDefinition,
   FieldId,
-  RichTextDocumentV1,
-  RichTextMark,
-  RichTextNode,
+  RichTextBlock,
+  RichTextDocumentV2,
   SchemaIrV1,
   SchemaJsonObject,
   SchemaJsonValue,
@@ -16,6 +15,7 @@ import { assertValidSchema } from "./validate.js";
 
 const MAX_CONTENT_NESTING = 64;
 const RICH_TEXT_NAME_PATTERN = /^[a-z][A-Za-z0-9.-]{0,127}$/;
+const RICH_TEXT_BLOCK_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface DecodeCollectionDataOptions {
   /** Error path prefix. Application services normally retain the default. */
@@ -380,111 +380,90 @@ function decodeRichText(
   path: readonly (string | number)[],
   fieldId: FieldId,
   depth: number,
-): RichTextDocumentV1 | undefined {
+): RichTextDocumentV2 | undefined {
   if (!isPlainRecord(value)) return invalidRichText(context, fieldId, path, "Expected a rich-text document object.");
   knownRichTextKeys(context, value, ["format", "formatVersion", "content"], path, fieldId);
-  if (value["format"] !== "xecms.rich-text" || value["formatVersion"] !== 1) {
-    invalidRichText(context, fieldId, path, "Rich text must use format 'xecms.rich-text' version 1.");
+  if (value["format"] !== "xecms.rich-text" || value["formatVersion"] !== 2) {
+    invalidRichText(context, fieldId, path, "Rich text must use format 'xecms.rich-text' version 2.");
     return undefined;
   }
   const content = value["content"];
   if (!Array.isArray(content) || !isDenseArray(content)) {
     return invalidRichText(context, fieldId, [...path, "content"], "Rich-text content must be an array.");
   }
-  const nodes: RichTextNode[] = [];
-  content.forEach((node, index) => {
-    const decoded = decodeRichTextNode(context, node, [...path, "content", index], fieldId, depth + 1);
-    if (decoded !== undefined) nodes.push(decoded);
+  const seenIds = new Set<string>();
+  const blocks: RichTextBlock[] = [];
+  content.forEach((block, index) => {
+    const decoded = decodeRichTextBlock(context, block, [...path, "content", index], fieldId, depth + 1, seenIds);
+    if (decoded !== undefined) blocks.push(decoded);
   });
-  return { format: "xecms.rich-text", formatVersion: 1, content: nodes };
+  return { format: "xecms.rich-text", formatVersion: 2, content: blocks };
 }
 
-function decodeRichTextNode(
+function decodeRichTextBlock(
   context: DecodeContext,
   value: unknown,
   path: readonly (string | number)[],
   fieldId: FieldId,
   depth: number,
-): RichTextNode | undefined {
+  seenIds: Set<string>,
+): RichTextBlock | undefined {
   if (!withinDepth(context, path, depth, fieldId)) return undefined;
-  if (!isPlainRecord(value)) return invalidRichText(context, fieldId, path, "Rich-text nodes must be objects.");
-  knownRichTextKeys(context, value, ["type", "attrs", "content", "text", "marks"], path, fieldId);
+  if (!isPlainRecord(value)) return invalidRichText(context, fieldId, path, "Rich-text blocks must be objects.");
+  knownRichTextKeys(context, value, ["id", "type", "props", "content", "children"], path, fieldId);
+
+  const id = value["id"];
+  if (typeof id !== "string" || !RICH_TEXT_BLOCK_ID_PATTERN.test(id)) {
+    return invalidRichText(context, fieldId, [...path, "id"], "Rich-text block id is invalid.");
+  }
+  if (seenIds.has(id)) {
+    return invalidRichText(context, fieldId, [...path, "id"], `Rich-text block id '${id}' is duplicated.`);
+  }
+  seenIds.add(id);
+
   const type = value["type"];
   if (typeof type !== "string" || !RICH_TEXT_NAME_PATTERN.test(type)) {
-    return invalidRichText(context, fieldId, [...path, "type"], "Rich-text node type is invalid.");
+    return invalidRichText(context, fieldId, [...path, "type"], "Rich-text block type is invalid.");
   }
 
-  const attrs = value["attrs"] === undefined
+  const props = value["props"] === undefined
     ? undefined
-    : decodeJsonObject(context, value["attrs"], [...path, "attrs"], fieldId, depth + 1);
+    : decodeJsonObject(context, value["props"], [...path, "props"], fieldId, depth + 1);
+
+  // Inline lists and table-content objects both pass through here; the editor
+  // owns their inner vocabulary, the server only bounds depth and JSON shape.
   const rawContent = value["content"];
-  let content: readonly RichTextNode[] | undefined;
+  let content: SchemaJsonValue | undefined;
   if (rawContent !== undefined) {
-    if (!Array.isArray(rawContent) || !isDenseArray(rawContent)) {
-      invalidRichText(context, fieldId, [...path, "content"], "Node content must be an array.");
+    if (rawContent === null || typeof rawContent !== "object") {
+      invalidRichText(context, fieldId, [...path, "content"], "Block content must be an array or an object.");
     } else {
-      const children: RichTextNode[] = [];
-      rawContent.forEach((child, index) => {
-        const decoded = decodeRichTextNode(context, child, [...path, "content", index], fieldId, depth + 1);
-        if (decoded !== undefined) children.push(decoded);
+      content = decodeJson(context, rawContent, [...path, "content"], fieldId, depth + 1);
+    }
+  }
+
+  const rawChildren = value["children"];
+  let children: readonly RichTextBlock[] | undefined;
+  if (rawChildren !== undefined) {
+    if (!Array.isArray(rawChildren) || !isDenseArray(rawChildren)) {
+      invalidRichText(context, fieldId, [...path, "children"], "Block children must be an array.");
+    } else {
+      const nested: RichTextBlock[] = [];
+      rawChildren.forEach((child, index) => {
+        const decoded = decodeRichTextBlock(context, child, [...path, "children", index], fieldId, depth + 1, seenIds);
+        if (decoded !== undefined) nested.push(decoded);
       });
-      content = children;
+      children = nested;
     }
   }
 
-  const text = value["text"];
-  if (text !== undefined && typeof text !== "string") {
-    invalidRichText(context, fieldId, [...path, "text"], "Node text must be a string.");
-  }
-  if (type === "text") {
-    if (typeof text !== "string" || rawContent !== undefined) {
-      invalidRichText(context, fieldId, path, "Text nodes require text and cannot contain child nodes.");
-    }
-  } else if (text !== undefined) {
-    invalidRichText(context, fieldId, path, "Only text nodes may contain a text property.");
-  }
-
-  const marks = decodeRichTextMarks(context, value["marks"], [...path, "marks"], fieldId, depth + 1);
   return {
+    id,
     type,
-    ...(attrs === undefined ? {} : { attrs }),
+    ...(props === undefined ? {} : { props }),
     ...(content === undefined ? {} : { content }),
-    ...(typeof text === "string" ? { text } : {}),
-    ...(marks === undefined ? {} : { marks }),
+    ...(children === undefined ? {} : { children }),
   };
-}
-
-function decodeRichTextMarks(
-  context: DecodeContext,
-  value: unknown,
-  path: readonly (string | number)[],
-  fieldId: FieldId,
-  depth: number,
-): readonly RichTextMark[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || !isDenseArray(value)) {
-    invalidRichText(context, fieldId, path, "Node marks must be an array.");
-    return undefined;
-  }
-  const output: RichTextMark[] = [];
-  value.forEach((entry, index) => {
-    const markPath = [...path, index];
-    if (!isPlainRecord(entry)) {
-      invalidRichText(context, fieldId, markPath, "Rich-text marks must be objects.");
-      return;
-    }
-    knownRichTextKeys(context, entry, ["type", "attrs"], markPath, fieldId);
-    const type = entry["type"];
-    if (typeof type !== "string" || !RICH_TEXT_NAME_PATTERN.test(type)) {
-      invalidRichText(context, fieldId, [...markPath, "type"], "Rich-text mark type is invalid.");
-      return;
-    }
-    const attrs = entry["attrs"] === undefined
-      ? undefined
-      : decodeJsonObject(context, entry["attrs"], [...markPath, "attrs"], fieldId, depth + 1);
-    output.push({ type, ...(attrs === undefined ? {} : { attrs }) });
-  });
-  return output;
 }
 
 function knownRichTextKeys(
@@ -512,7 +491,7 @@ function decodeJsonObject(
   const decoded = decodeJson(context, value, path, fieldId, depth);
   if (decoded === undefined) return undefined;
   if (decoded === null || Array.isArray(decoded) || typeof decoded !== "object") {
-    invalidRichText(context, fieldId, path, "Attributes must be a JSON object.");
+    invalidRichText(context, fieldId, path, "Block props must be a JSON object.");
     return undefined;
   }
   return decoded as SchemaJsonObject;

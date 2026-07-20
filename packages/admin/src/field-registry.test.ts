@@ -50,8 +50,8 @@ describe("FieldRegistry", () => {
       field: richTextField,
       value: {
         format: "xecms.rich-text",
-        formatVersion: 1,
-        content: [{ type: "paragraph", content: [{ type: "text", text: "서식 있는 본문" }] }],
+        formatVersion: 2,
+        content: [{ id: "blk-1", type: "paragraph", props: {}, content: [{ type: "text", text: "서식 있는 본문", styles: {} }], children: [] }],
       },
       onChange,
     }));

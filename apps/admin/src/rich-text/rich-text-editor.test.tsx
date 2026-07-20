@@ -3,8 +3,29 @@
 import { StrictMode, useState } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CollectionField } from "@xecms/admin";
-import { RichTextEditor } from "./rich-text-editor.js";
+import type { CollectionField, MediaRecord } from "@xecms/admin";
+
+// jsdom lacks the layout APIs BlockNote's floating UI and Mantine query.
+// Stubs are enough: menus never open in these tests, layout is irrelevant.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= ResizeObserverStub;
+window.matchMedia ??= ((query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addListener: () => undefined,
+  removeListener: () => undefined,
+  addEventListener: () => undefined,
+  removeEventListener: () => undefined,
+  dispatchEvent: () => false,
+})) as typeof window.matchMedia;
+Element.prototype.scrollIntoView ??= () => undefined;
+
+const { RichTextEditor } = await import("./rich-text-editor.js");
 
 afterEach(cleanup);
 
@@ -18,23 +39,43 @@ const field: CollectionField = {
 
 const storedDocument = {
   format: "xecms.rich-text",
-  formatVersion: 1,
+  formatVersion: 2,
   content: [
-    { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "저장된 제목" }] },
-    { type: "paragraph", content: [{ type: "text", text: "저장된 본문" }] },
+    { id: "blk-1", type: "heading", props: { level: 1 }, content: [{ type: "text", text: "저장된 제목", styles: {} }], children: [] },
+    { id: "blk-2", type: "paragraph", props: {}, content: [{ type: "text", text: "저장된 본문", styles: {} }], children: [] },
   ],
 };
 
+const media = (id: string): MediaRecord => ({
+  id,
+  fileName: `${id}.png`,
+  mimeType: "image/png",
+  size: 1,
+  checksum: "sum",
+  storageKey: `key/${id}`,
+  createdAt: "2026-07-20T00:00:00.000Z",
+  createdBy: "usr_admin",
+  status: "available",
+  contentUrl: `http://host/${id}`,
+});
+
 describe("RichTextEditor", () => {
+  it("renders a value present on first render and labels the surface", async () => {
+    render(<RichTextEditor field={field} value={storedDocument} onChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("저장된 제목")).toBeTruthy();
+      expect(screen.getByText("저장된 본문")).toBeTruthy();
+    });
+    const surface = document.querySelector('[contenteditable]');
+    expect(surface?.getAttribute("aria-label")).toBe("본문");
+  });
+
   it("shows a value that arrives after the first render", async () => {
     // The document query resolves after mount, so the editor is created with an
     // empty value and must pick the loaded content up.
     function Host() {
-      const [value, setValue] = useState<unknown>({
-        format: "xecms.rich-text",
-        formatVersion: 1,
-        content: [],
-      });
+      const [value, setValue] = useState<unknown>({ format: "xecms.rich-text", formatVersion: 2, content: [] });
       return (
         <>
           <button type="button" onClick={() => setValue(storedDocument)}>load</button>
@@ -52,18 +93,9 @@ describe("RichTextEditor", () => {
     });
   });
 
-  it("renders a value present on first render", async () => {
-    render(<RichTextEditor field={field} value={storedDocument} onChange={vi.fn()} />);
-
-    await waitFor(() => {
-      expect(screen.getByText("저장된 제목")).toBeTruthy();
-    });
-  });
-
-  it("never reports an empty document while seeding", async () => {
-    // StrictMode mounts twice; the discarded first editor used to emit its empty
-    // document and wipe the value the form had just loaded, so a saved document
-    // reopened blank.
+  it("never reports an edit while seeding", async () => {
+    // StrictMode mounts twice; a seeding pass that leaked through onChange
+    // would wipe the value the form had just loaded (or mark it dirty).
     const onChange = vi.fn();
     render(
       <StrictMode>
@@ -72,29 +104,13 @@ describe("RichTextEditor", () => {
     );
 
     await waitFor(() => expect(screen.getByText("저장된 제목")).toBeTruthy());
-    const wipedValue = onChange.mock.calls.find(
-      ([document]) => (document as { content: readonly unknown[] }).content.length === 0,
-    );
-    expect(wipedValue).toBeUndefined();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("keeps the body when the media list refreshes after an upload", async () => {
     // Uploading invalidates the media query, so mediaItems arrives as a new
     // array. That must not re-seed the editor: everything typed since the last
     // form sync — including the image just inserted — would be wiped.
-    const media = (id: string) => ({
-      id,
-      fileName: `${id}.png`,
-      mimeType: "image/png",
-      size: 1,
-      checksum: "sum",
-      storageKey: `key/${id}`,
-      createdAt: "2026-07-20T00:00:00.000Z",
-      createdBy: "usr_admin",
-      status: "available" as const,
-      contentUrl: `http://host/${id}`,
-    });
-
     function Host() {
       const [items, setItems] = useState([media("med_1")]);
       return (
@@ -114,48 +130,77 @@ describe("RichTextEditor", () => {
     expect(screen.getByText("저장된 본문")).toBeTruthy();
   });
 
-  it("adds an inserted image without replacing the body", async () => {
-    // An editor that was never focused reports a selection spanning the whole
-    // document. Inserting over that range replaced the entire body, so picking
-    // an image wiped everything the user had written.
-    const onChange = vi.fn();
+  it("resolves media image blocks through the library and flags missing ids", async () => {
+    const value = {
+      format: "xecms.rich-text",
+      formatVersion: 2,
+      content: [
+        { id: "blk-1", type: "mediaImage", props: { mediaId: "med_1", alt: "표지" }, children: [] },
+        { id: "blk-2", type: "mediaImage", props: { mediaId: "med_gone", alt: "삭제된 그림" }, children: [] },
+      ],
+    };
     render(
-      <RichTextEditor
-        field={field}
-        value={storedDocument}
-        onChange={onChange}
-        mediaItems={[{
-          id: "med_1",
-          fileName: "cover.png",
-          mimeType: "image/png",
-          size: 1,
-          checksum: "sum",
-          storageKey: "key/med_1",
-          createdAt: "2026-07-20T00:00:00.000Z",
-          createdBy: "usr_admin",
-          status: "available",
-          contentUrl: "http://host/med_1",
-        }]}
-      />,
+      <RichTextEditor field={field} value={value} onChange={vi.fn()} mediaItems={[media("med_1")]} />,
     );
 
-    await waitFor(() => expect(screen.getByText("저장된 제목")).toBeTruthy());
-    screen.getByRole("button", { name: "이미지" }).click();
-    (await screen.findByRole("button", { name: /cover\.png/ })).click();
-
     await waitFor(() => {
-      const latest = onChange.mock.calls.at(-1)?.[0] as { content: readonly { type: string }[] } | undefined;
-      expect(latest?.content.some((node) => node.type === "image")).toBe(true);
+      const resolved = screen.getByAltText("표지") as HTMLImageElement;
+      expect(resolved.src).toBe("http://host/med_1");
+      // The unresolved id renders a visible placeholder, not a broken image.
+      expect(screen.getByText(/미디어를 찾을 수 없습니다/)).toBeTruthy();
     });
-    // The original heading and paragraph must still be there.
-    expect(screen.getByText("저장된 제목")).toBeTruthy();
-    expect(screen.getByText("저장된 본문")).toBeTruthy();
+  });
+
+  it("opens a retired v1 document as empty instead of crashing", async () => {
+    // The database can still hold v1 bodies (ProseMirror node trees) written
+    // before the BlockNote migration. Feeding those nodes to BlockNote threw
+    // ("isInGroup" of undefined) and took the whole document form down.
+    const legacyV1 = {
+      format: "xecms.rich-text",
+      formatVersion: 1,
+      content: [
+        { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "옛 제목" }] },
+        { type: "image", attrs: { mediaId: "med_1" } },
+      ],
+    };
+    function Host() {
+      const [value, setValue] = useState<unknown>({ format: "xecms.rich-text", formatVersion: 2, content: [] });
+      return (
+        <>
+          <button type="button" onClick={() => setValue(legacyV1)}>load-legacy</button>
+          <RichTextEditor field={field} value={value} onChange={vi.fn()} />
+        </>
+      );
+    }
+
+    render(<Host />);
+    screen.getByRole("button", { name: "load-legacy" }).click();
+
+    // Renders an (empty) editor surface; the v1 nodes are not representable.
+    await waitFor(() => {
+      expect(document.querySelector('[contenteditable]')).toBeTruthy();
+    });
+    expect(screen.queryByText("옛 제목")).toBeNull();
+  });
+
+  it("drops unknown block types instead of crashing", async () => {
+    const withUnknown = {
+      format: "xecms.rich-text",
+      formatVersion: 2,
+      content: [
+        { id: "blk-1", type: "paragraph", props: {}, content: [{ type: "text", text: "살아남는 문단", styles: {} }], children: [] },
+        { id: "blk-2", type: "retiredCustomBlock", props: {}, children: [] },
+      ],
+    };
+    render(<RichTextEditor field={field} value={withUnknown} onChange={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("살아남는 문단")).toBeTruthy());
   });
 
   it("re-seeds after the form resets to a reloaded document", async () => {
     // Real sequence: user types (editor emits), the document is saved and the
     // form resets from the server response. The editor must show that value.
-    const empty = { format: "xecms.rich-text", formatVersion: 1, content: [] };
+    const empty = { format: "xecms.rich-text", formatVersion: 2, content: [] };
     function Host() {
       const [value, setValue] = useState<unknown>(empty);
       return (

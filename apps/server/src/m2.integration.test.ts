@@ -500,8 +500,9 @@ describe.runIf(RUN).sequential("XeCMS M2 content core PostgreSQL integration", (
         "body",
         {
           format: "xecms.rich-text",
-          formatVersion: 1,
-          content: [{ type: "text" }],
+          formatVersion: 2,
+          // Blocks without an id are rejected by the v2 contract.
+          content: [{ type: "paragraph" }],
         },
       ],
     ];
@@ -1063,11 +1064,14 @@ function validSettings(mediaId: string): Readonly<Record<string, unknown>> {
     seo: { title: "XeCMS", description: "Ultimate CMS" },
     body: {
       format: "xecms.rich-text",
-      formatVersion: 1,
+      formatVersion: 2,
       content: [
         {
+          id: "blk-m2-hello",
           type: "paragraph",
-          content: [{ type: "text", text: "Hello M2", marks: [{ type: "strong" }] }],
+          props: {},
+          content: [{ type: "text", text: "Hello M2", styles: { bold: true } }],
+          children: [],
         },
       ],
     },

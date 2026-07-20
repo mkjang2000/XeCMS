@@ -1,8 +1,10 @@
 import { Fragment as _Fragment, jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useRef, useState } from "react";
 import { ConfirmDialog, TextInput } from "@xecms/ui";
-import { FormatIcon } from "./format-icons.js";
 import styles from "./rich-text-editor.module.css";
+function UploadGlyph() {
+    return (_jsxs("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.8", "aria-hidden": "true", children: [_jsx("rect", { x: "3", y: "4", width: "18", height: "16", rx: "2" }), _jsx("circle", { cx: "9", cy: "10", r: "1.8" }), _jsx("path", { d: "m5 18 5-5 3 3 3.5-3.5L21 17" })] }));
+}
 /**
  * Picks an image for the body: either an existing library item or a file
  * uploaded on the spot.
@@ -53,7 +55,7 @@ export function RichTextImageDialog({ mediaItems, canUpload, onUpload, onSelect,
                                 const file = [...event.dataTransfer.files].find((item) => item.type.startsWith("image/"));
                                 if (file !== undefined)
                                     void upload(file);
-                            }, children: [_jsx("span", { className: styles.pickerUploadIcon, children: _jsx(FormatIcon, { name: "image", size: 24 }) }), _jsx("span", { className: styles.pickerUploadTitle, children: isUploading ? "업로드 중…" : "이미지를 끌어다 놓거나 클릭해 선택" }), _jsx("span", { className: styles.pickerHint, children: "\uBBF8\uB514\uC5B4 \uB77C\uC774\uBE0C\uB7EC\uB9AC\uC5D0 \uC800\uC7A5\uB41C \uB4A4 \uBCF8\uBB38\uC5D0 \uC0BD\uC785\uB429\uB2C8\uB2E4." })] }), _jsx("input", { ref: fileInput, type: "file", accept: "image/*", hidden: true, disabled: isUploading, onChange: (event) => {
+                            }, children: [_jsx("span", { className: styles.pickerUploadIcon, children: _jsx(UploadGlyph, {}) }), _jsx("span", { className: styles.pickerUploadTitle, children: isUploading ? "업로드 중…" : "이미지를 끌어다 놓거나 클릭해 선택" }), _jsx("span", { className: styles.pickerHint, children: "\uBBF8\uB514\uC5B4 \uB77C\uC774\uBE0C\uB7EC\uB9AC\uC5D0 \uC800\uC7A5\uB41C \uB4A4 \uBCF8\uBB38\uC5D0 \uC0BD\uC785\uB429\uB2C8\uB2E4." })] }), _jsx("input", { ref: fileInput, type: "file", accept: "image/*", hidden: true, disabled: isUploading, onChange: (event) => {
                                 const file = event.currentTarget.files?.[0];
                                 event.currentTarget.value = "";
                                 if (file !== undefined)

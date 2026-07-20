@@ -1,23 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Underline from "@tiptap/extension-underline";
-import TextAlign from "@tiptap/extension-text-align";
-import { TextStyle } from "@tiptap/extension-text-style";
-import { Color } from "@tiptap/extension-color";
-import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
+import { BlockNoteSchema, defaultBlockSpecs, filterSuggestionItems } from "@blocknote/core";
+import { ko } from "@blocknote/core/locales";
+import {
+  SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
+  useCreateBlockNote,
+} from "@blocknote/react";
+import { BlockNoteView } from "@blocknote/mantine";
+import "@blocknote/mantine/style.css";
 import type { DocumentFieldEditorProps, MediaRecord } from "@xecms/admin";
-import { MediaImage } from "./rich-text-image.js";
+import { MediaLibraryContext, mediaImageSpec, mediaRecordMap } from "./media-image-block.js";
 import { RichTextImageDialog } from "./rich-text-image-dialog.js";
-import { RichTextLinkDialog } from "./rich-text-link-dialog.js";
-import { RichTextToolbar } from "./rich-text-toolbar.js";
 import {
   richTextContentOf,
+  sameRichTextContent,
   toRichTextDocument,
-  withResolvedImageSources,
-  type RichTextNode,
+  type RichTextBlock,
 } from "./rich-text-document.js";
 import styles from "./rich-text-editor.module.css";
+
+// URL-storing file blocks are cut from the schema: persisted URLs rot when the
+// deployment moves, so images go through the mediaId-based block instead.
+const { audio: _audio, image: _image, video: _video, file: _file, ...retainedBlockSpecs } = defaultBlockSpecs;
+
+const editorSchema = BlockNoteSchema.create({
+  blockSpecs: { ...retainedBlockSpecs, mediaImage: mediaImageSpec() },
+});
+
+type EditorPartialBlock = typeof editorSchema.PartialBlock;
 
 function fieldLabel(field: DocumentFieldEditorProps["field"]): string {
   return field.label?.trim() || field.name;
@@ -29,12 +39,12 @@ function imageFilesIn(list: DataTransfer | null): readonly File[] {
 }
 
 /**
- * TipTap-backed editor for `rich-text` fields.
+ * BlockNote-backed editor for `rich-text` fields.
  *
- * The stored format is ProseMirror JSON under a versioned envelope, so the tree
- * round-trips without a converter: marks, attrs and nesting survive an edit
- * untouched. (The previous textarea fallback flattened everything to plain text
- * and silently destroyed formatting on save.)
+ * The stored format is the BlockNote block tree under the versioned v2
+ * envelope, so documents round-trip without a converter. Formatting toolbar,
+ * slash menu, tables and drag handles come from BlockNote; this wrapper owns
+ * the form contract (value in / document out) and the media integration.
  */
 export function RichTextEditor({
   field,
@@ -49,149 +59,112 @@ export function RichTextEditor({
 }: DocumentFieldEditorProps) {
   const readOnly = isDisabled === true || field.readOnly === true;
   const [showImageDialog, setShowImageDialog] = useState(false);
-  const [linkDraft, setLinkDraft] = useState<string | null>(null);
   const [isUploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  // Latest value written by this editor, used to tell our own updates apart from
-  // an external change (refetch, revision restore) that must reset the content.
-  const lastEmitted = useRef<readonly RichTextNode[] | null>(null);
-  // handleDrop/handlePaste are built before `editor` exists, so they reach the
-  // live instance through this ref instead of closing over a stale value.
-  const editorRef = useRef<Editor | null>(null);
-  // Selection captured before a dialog steals focus, so an insert lands where
-  // the user was typing rather than over the whole document.
-  const savedSelection = useRef<{ readonly from: number; readonly to: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Latest content emitted by this editor, used to tell our own updates apart
+  // from an external change (refetch, revision restore) that must reset it.
+  const lastEmitted = useRef<readonly RichTextBlock[] | null>(null);
+  // True while replaceBlocks runs so the resulting onChange is not emitted as
+  // a user edit (which would mark the form dirty on every reload).
+  const seeding = useRef(false);
 
-  const storedContent = useMemo(() => richTextContentOf(value), [value]);
-  const resolvedContent = useMemo(
-    () => withResolvedImageSources(storedContent, mediaItems),
-    [storedContent, mediaItems],
-  );
+  const mediaLibrary = useMemo(() => mediaRecordMap(mediaItems), [mediaItems]);
 
-  // Seeding the editor (mount, external reload) must never look like a user
-  // edit: StrictMode's discarded first instance would otherwise emit its empty
-  // document and overwrite the value the form just loaded.
-  const seeding = useRef(true);
+  const editor = useCreateBlockNote({
+    schema: editorSchema,
+    dictionary: ko,
+    initialContent: initialBlocksOf(value),
+  }, []);
 
-  const emit = useCallback((editor: Editor) => {
+  const emit = useCallback(() => {
     if (seeding.current) return;
-    const content = (editor.getJSON().content ?? []) as readonly RichTextNode[];
-    const document = toRichTextDocument(content);
+    const document = toRichTextDocument(editor.document as unknown as readonly RichTextBlock[]);
     lastEmitted.current = document.content;
     onChange(document);
-  }, [onChange]);
+  }, [editor, onChange]);
+
+  // Re-seed only when the value changed outside this editor. Comparing
+  // canonical forms means a jsonb round trip (same content, reordered keys)
+  // does not count as an external change.
+  useEffect(() => {
+    const stored = richTextContentOf(value);
+    if (lastEmitted.current !== null && sameRichTextContent(lastEmitted.current, stored)) return;
+    if (lastEmitted.current === null && sameRichTextContent(editor.document as unknown as readonly RichTextBlock[], stored)) return;
+    lastEmitted.current = null;
+    seeding.current = true;
+    try {
+      const blocks = representableBlocks(stored);
+      editor.replaceBlocks(
+        editor.document,
+        blocks.length > 0 ? (blocks as unknown as EditorPartialBlock[]) : [{ type: "paragraph" }],
+      );
+    } finally {
+      seeding.current = false;
+    }
+  }, [editor, value]);
+
+  // BlockNote offers no prop for it, and the e2e suite (plus screen readers)
+  // addresses the editing surface by its accessible name.
+  useEffect(() => {
+    const surface = containerRef.current?.querySelector("[contenteditable]");
+    if (surface instanceof HTMLElement) surface.setAttribute("aria-label", fieldLabel(field));
+  }, [editor, field, readOnly]);
 
   const canUpload = canUploadMedia && onUploadMedia !== undefined;
+  const canInsertImage = !readOnly && (mediaItems.length > 0 || canUpload);
+
+  const insertImage = useCallback((mediaId: string, alt: string, _contentUrl?: string) => {
+    setShowImageDialog(false);
+    const cursor = editor.getTextCursorPosition();
+    editor.insertBlocks([{ type: "mediaImage", props: { mediaId, alt } }], cursor.block, "after");
+    editor.focus();
+  }, [editor]);
 
   // Dropping or pasting an image uploads it first and inserts only on success,
-  // so a failed upload never leaves a placeholder node behind in the document.
-  const uploadAndInsert = useCallback(async (editor: Editor, files: readonly File[]) => {
+  // so a failed upload never leaves a placeholder block behind in the document.
+  const uploadAndInsert = useCallback(async (files: readonly File[]) => {
     if (onUploadMedia === undefined) return;
     setUploadError(null);
     setUploading(true);
     try {
       for (const file of files) {
         const record: MediaRecord = await onUploadMedia(file);
-        editor.chain().focus().insertContent({
-          type: "image",
-          attrs: { mediaId: record.id, alt: record.fileName, src: record.contentUrl },
-        }).run();
+        insertImage(record.id, record.fileName);
       }
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "이미지 업로드에 실패했습니다.");
     } finally {
       setUploading(false);
     }
-  }, [onUploadMedia]);
+  }, [onUploadMedia, insertImage]);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ link: { openOnClick: false } }),
-      Underline,
-      TextStyle,
-      Color,
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      MediaImage,
-    ],
-    content: { type: "doc", content: resolvedContent as JSONContent[] },
-    editable: !readOnly,
-    // React 19 + StrictMode mounts twice; rendering on the first pass leaves a
-    // detached editor whose later setContent never reaches the visible DOM.
-    immediatelyRender: false,
-    editorProps: {
-      attributes: { class: styles.surface as string, "aria-label": fieldLabel(field) },
-      handleDrop: (view, event) => {
-        const files = imageFilesIn((event as DragEvent).dataTransfer);
-        if (files.length === 0 || !canUpload || readOnly) return false;
-        event.preventDefault();
-        const instance = editorRef.current;
-        if (instance !== null) void uploadAndInsert(instance, files);
-        return true;
-      },
-      handlePaste: (view, event) => {
-        const files = imageFilesIn((event as ClipboardEvent).clipboardData);
-        if (files.length === 0 || !canUpload || readOnly) return false;
-        event.preventDefault();
-        const instance = editorRef.current;
-        if (instance !== null) void uploadAndInsert(instance, files);
-        return true;
-      },
-    },
-    onUpdate: ({ editor: instance }) => emit(instance),
-    onBlur: () => onBlur?.(),
-  });
+  // Capture phase, so image files are claimed before BlockNote's own file
+  // handling sees them (its default file blocks are not in the schema).
+  const claimImageFiles = useCallback((event: React.DragEvent | React.ClipboardEvent) => {
+    if (!canUpload || readOnly) return;
+    const transfer = "dataTransfer" in event ? event.dataTransfer : event.clipboardData;
+    const files = imageFilesIn(transfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void uploadAndInsert(files);
+  }, [canUpload, readOnly, uploadAndInsert]);
 
-  useEffect(() => { editorRef.current = editor; }, [editor]);
-
-  useEffect(() => {
-    editor?.setEditable(!readOnly);
-  }, [editor, readOnly]);
-
-  // Read at re-seed time only. Uploading an image refreshes the media list,
-  // which rebuilds resolvedContent into a new array with identical meaning —
-  // depending on it here would re-seed and wipe whatever was just typed.
-  const resolvedRef = useRef(resolvedContent);
-  resolvedRef.current = resolvedContent;
-
-  // Re-seed only when the value changed outside this editor; resetting on our
-  // own emissions would fight the cursor and loop.
-  useEffect(() => {
-    if (editor === null) return;
-    if (lastEmitted.current !== null && sameTree(lastEmitted.current, storedContent)) {
-      seeding.current = false;
-      return;
+  const slashMenuItems = useCallback(async (query: string) => {
+    const items = getDefaultReactSlashMenuItems(editor);
+    if (canInsertImage) {
+      items.push({
+        title: "이미지",
+        subtext: "미디어 라이브러리에서 삽입",
+        aliases: ["image", "img", "이미지", "사진", "그림"],
+        group: ko.slash_menu.image.group,
+        icon: <ImageGlyph />,
+        onItemClick: () => setShowImageDialog(true),
+      });
     }
-    lastEmitted.current = null;
-    seeding.current = true;
-    editor.commands.setContent({ type: "doc", content: resolvedRef.current as JSONContent[] }, { emitUpdate: false });
-    seeding.current = false;
-  }, [editor, storedContent]);
-
-  const insertImage = (mediaId: string, alt: string, contentUrl?: string) => {
-    setShowImageDialog(false);
-    if (editor === null) return;
-    // src is display-only (stripped before saving), but including it here makes
-    // a freshly uploaded image visible without waiting for the media refetch.
-    const src = contentUrl ?? mediaItems.find((item) => item.id === mediaId)?.contentUrl;
-    // Opening the dialog moved focus out of the editor, which leaves the stored
-    // selection spanning the whole document — inserting there would replace the
-    // entire body. Put the caret back where the user left it first.
-    // Collapse to the caret before inserting. An untouched editor reports a
-    // selection spanning the whole document, and inserting over that range
-    // would replace the entire body instead of adding to it.
-    const caret = savedSelection.current?.to ?? editor.state.doc.content.size;
-    editor.chain()
-      .focus()
-      .setTextSelection(caret)
-      .insertContent({ type: "image", attrs: { mediaId, alt, ...(src === undefined ? {} : { src }) } })
-      .run();
-  };
-
-  const canInsertImage = !readOnly && (mediaItems.length > 0 || canUpload);
+    return filterSuggestionItems(items, query);
+  }, [editor, canInsertImage]);
 
   return (
     <div className={styles.field}>
@@ -199,27 +172,25 @@ export function RichTextEditor({
         {fieldLabel(field)}
         {field.required ? <b aria-hidden="true">*</b> : null}
       </span>
-      <div className={styles.frame} data-read-only={readOnly}>
-        {!readOnly && editor !== null ? (
-          <RichTextToolbar
+      <div
+        ref={containerRef}
+        className={styles.frame}
+        data-read-only={readOnly}
+        onDropCapture={claimImageFiles}
+        onPasteCapture={claimImageFiles}
+      >
+        <MediaLibraryContext.Provider value={mediaLibrary}>
+          <BlockNoteView
             editor={editor}
-            label={fieldLabel(field)}
-            canInsertImage={canInsertImage}
-            onInsertImage={() => {
-              savedSelection.current = { from: editor.state.selection.from, to: editor.state.selection.to };
-              setShowImageDialog(true);
-            }}
-            onEditLink={() => {
-              const { from, to, empty } = editor.state.selection;
-              // A never-focused editor reports the whole document as selected;
-              // treating that as the user's choice would link the entire body.
-              const spansWholeDoc = from <= 1 && to >= editor.state.doc.content.size;
-              savedSelection.current = empty || spansWholeDoc ? null : { from, to };
-              setLinkDraft((editor.getAttributes("link")["href"] as string | undefined) ?? "");
-            }}
-          />
-        ) : null}
-        <EditorContent editor={editor} className={styles.body} data-read-only={readOnly} />
+            theme="light"
+            editable={!readOnly}
+            slashMenu={false}
+            onChange={emit}
+            onBlur={onBlur}
+          >
+            <SuggestionMenuController triggerCharacter="/" getItems={slashMenuItems} />
+          </BlockNoteView>
+        </MediaLibraryContext.Provider>
         {isUploading ? <div className={styles.uploadBar} role="status">이미지 업로드 중…</div> : null}
       </div>
       {uploadError !== null ? <small role="alert" className={styles.error}>{uploadError}</small> : null}
@@ -227,42 +198,40 @@ export function RichTextEditor({
       {showImageDialog ? (
         <RichTextImageDialog
           mediaItems={mediaItems}
-          canUpload={canUploadMedia && onUploadMedia !== undefined}
+          canUpload={canUpload}
           {...(onUploadMedia === undefined ? {} : { onUpload: onUploadMedia })}
           onSelect={insertImage}
           onClose={() => setShowImageDialog(false)}
-        />
-      ) : null}
-      {linkDraft !== null && editor !== null ? (
-        <RichTextLinkDialog
-          initialHref={linkDraft}
-          onSubmit={(href) => {
-            const at = savedSelection.current;
-            setLinkDraft(null);
-            editor.chain()
-              .focus()
-              .command(({ commands }) => (at === null ? true : commands.setTextSelection(at)))
-              .extendMarkRange("link")
-              .setLink({ href })
-              .run();
-          }}
-          onRemove={() => {
-            const at = savedSelection.current;
-            setLinkDraft(null);
-            editor.chain()
-              .focus()
-              .command(({ commands }) => (at === null ? true : commands.setTextSelection(at)))
-              .extendMarkRange("link")
-              .unsetLink()
-              .run();
-          }}
-          onClose={() => setLinkDraft(null)}
         />
       ) : null}
     </div>
   );
 }
 
-function sameTree(a: readonly RichTextNode[], b: readonly RichTextNode[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function initialBlocksOf(value: unknown): EditorPartialBlock[] | undefined {
+  const stored = representableBlocks(richTextContentOf(value));
+  return stored.length > 0 ? (stored as unknown as EditorPartialBlock[]) : undefined;
+}
+
+/**
+ * Drops blocks the current schema cannot represent (a retired block type, a
+ * malformed entry): BlockNote throws on unknown node types, and one bad block
+ * must not take the whole document form down.
+ */
+function representableBlocks(blocks: readonly RichTextBlock[]): readonly RichTextBlock[] {
+  const known = new Set(Object.keys(editorSchema.blockSchema));
+  const keep = (list: readonly RichTextBlock[]): RichTextBlock[] => list
+    .filter((block) => typeof block.type === "string" && known.has(block.type))
+    .map((block) => (Array.isArray(block.children) ? { ...block, children: keep(block.children) } : block));
+  return keep(blocks);
+}
+
+function ImageGlyph() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="9" cy="10" r="1.8" />
+      <path d="m5 18 5-5 3 3 3.5-3.5L21 17" />
+    </svg>
+  );
 }

@@ -98,11 +98,14 @@ interface HierarchyTree {
 function richText(text: string) {
   return {
     format: "xecms.rich-text",
-    formatVersion: 1,
+    formatVersion: 2,
     content: [
       {
+        id: "blk-e2e-1",
         type: "paragraph",
-        content: [{ type: "text", text }],
+        props: {},
+        content: [{ type: "text", text, styles: {} }],
+        children: [],
       },
     ],
   } as const;

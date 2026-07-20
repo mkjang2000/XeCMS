@@ -112,11 +112,14 @@ describe("M2 collection data contract", () => {
       sections: [{ description: "First" }, { description: "Second" }],
       body: {
         format: "xecms.rich-text",
-        formatVersion: 1,
+        formatVersion: 2,
         content: [
           {
+            id: "blk-hello",
             type: "paragraph",
-            content: [{ type: "text", text: "Hello", marks: [{ type: "bold" }] }],
+            props: {},
+            content: [{ type: "text", text: "Hello", styles: { bold: true } }],
+            children: [],
           },
         ],
       },
@@ -135,11 +138,14 @@ describe("M2 collection data contract", () => {
       sections: [{ description: "First" }, { description: "Second" }],
       body: {
         format: "xecms.rich-text",
-        formatVersion: 1,
+        formatVersion: 2,
         content: [
           {
+            id: "blk-hello",
             type: "paragraph",
-            content: [{ type: "text", text: "Hello", marks: [{ type: "bold" }] }],
+            props: {},
+            content: [{ type: "text", text: "Hello", styles: { bold: true } }],
+            children: [],
           },
         ],
       },
@@ -159,8 +165,8 @@ describe("M2 collection data contract", () => {
       seo: { description: 1 },
       body: {
         format: "xecms.rich-text",
-        formatVersion: 1,
-        content: [{ type: "text", content: [], text: "invalid" }],
+        formatVersion: 2,
+        content: [{ id: "blk-1", type: "paragraph", text: "invalid" }],
       },
     });
 

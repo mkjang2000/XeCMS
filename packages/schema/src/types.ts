@@ -175,29 +175,27 @@ export interface SchemaJsonObject {
 }
 
 /**
- * Editor-neutral minimum rich-text storage contract.
+ * Rich-text storage contract, version 2: a block tree in the shape BlockNote
+ * documents serialize to.
  *
- * Editors may introduce their own node and mark names, but persisted values
- * always retain this versioned tree envelope. That keeps content portable when
- * an Admin renderer is replaced or a custom renderer is removed.
+ * The envelope fixes the structural keys (`id`, `type`, `props`, `content`,
+ * `children`) while leaving the block vocabulary to the editor, so new block
+ * types don't require a server release. Version 1 (ProseMirror node trees) was
+ * retired before any deployment stored data in it and is rejected outright.
  */
-export type RichTextDocumentV1 = SchemaJsonObject & {
+export type RichTextDocumentV2 = SchemaJsonObject & {
   readonly format: "xecms.rich-text";
-  readonly formatVersion: 1;
-  readonly content: readonly RichTextNode[];
+  readonly formatVersion: 2;
+  readonly content: readonly RichTextBlock[];
 };
 
-export type RichTextNode = SchemaJsonObject & {
+export type RichTextBlock = SchemaJsonObject & {
+  readonly id: string;
   readonly type: string;
-  readonly attrs?: SchemaJsonObject;
-  readonly content?: readonly RichTextNode[];
-  readonly text?: string;
-  readonly marks?: readonly RichTextMark[];
-};
-
-export type RichTextMark = SchemaJsonObject & {
-  readonly type: string;
-  readonly attrs?: SchemaJsonObject;
+  readonly props?: SchemaJsonObject;
+  /** Inline content list, or a table-content object; validated as bounded JSON. */
+  readonly content?: SchemaJsonValue;
+  readonly children?: readonly RichTextBlock[];
 };
 
 /** Storage shape used by a blocks field. Blocks are activated after M2-B. */
