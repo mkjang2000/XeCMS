@@ -50,7 +50,7 @@ const profileCollection = {
         { id: "fld_display_name", name: "displayName", label: "Display name", type: "text", required: false },
     ],
 };
-function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { realmId: "rlm_testre", status: "ownerless", policyRevision: 1 }) {
+function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { realmId: "rlm_testre", status: "ownerless", policyRevision: 1 }, existingEntitlements = []) {
     const registerMembership = vi.fn().mockResolvedValue({});
     const grantRealmAdministrator = vi.fn().mockResolvedValue({});
     const createProfileSchema = vi.fn().mockResolvedValue({
@@ -62,7 +62,7 @@ function renderDetail(realm, memberships = [], mode = "basic", ownerStatus = { r
     const listFullAccess = vi.fn().mockResolvedValue({ items: [] });
     const grantFullAccess = vi.fn().mockResolvedValue({});
     const revokeFullAccess = vi.fn().mockResolvedValue({});
-    const listCollectionEntitlements = vi.fn().mockResolvedValue({ status: null, entitlements: [] });
+    const listCollectionEntitlements = vi.fn().mockResolvedValue({ status: null, entitlements: existingEntitlements });
     const putCollectionEntitlement = vi.fn().mockResolvedValue({
         workspaceId: "wrk_default",
         realmId: realm.realmId,
@@ -351,9 +351,11 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
         await user.click(await screen.findByRole("tab", { name: "권한" }));
         expect(await screen.findByRole("heading", { name: "접근 가능한 콘텐츠" })).toBeTruthy();
         expect(listCollectionEntitlements).toHaveBeenCalledWith("rlm_testre");
-        // A collection with no ceiling row reads as not-accessed (fail-closed).
-        expect(await screen.findByText("접근 안 함")).toBeTruthy();
-        await user.click(await screen.findByRole("button", { name: "허용 설정" }));
+        // Unconfigured collections are not rows — they live behind the add picker.
+        expect(screen.queryByText("Articles")).toBeNull();
+        await user.click(await screen.findByRole("button", { name: "콘텐츠 추가" }));
+        const picker = await screen.findByRole("dialog");
+        await user.click(within(picker).getByRole("button", { name: /Articles/ }));
         const dialog = await screen.findByRole("dialog");
         await user.click(within(dialog).getByRole("checkbox", { name: /조회/ }));
         await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");
@@ -376,24 +378,57 @@ describe("IdentityRealmDetailPage 표시 모드", () => {
         expect(within(authRow).queryByRole("button", { name: "제거" })).toBeNull();
         expect(putCollectionEntitlement).not.toHaveBeenCalled();
     });
+    it("lists only configured collections and finds the rest by search", async () => {
+        const { user } = renderDetail(activeRealm, [], "basic");
+        await user.click(await screen.findByRole("tab", { name: "권한" }));
+        // Only the guaranteed Auth row is present; nothing else is configured yet.
+        expect(await screen.findByText("Test Realm Accounts")).toBeTruthy();
+        expect(screen.queryByText("Articles")).toBeNull();
+        expect(await screen.findByText(/나머지 콘텐츠 2개는/)).toBeTruthy();
+        await user.click(await screen.findByRole("button", { name: "콘텐츠 추가" }));
+        const picker = await screen.findByRole("dialog");
+        await user.type(within(picker).getByLabelText("콘텐츠 유형 검색"), "artic");
+        expect(within(picker).getByRole("button", { name: /Articles/ })).toBeTruthy();
+        expect(within(picker).queryByText("Test Realm Accounts")).toBeNull();
+    });
+    it("flags a leftover ceiling on another realm's Auth collection as removable only", async () => {
+        // Written before the server-side block existed (or straight into the DB).
+        const { user } = renderDetail(activeRealm, [], "basic", undefined, [{
+                workspaceId: "wrk_default",
+                realmId: "rlm_testre",
+                collectionId: "col_portal_auth",
+                actions: ["list", "read", "create"],
+                revision: 1,
+                updatedAt: "2026-07-19T00:00:00.000Z",
+                updatedBy: "usr_admin",
+            }]);
+        await user.click(await screen.findByRole("tab", { name: "권한" }));
+        const strayRow = (await screen.findByText("Portal Accounts")).closest("tr");
+        // It must not read as a working ceiling: no actions summary, no edit.
+        expect(within(strayRow).getByText("다른 공간 인증 스키마")).toBeTruthy();
+        expect(within(strayRow).queryByRole("button", { name: "편집" })).toBeNull();
+        expect(within(strayRow).getByRole("button", { name: "제거" })).toBeTruthy();
+        expect(await screen.findByText(/남아 있는 접근 설정 1개/)).toBeTruthy();
+    });
     it("blocks exposing another realm's Auth collection through a ceiling", async () => {
         const { user } = renderDetail(activeRealm, [], "basic");
         await user.click(await screen.findByRole("tab", { name: "권한" }));
-        // The portal realm's Auth collection appears but is closed, not editable.
-        const foreignRow = (await screen.findByText("Portal Accounts")).closest("tr");
-        expect(within(foreignRow).getByText("다른 공간 인증 스키마")).toBeTruthy();
-        expect(within(foreignRow).getByText("접근 불가")).toBeTruthy();
-        expect(within(foreignRow).queryByRole("button", { name: "허용 설정" })).toBeNull();
+        await user.click(await screen.findByRole("button", { name: "콘텐츠 추가" }));
+        // Another realm's Auth collection is not even offered as a candidate.
+        const picker = await screen.findByRole("dialog");
+        expect(within(picker).getByRole("button", { name: /Articles/ })).toBeTruthy();
+        expect(within(picker).queryByText("Portal Accounts")).toBeNull();
     });
     it("delegates cross-realm user management from the access tab (advanced)", async () => {
         const { listManagementDelegations, putManagementDelegation, user } = renderDetail(activeRealm, [], "advanced");
         await user.click(await screen.findByRole("tab", { name: "권한" }));
         expect(await screen.findByRole("heading", { name: "다른 공간 사용자 관리 위임" })).toBeTruthy();
         expect(listManagementDelegations).toHaveBeenCalledWith("rlm_testre");
-        // The other content realm appears as a delegation target with no delegation yet.
-        const targetRow = (await screen.findByText("업무포털")).closest("tr");
-        expect(within(targetRow).getByText("위임 없음")).toBeTruthy();
-        await user.click(within(targetRow).getByRole("button", { name: "위임 설정" }));
+        // Realms without a delegation are candidates in the picker, not rows.
+        expect(screen.queryByText("위임 없음")).toBeNull();
+        await user.click(await screen.findByRole("button", { name: "위임 추가" }));
+        const picker = await screen.findByRole("dialog");
+        await user.click(within(picker).getByRole("button", { name: /업무포털/ }));
         const dialog = await screen.findByRole("dialog");
         await user.click(within(dialog).getByRole("checkbox", { name: /비밀번호 재설정/ }));
         await user.type(within(dialog).getByLabelText(/현재 System 계정 비밀번호/), "admin-pw");

@@ -19,6 +19,14 @@ export interface DocumentFieldEditorProps {
   readonly isDisabled?: boolean;
   readonly relationOptions?: readonly DocumentChoice[];
   readonly mediaItems?: readonly MediaRecord[];
+  /**
+   * Uploads a file to the media library and resolves with the stored record.
+   * Supplied by the host app so this package stays free of API wiring; editors
+   * that can accept files (rich text) offer upload only when it is present.
+   */
+  readonly onUploadMedia?: (file: File) => Promise<MediaRecord>;
+  /** False when the signed-in user lacks `media.action.upload`. */
+  readonly canUploadMedia?: boolean;
 }
 
 export interface FieldAdminDefinition {
@@ -217,6 +225,10 @@ function JsonEditor({ field, value, errorMessage, onChange, onBlur, isDisabled }
   );
 }
 
+/**
+ * Flattens a rich-text tree to plain text. Read-only: marks, attrs and nesting
+ * are dropped, so this must never feed a write path — see RichTextFallbackEditor.
+ */
 function richTextPlainValue(value: unknown): string {
   if (!value || typeof value !== "object" || !("content" in value) || !Array.isArray(value.content)) return "";
   const collect = (node: unknown): string => {
@@ -228,25 +240,22 @@ function richTextPlainValue(value: unknown): string {
   return value.content.map(collect).join("\n");
 }
 
-function RichTextEditor({ field, value, errorMessage, onChange, onBlur, name, isDisabled }: DocumentFieldEditorProps) {
+/**
+ * Fallback shown when the host app registers no rich-text editor. It is
+ * deliberately read-only: a plain-text round trip would silently discard marks,
+ * attrs and nested nodes on the next save, which is worse than not editing.
+ */
+function RichTextFallbackEditor({ field, value, errorMessage, name }: DocumentFieldEditorProps) {
   return (
     <TextAreaField
       label={fieldLabel(field)}
-      description="M2 기본 편집기는 문단 텍스트를 portable rich-text tree로 저장합니다."
+      description="이 환경에는 리치 텍스트 편집기가 설정되지 않아 내용을 볼 수만 있습니다. 서식이 지워지지 않도록 편집은 막혀 있습니다."
       value={richTextPlainValue(value)}
-      onChange={(next) => onChange({
-        format: "xecms.rich-text",
-        formatVersion: 1,
-        content: next === "" ? [] : next.split("\n").map((line) => ({
-          type: "paragraph",
-          content: line === "" ? [] : [{ type: "text", text: line }],
-        })),
-      })}
-      onBlur={onBlur}
+      onChange={() => undefined}
       name={name}
       rows={9}
       isRequired={field.required}
-      isDisabled={isDisabled || field.readOnly}
+      isDisabled
       errorMessage={errorMessage}
     />
   );
@@ -331,22 +340,37 @@ function toLocalDateTime(value: string): string {
   return local.toISOString().slice(0, 16);
 }
 
-export function createDefaultFieldRegistry(): FieldRegistry {
-  return new FieldRegistry()
-    .register({ type: "text", label: "텍스트", initialValue: "", Editor: TextEditor })
-    .register({ type: "textarea", label: "긴 텍스트", initialValue: "", Editor: TextareaEditor })
-    .register({ type: "number", label: "숫자", initialValue: null, Editor: NumberEditor })
-    .register({ type: "boolean", label: "참/거짓", initialValue: false, Editor: BooleanEditor })
-    .register({ type: "date", label: "날짜", initialValue: "", Editor: DateEditor })
-    .register({ type: "datetime", label: "날짜 및 시간", initialValue: "", Editor: DateTimeEditor })
-    .register({ type: "select", label: "선택", initialValue: null, Editor: SelectEditor })
-    .register({ type: "enum", label: "열거형", initialValue: null, Editor: SelectEditor })
-    .register({ type: "json", label: "JSON", initialValue: {}, Editor: JsonEditor })
-    .register({ type: "object", label: "객체", initialValue: {}, Editor: JsonEditor })
-    .register({ type: "array", label: "배열", initialValue: [], Editor: JsonEditor })
-    .register({ type: "component", label: "컴포넌트", initialValue: {}, Editor: JsonEditor })
-    .register({ type: "blocks", label: "블록", initialValue: [], Editor: JsonEditor })
-    .register({ type: "rich-text", label: "리치 텍스트", initialValue: { format: "xecms.rich-text", formatVersion: 1, content: [] }, Editor: RichTextEditor })
-    .register({ type: "relation", label: "관계", initialValue: null, Editor: RelationEditor })
-    .register({ type: "upload", label: "업로드", initialValue: null, Editor: UploadEditor });
+/**
+ * Editor components supplied by the host app, keyed by field type. Only the
+ * Editor slot is replaced — `label` and `initialValue` stay with the default
+ * definition so a heavier editor (rich text) can live outside this package.
+ */
+export type FieldEditorOverrides = Partial<Record<ContentFieldType, ComponentType<DocumentFieldEditorProps>>>;
+
+const DEFAULT_FIELD_DEFINITIONS: readonly FieldAdminDefinition[] = [
+  { type: "text", label: "텍스트", initialValue: "", Editor: TextEditor },
+  { type: "textarea", label: "긴 텍스트", initialValue: "", Editor: TextareaEditor },
+  { type: "number", label: "숫자", initialValue: null, Editor: NumberEditor },
+  { type: "boolean", label: "참/거짓", initialValue: false, Editor: BooleanEditor },
+  { type: "date", label: "날짜", initialValue: "", Editor: DateEditor },
+  { type: "datetime", label: "날짜 및 시간", initialValue: "", Editor: DateTimeEditor },
+  { type: "select", label: "선택", initialValue: null, Editor: SelectEditor },
+  { type: "enum", label: "열거형", initialValue: null, Editor: SelectEditor },
+  { type: "json", label: "JSON", initialValue: {}, Editor: JsonEditor },
+  { type: "object", label: "객체", initialValue: {}, Editor: JsonEditor },
+  { type: "array", label: "배열", initialValue: [], Editor: JsonEditor },
+  { type: "component", label: "컴포넌트", initialValue: {}, Editor: JsonEditor },
+  { type: "blocks", label: "블록", initialValue: [], Editor: JsonEditor },
+  { type: "rich-text", label: "리치 텍스트", initialValue: { format: "xecms.rich-text", formatVersion: 1, content: [] }, Editor: RichTextFallbackEditor },
+  { type: "relation", label: "관계", initialValue: null, Editor: RelationEditor },
+  { type: "upload", label: "업로드", initialValue: null, Editor: UploadEditor },
+];
+
+export function createDefaultFieldRegistry(overrides: FieldEditorOverrides = {}): FieldRegistry {
+  const registry = new FieldRegistry();
+  for (const definition of DEFAULT_FIELD_DEFINITIONS) {
+    const Editor = overrides[definition.type];
+    registry.register(Editor === undefined ? definition : { ...definition, Editor });
+  }
+  return registry;
 }

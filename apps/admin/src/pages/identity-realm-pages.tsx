@@ -1343,6 +1343,90 @@ function entitlementActionSummary(actions: readonly CollectionEntitlementAction[
 }
 
 /**
+ * Searchable "add" picker. Configured rows live in the section table; every
+ * remaining candidate is reachable only from here, so the table stays as short
+ * as what is actually configured no matter how many candidates exist.
+ */
+function AddTargetDialog<T>({ title, description, searchLabel, items, keyOf, labelOf, hintOf, disabledReasonOf, emptyText, onPick, onClose }: {
+  readonly title: string;
+  readonly description: string;
+  readonly searchLabel: string;
+  readonly items: readonly T[];
+  readonly keyOf: (item: T) => string;
+  readonly labelOf: (item: T) => string;
+  readonly hintOf?: (item: T) => string | undefined;
+  readonly disabledReasonOf?: (item: T) => string | undefined;
+  readonly emptyText: string;
+  readonly onPick: (item: T) => void;
+  readonly onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const matches = needle === ""
+    ? items
+    : items.filter((item) => {
+        const hint = hintOf?.(item);
+        return labelOf(item).toLowerCase().includes(needle)
+          || keyOf(item).toLowerCase().includes(needle)
+          || (hint !== undefined && hint.toLowerCase().includes(needle));
+      });
+  // Long candidate lists stay usable: the list scrolls, and search narrows it.
+  const shown = matches.slice(0, 50);
+
+  return (
+    <ConfirmDialog
+      title={title}
+      confirmLabel="닫기"
+      onCancel={onClose}
+      onConfirm={onClose}
+    >
+      <div className={styles.pickerDialog}>
+        <p className={styles.compactHint}>{description}</p>
+        <TextInput
+          label={searchLabel}
+          placeholder="이름으로 검색"
+          value={query}
+          onChange={setQuery}
+        />
+        {items.length === 0 ? (
+          <p className={styles.pickerEmpty}>{emptyText}</p>
+        ) : shown.length === 0 ? (
+          <p className={styles.pickerEmpty}>검색 결과가 없습니다.</p>
+        ) : (
+          <ul className={styles.pickerList}>
+            {shown.map((item) => {
+              const disabledReason = disabledReasonOf?.(item);
+              const hint = hintOf?.(item);
+              return (
+                <li key={keyOf(item)}>
+                  <button
+                    type="button"
+                    className={styles.pickerRow}
+                    disabled={disabledReason !== undefined}
+                    onClick={() => onPick(item)}
+                  >
+                    <span className={styles.pickerRowMain}>
+                      <strong>{labelOf(item)}</strong>
+                      {hint !== undefined ? <span className={styles.secondaryLine}>{hint}</span> : null}
+                    </span>
+                    {disabledReason !== undefined ? (
+                      <Badge tone="neutral">{disabledReason}</Badge>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {matches.length > shown.length ? (
+          <p className={styles.compactHint}>{matches.length}개 중 {shown.length}개 표시 — 검색으로 좁혀 주세요.</p>
+        ) : null}
+      </div>
+    </ConfirmDialog>
+  );
+}
+
+/**
  * CMS-level collection access ceiling for one Realm. The ceiling only removes
  * access — final access = Realm policy AND this ceiling — and a collection with
  * no row here is unreachable once enforcement is on (fail-closed). Editable by
@@ -1359,6 +1443,7 @@ function CollectionEntitlementSection({ realm, mode }: {
     readonly current: RealmCollectionEntitlement | undefined;
   } | null>(null);
   const [removing, setRemoving] = useState<RealmCollectionEntitlement | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const entitlements = useQuery({
     queryKey: queryKeys.realmEntitlements(realm.realmId),
@@ -1384,12 +1469,47 @@ function CollectionEntitlementSection({ realm, mode }: {
       .map((r) => r.profileCollectionId as string),
   );
 
+  const allCollections = collections.data?.items ?? [];
+  const collectionById = new Map(allCollections.map((c) => [c.id, c] as const));
+  const ownAuthCollection = realm.profileCollectionId === undefined
+    ? undefined
+    : collectionById.get(realm.profileCollectionId);
+  // Rows = what is actually configured (plus the always-allowed Auth collection).
+  // Everything else lives behind the add picker, so the table never grows with
+  // the number of collections in the workspace.
+  const configured = allCollections.filter(
+    (c) => c.id !== realm.profileCollectionId
+      && byCollectionId.has(c.id)
+      && !foreignAuthCollectionIds.has(c.id),
+  );
+  // Rows on another realm's Auth collection predate the server-side block (or were
+  // written directly). They grant nothing legitimate, so they are surfaced as
+  // stray entries to clear out — never as an editable ceiling.
+  const strayForeignAuth = allCollections.filter(
+    (c) => byCollectionId.has(c.id) && foreignAuthCollectionIds.has(c.id),
+  );
+  const addable = allCollections.filter(
+    (c) => c.id !== realm.profileCollectionId
+      && !byCollectionId.has(c.id)
+      && !foreignAuthCollectionIds.has(c.id),
+  );
+  const unconfiguredCount = allCollections.length - configured.length
+    - strayForeignAuth.length - (ownAuthCollection === undefined ? 0 : 1);
+
   return (
     <section className={styles.panel} aria-labelledby="realm-entitlement-title">
       <SectionHeader
         id="realm-entitlement-title"
         title="접근 가능한 콘텐츠"
         description="이 사용자 공간이 다룰 수 있는 콘텐츠와 그 범위를 CMS에서 정합니다. 공간 안에서 아무리 넓게 권한을 줘도 여기서 정한 범위를 넘지 못합니다."
+        actions={
+          <Button
+            size="small"
+            variant="secondary"
+            isDisabled={realm.status !== "active" || addable.length === 0}
+            onPress={() => setAdding(true)}
+          >콘텐츠 추가</Button>
+        }
       />
       <Callout tone="info">
         허용하지 않은 콘텐츠는 공간 안에서 권한을 줬더라도 접근할 수 없습니다.
@@ -1403,10 +1523,24 @@ function CollectionEntitlementSection({ realm, mode }: {
       {collections.isError ? (
         <LoadError error={collections.error} onRetry={() => void collections.refetch()} />
       ) : null}
-      {collections.data && collections.data.items.length === 0 ? (
+      {collections.data && allCollections.length === 0 ? (
         <EmptyState title="콘텐츠 유형이 없습니다" description="스키마에서 콘텐츠 유형(Collection)을 먼저 만들면 여기에서 접근 범위를 정할 수 있습니다." />
       ) : null}
-      {collections.data && collections.data.items.length > 0 ? (
+      {collections.data && allCollections.length > 0 && configured.length === 0
+        && strayForeignAuth.length === 0 && ownAuthCollection === undefined ? (
+        <EmptyState
+          title="허용한 콘텐츠가 없습니다"
+          description="이 공간은 아직 어떤 콘텐츠에도 접근할 수 없습니다. 「콘텐츠 추가」로 접근을 허용할 콘텐츠를 고르세요."
+        />
+      ) : null}
+      {strayForeignAuth.length > 0 ? (
+        <Callout tone="warning">
+          다른 사용자 공간의 인증 스키마에 남아 있는 접근 설정 {strayForeignAuth.length}개가 있습니다.
+          지금은 적용되지 않지만, 남겨둘 이유가 없으니 제거해 주세요.
+        </Callout>
+      ) : null}
+      {collections.data && allCollections.length > 0
+        && (configured.length > 0 || strayForeignAuth.length > 0 || ownAuthCollection !== undefined) ? (
         <div className={styles.tableWrap}>
           <table className={`${styles.table} ${styles.entitlementTable}`}>
             <thead>
@@ -1419,78 +1553,123 @@ function CollectionEntitlementSection({ realm, mode }: {
               </tr>
             </thead>
             <tbody>
-              {collections.data.items.map((collection) => {
-                const current = byCollectionId.get(collection.id);
-                // The realm's own Auth (profile) collection is always accessible —
-                // it can never be gated, so the ceiling controls don't apply.
-                const isAuthCollection = collection.id === realm.profileCollectionId;
-                // Another realm's Auth collection can never be exposed here.
-                const isForeignAuth = foreignAuthCollectionIds.has(collection.id);
+              {/* The realm's own Auth (profile) collection is always accessible —
+                  it can never be gated, so the ceiling controls don't apply. */}
+              {ownAuthCollection !== undefined ? (
+                <tr key={ownAuthCollection.id} data-has-entitlement>
+                  <td>
+                    <div className={styles.entitlementName}>
+                      <span className={styles.entitlementNameRow}>
+                        <strong>{ownAuthCollection.label ?? ownAuthCollection.name}</strong>
+                        <Badge tone="info">인증 스키마</Badge>
+                      </span>
+                      <DisplayModeGate minimum="advanced">
+                        <IdValue label="Collection ID" value={ownAuthCollection.id} />
+                      </DisplayModeGate>
+                    </div>
+                  </td>
+                  <td><Badge tone="success">항상 허용</Badge></td>
+                  <td className={styles.entitlementMuted}>—</td>
+                  <td className={styles.entitlementMuted}>—</td>
+                  <td><span className={styles.compactHint}>공간 로그인·프로필에 필요해 제한할 수 없습니다.</span></td>
+                </tr>
+              ) : null}
+              {configured.map((collection) => {
+                const current = byCollectionId.get(collection.id) as RealmCollectionEntitlement;
                 return (
-                  <tr key={collection.id} data-has-entitlement={current !== undefined || isAuthCollection}>
+                  <tr key={collection.id} data-has-entitlement>
                     <td>
                       <div className={styles.entitlementName}>
                         <span className={styles.entitlementNameRow}>
                           <strong>{collection.label ?? collection.name}</strong>
-                          {isAuthCollection ? <Badge tone="info">인증 스키마</Badge> : null}
-                          {isForeignAuth ? <Badge tone="neutral">다른 공간 인증 스키마</Badge> : null}
                         </span>
                         <DisplayModeGate minimum="advanced">
                           <IdValue label="Collection ID" value={collection.id} />
                         </DisplayModeGate>
                       </div>
                     </td>
-                    {isAuthCollection ? (
-                      <>
-                        <td><Badge tone="success">항상 허용</Badge></td>
-                        <td className={styles.entitlementMuted}>—</td>
-                        <td className={styles.entitlementMuted}>—</td>
-                        <td><span className={styles.compactHint}>공간 로그인·프로필에 필요해 제한할 수 없습니다.</span></td>
-                      </>
-                    ) : isForeignAuth ? (
-                      <>
-                        <td><Badge tone="danger">접근 불가</Badge></td>
-                        <td className={styles.entitlementMuted}>—</td>
-                        <td className={styles.entitlementMuted}>—</td>
-                        <td><span className={styles.compactHint}>다른 공간의 계정·프로필 데이터라 접근을 열 수 없습니다.</span></td>
-                      </>
-                    ) : (
-                      <>
-                        <td>
-                          {current === undefined ? (
-                            <Badge tone="neutral">접근 안 함</Badge>
-                          ) : (
-                            <span className={styles.entitlementActions}>{entitlementActionSummary(current.actions)}</span>
-                          )}
-                        </td>
-                        <td className={current === undefined ? styles.entitlementMuted : undefined}>{current === undefined ? "—" : entitlementConstraintSummary(current)}</td>
-                        <td className={current === undefined ? styles.entitlementMuted : undefined}>{current === undefined ? "—" : entitlementFieldSummary(current)}</td>
-                        <td>
-                          <div className={styles.entitlementRowActions}>
-                            <Button
-                              size="small"
-                              variant="secondary"
-                              isDisabled={realm.status !== "active"}
-                              onPress={() => setEditing({ collection, current })}
-                            >{current === undefined ? "허용 설정" : "편집"}</Button>
-                            {current !== undefined ? (
-                              <Button
-                                size="small"
-                                variant="danger"
-                                isDisabled={realm.status !== "active"}
-                                onPress={() => setRemoving(current)}
-                              >제거</Button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </>
-                    )}
+                    <td><span className={styles.entitlementActions}>{entitlementActionSummary(current.actions)}</span></td>
+                    <td>{entitlementConstraintSummary(current)}</td>
+                    <td>{entitlementFieldSummary(current)}</td>
+                    <td>
+                      <div className={styles.entitlementRowActions}>
+                        <Button
+                          size="small"
+                          variant="secondary"
+                          isDisabled={realm.status !== "active"}
+                          onPress={() => setEditing({ collection, current })}
+                        >편집</Button>
+                        <Button
+                          size="small"
+                          variant="danger"
+                          isDisabled={realm.status !== "active"}
+                          onPress={() => setRemoving(current)}
+                        >제거</Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* Stray rows on another realm's Auth collection: not a ceiling, so
+                  they are shown as ineffective and offer removal only. */}
+              {strayForeignAuth.map((collection) => {
+                const current = byCollectionId.get(collection.id) as RealmCollectionEntitlement;
+                return (
+                  <tr key={collection.id} data-stray-entitlement>
+                    <td>
+                      <div className={styles.entitlementName}>
+                        <span className={styles.entitlementNameRow}>
+                          <strong>{collection.label ?? collection.name}</strong>
+                          <Badge tone="danger">다른 공간 인증 스키마</Badge>
+                        </span>
+                        <DisplayModeGate minimum="advanced">
+                          <IdValue label="Collection ID" value={collection.id} />
+                        </DisplayModeGate>
+                      </div>
+                    </td>
+                    <td colSpan={3}>
+                      <span className={styles.compactHint}>
+                        다른 공간의 계정·프로필 데이터라 접근이 열리지 않습니다. 남아 있는 설정이니 제거해 주세요.
+                      </span>
+                    </td>
+                    <td>
+                      <div className={styles.entitlementRowActions}>
+                        <Button
+                          size="small"
+                          variant="danger"
+                          isDisabled={realm.status !== "active"}
+                          onPress={() => setRemoving(current)}
+                        >제거</Button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+      ) : null}
+      {collections.data && unconfiguredCount > 0 ? (
+        <p className={styles.compactHint}>
+          나머지 콘텐츠 {unconfiguredCount}개는 이 공간에서 접근할 수 없습니다.
+        </p>
+      ) : null}
+      {adding ? (
+        <AddTargetDialog
+          title="접근을 허용할 콘텐츠"
+          description="고른 콘텐츠의 허용 범위를 이어서 정합니다. 목록에 없는 콘텐츠는 이미 설정되었거나 접근할 수 없는 콘텐츠입니다."
+          searchLabel="콘텐츠 유형 검색"
+          items={addable}
+          keyOf={(c) => c.id}
+          labelOf={(c) => c.label ?? c.name}
+          hintOf={(c) => c.name}
+          emptyText="추가할 수 있는 콘텐츠가 없습니다."
+          onClose={() => setAdding(false)}
+          onPick={(collection) => {
+            setAdding(false);
+            setEditing({ collection, current: undefined });
+          }}
+        />
       ) : null}
       {editing ? (
         <EntitlementEditDialog
@@ -1814,6 +1993,7 @@ function RealmManagementDelegationSection({ realm, realms }: {
     readonly current: RealmManagementDelegation | undefined;
   } | null>(null);
   const [removing, setRemoving] = useState<RealmManagementDelegation | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const delegations = useQuery({
     queryKey: queryKeys.realmDelegations(realm.realmId),
@@ -1828,6 +2008,9 @@ function RealmManagementDelegationSection({ realm, realms }: {
     (delegations.data?.delegations ?? []).map((d) => [d.managedRealmId, d] as const),
   );
   const realmName = new Map(realms.map((r) => [r.realmId, r.name] as const));
+  // Only realms with an actual delegation get a row; the rest sit in the picker.
+  const delegated = candidates.filter((r) => byManagedId.has(r.realmId));
+  const addable = candidates.filter((r) => !byManagedId.has(r.realmId));
 
   return (
     <section className={styles.panel} aria-labelledby="realm-delegation-title">
@@ -1835,6 +2018,14 @@ function RealmManagementDelegationSection({ realm, realms }: {
         id="realm-delegation-title"
         title="다른 공간 사용자 관리 위임"
         description="이 공간의 관리자가 다른 공간의 사용자를 어디까지 관리할 수 있는지 CMS에서 정합니다. (비밀번호 재설정·계정 잠금 해제 등)"
+        actions={
+          <Button
+            size="small"
+            variant="secondary"
+            isDisabled={realm.status !== "active" || addable.length === 0}
+            onPress={() => setAdding(true)}
+          >위임 추가</Button>
+        }
       />
       <Callout tone="info">
         여기서 허용한 범위 안에서만, 이 공간의 사용자 관리 권한자가 대상 공간 사용자를 관리할 수 있습니다. CMS 계정은 대상이 되지 않습니다.
@@ -1845,6 +2036,11 @@ function RealmManagementDelegationSection({ realm, realms }: {
       ) : null}
       {candidates.length === 0 ? (
         <EmptyState title="위임할 다른 공간이 없습니다" description="같은 워크스페이스에 다른 사용자 공간이 있어야 관리 위임을 설정할 수 있습니다." />
+      ) : delegated.length === 0 ? (
+        <EmptyState
+          title="위임한 공간이 없습니다"
+          description="이 공간의 관리자는 다른 공간의 사용자를 관리할 수 없습니다. 「위임 추가」로 대상 공간을 고르세요."
+        />
       ) : (
         <div className={styles.tableWrap}>
           <table className={`${styles.table} ${styles.entitlementTable}`}>
@@ -1857,10 +2053,10 @@ function RealmManagementDelegationSection({ realm, realms }: {
               </tr>
             </thead>
             <tbody>
-              {candidates.map((managedRealm) => {
-                const current = byManagedId.get(managedRealm.realmId);
+              {delegated.map((managedRealm) => {
+                const current = byManagedId.get(managedRealm.realmId) as RealmManagementDelegation;
                 return (
-                  <tr key={managedRealm.realmId} data-has-entitlement={current !== undefined}>
+                  <tr key={managedRealm.realmId} data-has-entitlement>
                     <td>
                       <div className={styles.entitlementName}>
                         <span className={styles.entitlementNameRow}>
@@ -1871,17 +2067,8 @@ function RealmManagementDelegationSection({ realm, realms }: {
                         </DisplayModeGate>
                       </div>
                     </td>
-                    {current === undefined ? (
-                      <>
-                        <td><Badge tone="neutral">위임 없음</Badge></td>
-                        <td className={styles.entitlementMuted}>—</td>
-                      </>
-                    ) : (
-                      <>
-                        <td><span className={styles.entitlementActions}>{delegationActionSummary(current)}</span></td>
-                        <td>{delegationScopeSummary(current)}</td>
-                      </>
-                    )}
+                    <td><span className={styles.entitlementActions}>{delegationActionSummary(current)}</span></td>
+                    <td>{delegationScopeSummary(current)}</td>
                     <td>
                       <div className={styles.entitlementRowActions}>
                         <Button
@@ -1889,15 +2076,13 @@ function RealmManagementDelegationSection({ realm, realms }: {
                           variant="secondary"
                           isDisabled={realm.status !== "active"}
                           onPress={() => setEditing({ managedRealm, current })}
-                        >{current === undefined ? "위임 설정" : "편집"}</Button>
-                        {current !== undefined ? (
-                          <Button
-                            size="small"
-                            variant="danger"
-                            isDisabled={realm.status !== "active"}
-                            onPress={() => setRemoving(current)}
-                          >제거</Button>
-                        ) : null}
+                        >편집</Button>
+                        <Button
+                          size="small"
+                          variant="danger"
+                          isDisabled={realm.status !== "active"}
+                          onPress={() => setRemoving(current)}
+                        >제거</Button>
                       </div>
                     </td>
                   </tr>
@@ -1907,6 +2092,28 @@ function RealmManagementDelegationSection({ realm, realms }: {
           </table>
         </div>
       )}
+      {addable.length > 0 && delegated.length > 0 ? (
+        <p className={styles.compactHint}>
+          나머지 공간 {addable.length}개는 이 공간이 관리할 수 없습니다.
+        </p>
+      ) : null}
+      {adding ? (
+        <AddTargetDialog
+          title="사용자 관리를 위임할 공간"
+          description="고른 공간에 대해 허용할 관리 작업을 이어서 정합니다."
+          searchLabel="사용자 공간 검색"
+          items={addable}
+          keyOf={(r) => r.realmId}
+          labelOf={(r) => r.name}
+          hintOf={(r) => r.realmKey}
+          emptyText="위임을 추가할 수 있는 공간이 없습니다."
+          onClose={() => setAdding(false)}
+          onPick={(managedRealm) => {
+            setAdding(false);
+            setEditing({ managedRealm, current: undefined });
+          }}
+        />
+      ) : null}
       {editing ? (
         <DelegationEditDialog
           managingRealm={realm}

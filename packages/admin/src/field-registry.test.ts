@@ -31,6 +31,39 @@ describe("FieldRegistry", () => {
     expect(() => registry.register(definition)).toThrow("already registered");
   });
 
+  it("swaps only the Editor slot when the host app supplies an override", () => {
+    const Injected = () => null;
+    const base = createDefaultFieldRegistry().get("rich-text");
+    const overridden = createDefaultFieldRegistry({ "rich-text": Injected }).get("rich-text");
+
+    expect(overridden.Editor).toBe(Injected);
+    // label and initialValue stay with the default definition.
+    expect(overridden.label).toBe(base.label);
+    expect(overridden.initialValue).toEqual(base.initialValue);
+  });
+
+  it("falls back to a read-only rich-text editor that cannot flatten formatting", async () => {
+    const onChange = vi.fn();
+    const richTextField: CollectionField = { id: "field_body", name: "body", label: "본문", type: "rich-text", required: false };
+    const { Editor } = createDefaultFieldRegistry().get("rich-text");
+    render(createElement(Editor, {
+      field: richTextField,
+      value: {
+        format: "xecms.rich-text",
+        formatVersion: 1,
+        content: [{ type: "paragraph", content: [{ type: "text", text: "서식 있는 본문" }] }],
+      },
+      onChange,
+    }));
+
+    const input = screen.getByLabelText(/본문/) as HTMLTextAreaElement;
+    expect(input.value).toContain("서식 있는 본문");
+    // Disabled on purpose: a plain-text write-back would destroy marks and attrs.
+    expect(input.disabled).toBe(true);
+    await userEvent.type(input, "추가");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("renders a label from the schema and reports edits", async () => {
     const onChange = vi.fn();
     const inputRef = createRef<HTMLInputElement>();

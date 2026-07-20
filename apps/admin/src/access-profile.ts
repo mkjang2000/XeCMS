@@ -24,11 +24,13 @@ export function permissionCheck(
 export function useAccessProfile(
   scope: string,
   checks: readonly AccessEvaluationCheck[],
+  enabled = true,
 ) {
   const api = useAdminApi();
   return useQuery({
     queryKey: queryKeys.accessProfile(scope, checks.map(({ id }) => id)),
     queryFn: () => api.access.evaluateBatch({ checks }),
     staleTime: 15_000,
+    enabled,
   });
 }

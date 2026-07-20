@@ -210,6 +210,8 @@ export interface ConfirmDialogProps extends Omit<AriaDialogProps, "children" | "
   readonly children: ReactNode;
   readonly confirmLabel: string;
   readonly cancelLabel?: string;
+  /** Drops the cancel button when the dialog only needs a way out (pickers). */
+  readonly hideCancel?: boolean;
   readonly danger?: boolean;
   readonly isPending?: boolean;
   readonly isConfirmDisabled?: boolean;
@@ -222,6 +224,7 @@ export function ConfirmDialog({
   children,
   confirmLabel,
   cancelLabel = "취소",
+  hideCancel = false,
   danger = false,
   isPending = false,
   isConfirmDisabled = false,
@@ -236,7 +239,9 @@ export function ConfirmDialog({
           <Heading slot="title" className={styles.dialogHeading}>{title}</Heading>
           <div>{children}</div>
           <div className={styles.dialogActions}>
-            <Button variant="secondary" onPress={onCancel} isDisabled={isPending}>{cancelLabel}</Button>
+            {hideCancel ? null : (
+              <Button variant="secondary" onPress={onCancel} isDisabled={isPending}>{cancelLabel}</Button>
+            )}
             <Button
               variant={danger ? "danger" : "primary"}
               onPress={onConfirm}

@@ -11,12 +11,13 @@ export const systemResources = {
 export function permissionCheck(id, action, resourceId) {
     return { id, type: "permission", action, resourceId };
 }
-export function useAccessProfile(scope, checks) {
+export function useAccessProfile(scope, checks, enabled = true) {
     const api = useAdminApi();
     return useQuery({
         queryKey: queryKeys.accessProfile(scope, checks.map(({ id }) => id)),
         queryFn: () => api.access.evaluateBatch({ checks }),
         staleTime: 15_000,
+        enabled,
     });
 }
 //# sourceMappingURL=access-profile.js.map

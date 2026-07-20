@@ -1,10 +1,10 @@
 import { Fragment as _Fragment, jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, } from "@tanstack/react-table";
-import { calculateLastPage, createDefaultFieldRegistry, documentPublishActionLabel, parsePageParameter, toAdminApiError, useAdminApi, } from "@xecms/admin";
+import { accessAllowed, calculateLastPage, createDefaultFieldRegistry, documentPublishActionLabel, parsePageParameter, toAdminApiError, useAdminApi, } from "@xecms/admin";
 import { Badge, Button, Callout, ConfirmDialog, EmptyState, SelectField, TextInput } from "@xecms/ui";
 import styles from "../app.module.css";
 import { ConflictNotice, LoadError, PageLoading } from "../components/async-state.js";
@@ -15,8 +15,15 @@ import { Icon } from "../components/icon.js";
 import { Page, PageHeader } from "../components/page.js";
 import { UnsavedChangesGuard } from "../components/unsaved-guard.js";
 import { decideDocumentFormSync, documentTitle, formatAdminDate, } from "../document-presentation.js";
+import { permissionCheck, systemResources, useAccessProfile } from "../access-profile.js";
 import { queryKeys } from "../queries.js";
-const fieldRegistry = createDefaultFieldRegistry();
+import { RichTextEditor } from "../rich-text/rich-text-editor.js";
+const mediaUploadChecks = [
+    permissionCheck("media.action.upload", "media.upload", systemResources.workspace),
+];
+// The rich-text editor lives in the app so the shared admin package stays free
+// of the editor dependency; the registry only swaps the Editor slot.
+const fieldRegistry = createDefaultFieldRegistry({ "rich-text": RichTextEditor });
 function choiceLabel(document) {
     const preferred = ["title", "name", "label", "slug"]
         .map((key) => document.data[key])
@@ -262,12 +269,24 @@ export function DocumentEditorPage() {
         }))),
         enabled: relationTargetIds.length > 0,
     });
-    const hasUploadFields = collection.data?.fields.some(({ type }) => type === "upload") ?? false;
+    // Rich text embeds library images too, so it needs the media list just like
+    // an upload field does.
+    const needsMedia = collection.data?.fields.some(({ type }) => type === "upload" || type === "rich-text") ?? false;
     const media = useQuery({
         queryKey: queryKeys.media,
         queryFn: () => api.media.list(),
-        enabled: hasUploadFields,
+        enabled: needsMedia,
     });
+    const hasRichText = collection.data?.fields.some(({ type }) => type === "rich-text") ?? false;
+    const uploadAccess = useAccessProfile("document-media-upload", mediaUploadChecks, hasRichText);
+    const canUploadMedia = accessAllowed(uploadAccess.data, "media.action.upload");
+    // Uploading from the body writes to the same media library as the upload
+    // field, so the cached list must be refreshed for the new image to resolve.
+    const uploadMedia = useCallback(async (file) => {
+        const record = await api.media.upload(file);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.media });
+        return record;
+    }, [api, queryClient]);
     const tree = useQuery({
         queryKey: queryKeys.documentTree(collectionId),
         queryFn: () => api.documents.tree(collectionId),
@@ -393,7 +412,7 @@ export function DocumentEditorPage() {
     const treeTitles = new Map((tree.data?.items ?? []).map((node) => [node.document.id, choiceLabel(node.document)]));
     return (_jsxs(Page, { children: [_jsx(PageHeader, { eyebrow: "Content editor", title: isNew ? "새 문서" : "문서 편집", description: `${collection.data.label || collection.data.name} 컬렉션`, actions: !isNew ? (_jsxs(_Fragment, { children: [_jsx(Button, { variant: "secondary", isDisabled: save.isPending || lifecycleBusy, onPress: () => navigate(`/admin/content/${collectionId}/${documentId}/revisions`), children: "\uBC84\uC804 \uAE30\uB85D" }), document.data?.displayState === "deleted" ? (_jsx(Button, { variant: "secondary", onPress: () => navigate(`/admin/content/${collectionId}/trash`), children: "\uD734\uC9C0\uD1B5\uC73C\uB85C" })) : null, !readOnlyState && publishLabel ? (_jsx(Button, { isDisabled: isDirty || save.isPending || lifecycleBusy, onPress: () => lifecycle.mutate("publish"), children: lifecycle.isPending && lifecycle.variables === "publish" ? "게시 중…" : publishLabel })) : null, !readOnlyState && document.data?.publication ? (_jsx(Button, { variant: "secondary", isDisabled: isDirty || save.isPending || lifecycleBusy, onPress: () => setShowUnpublish(true), children: "\uAC8C\uC2DC \uCDE8\uC18C" })) : null, document.data?.displayState !== "deleted" ? (_jsx(Button, { variant: "danger", isDisabled: save.isPending || lifecycleBusy || remoteUpdateAvailable, onPress: () => setShowDelete(true), children: "\uBB38\uC11C \uC0AD\uC81C" })) : null] })) : undefined }), document.data ? (_jsxs("div", { className: styles.documentMeta, children: [_jsx(DocumentStatus, { state: document.data.displayState, announce: true }), _jsxs("span", { children: ["\uBB38\uC11C \uBC84\uC804 ", document.data.version] }), document.data.publication ? _jsxs("span", { children: ["\uAC8C\uC2DC\uC77C ", formatAdminDate(document.data.publication.publishedAt)] }) : null] })) : null, collection.data.hierarchy?.enabled && (requestedParentId || currentTreeNode) ? (_jsxs("nav", { className: styles.breadcrumb, "aria-label": "\uCF58\uD150\uCE20 \uC704\uCE58", children: [_jsx(Link, { to: `/admin/content/${collectionId}?view=tree`, children: collection.data.label || collection.data.name }), (currentTreeNode?.path ?? (requestedParentId ? [requestedParentId] : [])).map((id) => _jsxs("span", { children: ["/ ", treeTitles.get(id) ?? id] }, id)), isNew ? _jsx("strong", { children: "/ \uC0C8 \uD558\uC704 \uBB38\uC11C" }) : null] })) : null, relationDocuments.isError ? _jsx(LoadError, { error: relationDocuments.error, onRetry: () => void relationDocuments.refetch() }) : null, media.isError ? _jsx(LoadError, { error: media.error, onRetry: () => void media.refetch() }) : null, isDirty && publishLabel ? (_jsx(Callout, { tone: "info", children: "\uAC8C\uC2DC\uD558\uB824\uBA74 \uBA3C\uC800 \uD604\uC7AC \uBCC0\uACBD \uC0AC\uD56D\uC744 \uBB38\uC11C \uC800\uC7A5\uD574 \uC8FC\uC138\uC694." })) : null, document.data?.displayState === "deleted" ? (_jsx(Callout, { tone: "warning", children: "\uD734\uC9C0\uD1B5\uC5D0 \uC788\uB294 \uBB38\uC11C\uB294 \uC77D\uAE30 \uC804\uC6A9\uC785\uB2C8\uB2E4. \uBA3C\uC800 \uBCF5\uC6D0\uD55C \uB4A4 \uD3B8\uC9D1\uD558\uAC70\uB098 \uAC8C\uC2DC\uD574 \uC8FC\uC138\uC694." })) : null, document.data?.displayState === "archived" ? (_jsx(Callout, { tone: "warning", children: "\uBCF4\uAD00\uB41C \uBB38\uC11C\uB294 \uC77D\uAE30 \uC804\uC6A9\uC785\uB2C8\uB2E4. \uBCF4\uAD00 \uC0C1\uD0DC\uB97C \uD574\uC81C\uD55C \uB4A4 \uD3B8\uC9D1\uD558\uAC70\uB098 \uAC8C\uC2DC\uD560 \uC218 \uC788\uC73C\uBA70, \uD544\uC694\uD558\uBA74 \uD734\uC9C0\uD1B5\uC73C\uB85C \uC774\uB3D9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." })) : null, hasVersionConflict || remoteUpdateAvailable ? (_jsx(ConflictNotice, { onReload: () => void reloadLatest() })) : null, saveError && saveError.code !== "DOCUMENT_VERSION_CONFLICT" ? _jsx(LoadError, { error: saveError }) : null, deleteError && deleteError.code !== "DOCUMENT_VERSION_CONFLICT" ? _jsx(LoadError, { error: deleteError }) : null, lifecycleError && lifecycleError.code !== "DOCUMENT_VERSION_CONFLICT" ? _jsx(LoadError, { error: lifecycleError }) : null, _jsxs("form", { className: `${styles.card} ${styles.editorCard}`, "aria-busy": save.isPending || lifecycleBusy, onSubmit: handleSubmit((values) => save.mutate(values)), children: [_jsx("div", { className: styles.editorFields, children: collection.data.fields.map((field) => {
                             const Editor = fieldRegistry.get(field.type).Editor;
-                            return (_jsx(Controller, { control: control, name: `data.${field.name}`, rules: { validate: (value) => validateRequired(field, value) }, render: ({ field: { ref, ...input }, fieldState }) => (_jsx(Editor, { field: field, value: input.value, onChange: input.onChange, onBlur: input.onBlur, name: input.name, inputRef: ref, isDisabled: readOnlyState, errorMessage: fieldState.error?.message, relationOptions: field.targetCollectionId ? relationDocuments.data?.[field.targetCollectionId] : undefined, mediaItems: media.data?.items })) }, field.id));
+                            return (_jsx(Controller, { control: control, name: `data.${field.name}`, rules: { validate: (value) => validateRequired(field, value) }, render: ({ field: { ref, ...input }, fieldState }) => (_jsx(Editor, { field: field, value: input.value, onChange: input.onChange, onBlur: input.onBlur, name: input.name, inputRef: ref, isDisabled: readOnlyState, errorMessage: fieldState.error?.message, relationOptions: field.targetCollectionId ? relationDocuments.data?.[field.targetCollectionId] : undefined, mediaItems: media.data?.items, onUploadMedia: uploadMedia, canUploadMedia: canUploadMedia })) }, field.id));
                         }) }), _jsxs("div", { className: styles.editorActions, children: [!readOnlyState ? (_jsx(Button, { type: "submit", isDisabled: save.isPending || lifecycleBusy || remoteUpdateAvailable, children: save.isPending ? "저장 중…" : "문서 저장" })) : null, _jsx(Button, { type: "button", variant: "secondary", isDisabled: save.isPending || lifecycleBusy, onPress: () => navigate(`/admin/content/${collectionId}`), children: "\uCDE8\uC18C" })] })] }), _jsx(UnsavedChangesGuard, { when: isDirty && !save.isPending && !lifecycleBusy }), showDelete ? (_jsx(ConfirmDialog, { title: "\uBB38\uC11C \uC0AD\uC81C", confirmLabel: "\uBB38\uC11C \uC0AD\uC81C", danger: true, isPending: remove.isPending, onCancel: () => setShowDelete(false), onConfirm: () => remove.mutate(), children: "\uC774 \uBB38\uC11C\uB97C \uD734\uC9C0\uD1B5\uC73C\uB85C \uC774\uB3D9\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C? \uBC84\uC804 \uAE30\uB85D\uACFC \uBB38\uC11C \uCC38\uC870\uB294 \uC720\uC9C0\uB418\uBA70 \uD734\uC9C0\uD1B5\uC5D0\uC11C \uBCF5\uC6D0\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." })) : null, showUnpublish ? (_jsx(ConfirmDialog, { title: "\uAC8C\uC2DC \uCDE8\uC18C", confirmLabel: "\uAC8C\uC2DC \uCDE8\uC18C", isPending: lifecycle.isPending, onCancel: () => setShowUnpublish(false), onConfirm: () => lifecycle.mutate("unpublish"), children: "\uACF5\uAC1C \uC911\uC778 \uBC84\uC804\uC744 \uAC8C\uC2DC \uCDE8\uC18C\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C? \uBB38\uC11C\uC640 \uBC84\uC804 \uAE30\uB85D\uC740 \uADF8\uB300\uB85C \uC720\uC9C0\uB429\uB2C8\uB2E4." })) : null] }));
 }
 //# sourceMappingURL=document-pages.js.map

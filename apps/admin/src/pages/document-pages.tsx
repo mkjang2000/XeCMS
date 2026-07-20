@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import {
   type ColumnDef,
 } from "@tanstack/react-table";
 import {
+  accessAllowed,
   calculateLastPage,
   createDefaultFieldRegistry,
   documentPublishActionLabel,
@@ -41,9 +42,17 @@ import {
   documentTitle,
   formatAdminDate,
 } from "../document-presentation.js";
+import { permissionCheck, systemResources, useAccessProfile } from "../access-profile.js";
 import { queryKeys } from "../queries.js";
+import { RichTextEditor } from "../rich-text/rich-text-editor.js";
 
-const fieldRegistry = createDefaultFieldRegistry();
+const mediaUploadChecks = [
+  permissionCheck("media.action.upload", "media.upload", systemResources.workspace),
+] as const;
+
+// The rich-text editor lives in the app so the shared admin package stays free
+// of the editor dependency; the registry only swaps the Editor slot.
+const fieldRegistry = createDefaultFieldRegistry({ "rich-text": RichTextEditor });
 
 function choiceLabel(document: DocumentRecord): string {
   const preferred = ["title", "name", "label", "slug"]
@@ -532,12 +541,26 @@ export function DocumentEditorPage() {
     }))),
     enabled: relationTargetIds.length > 0,
   });
-  const hasUploadFields = collection.data?.fields.some(({ type }) => type === "upload") ?? false;
+  // Rich text embeds library images too, so it needs the media list just like
+  // an upload field does.
+  const needsMedia = collection.data?.fields.some(
+    ({ type }) => type === "upload" || type === "rich-text",
+  ) ?? false;
   const media = useQuery({
     queryKey: queryKeys.media,
     queryFn: () => api.media.list(),
-    enabled: hasUploadFields,
+    enabled: needsMedia,
   });
+  const hasRichText = collection.data?.fields.some(({ type }) => type === "rich-text") ?? false;
+  const uploadAccess = useAccessProfile("document-media-upload", mediaUploadChecks, hasRichText);
+  const canUploadMedia = accessAllowed(uploadAccess.data, "media.action.upload");
+  // Uploading from the body writes to the same media library as the upload
+  // field, so the cached list must be refreshed for the new image to resolve.
+  const uploadMedia = useCallback(async (file: File): Promise<MediaRecord> => {
+    const record = await api.media.upload(file);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.media });
+    return record;
+  }, [api, queryClient]);
   const tree = useQuery({
     queryKey: queryKeys.documentTree(collectionId),
     queryFn: () => api.documents.tree(collectionId),
@@ -777,6 +800,8 @@ export function DocumentEditorPage() {
                     errorMessage={fieldState.error?.message}
                     relationOptions={field.targetCollectionId ? relationDocuments.data?.[field.targetCollectionId] : undefined}
                     mediaItems={media.data?.items as readonly MediaRecord[] | undefined}
+                    onUploadMedia={uploadMedia}
+                    canUploadMedia={canUploadMedia}
                   />
                 )}
               />

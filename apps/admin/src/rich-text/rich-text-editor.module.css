@@ -1,0 +1,495 @@
+.field {
+  display: grid;
+  gap: 0.42rem;
+  color: var(--xe-color-text);
+  font-size: 0.82rem;
+}
+
+.label {
+  color: var(--xe-color-text-strong);
+  font-weight: 650;
+}
+
+.label b {
+  margin-left: 0.25rem;
+  color: var(--xe-color-danger);
+}
+
+/* One card holds toolbar + body so the focus ring wraps the whole control. */
+.frame {
+  position: relative;
+  display: grid;
+  border: 1px solid var(--xe-color-border-strong);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface);
+  overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.frame:focus-within {
+  border-color: var(--xe-color-primary);
+  box-shadow: 0 0 0 3px var(--xe-color-focus-ring);
+}
+
+.frame[data-read-only="true"] {
+  background: var(--xe-color-surface-subtle);
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--xe-color-border);
+  background: linear-gradient(180deg, var(--xe-color-surface), var(--xe-color-surface-subtle));
+}
+
+.toolbarGap {
+  flex: 1 1 auto;
+}
+
+.divider {
+  width: 1px;
+  height: 1.1rem;
+  margin-inline: 0.25rem;
+  background: var(--xe-color-border);
+}
+
+.toolbarButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--xe-radius-sm);
+  background: none;
+  color: var(--xe-color-text-muted);
+  cursor: pointer;
+  transition: background 110ms ease, color 110ms ease, border-color 110ms ease;
+}
+
+.toolbarButton:hover:not(:disabled) {
+  background: var(--xe-color-surface);
+  border-color: var(--xe-color-border);
+  color: var(--xe-color-text-strong);
+}
+
+.toolbarButton[aria-pressed="true"] {
+  background: var(--xe-color-primary-soft);
+  border-color: var(--xe-color-primary-border);
+  color: var(--xe-color-primary);
+}
+
+.toolbarButton:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.toolbarButton:focus-visible,
+.menuTrigger:focus-visible {
+  outline: 2px solid var(--xe-color-primary);
+  outline-offset: 1px;
+}
+
+/* Dropdowns (block type, colour) */
+.menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.menuTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  height: 1.85rem;
+  padding: 0 0.35rem 0 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--xe-radius-sm);
+  background: none;
+  color: var(--xe-color-text);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menuTrigger:hover {
+  background: var(--xe-color-surface);
+  border-color: var(--xe-color-border);
+}
+
+.menuTrigger[aria-expanded="true"] {
+  background: var(--xe-color-surface);
+  border-color: var(--xe-color-border-strong);
+}
+
+.menuPanel,
+.colorPanel {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 20;
+  padding: 0.28rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface);
+  box-shadow: var(--xe-shadow-card, 0 8px 24px rgb(15 23 42 / 12%));
+}
+
+.menuPanel {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 9rem;
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 0;
+  border-radius: var(--xe-radius-sm);
+  background: none;
+  color: var(--xe-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: var(--xe-color-surface-subtle);
+}
+
+.menuItem[aria-checked="true"] {
+  background: var(--xe-color-primary-soft);
+  color: var(--xe-color-primary);
+  font-weight: 650;
+}
+
+/* Menu entries preview the style they apply. */
+.block_h1 { font-size: 1.1rem; font-weight: 700; }
+.block_h2 { font-size: 1rem; font-weight: 680; }
+.block_h3 { font-size: 0.9rem; font-weight: 650; }
+.block_codeBlock { font-family: var(--xe-font-mono, ui-monospace, monospace); font-size: 0.78rem; }
+
+.colorPanel {
+  display: grid;
+  grid-template-columns: repeat(4, 1.5rem);
+  gap: 0.28rem;
+}
+
+.colorGlyph {
+  font-weight: 750;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.colorSwatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: 50%;
+  background: var(--xe-color-surface);
+  color: var(--xe-color-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.colorSwatch[data-selected="true"] {
+  outline: 2px solid var(--xe-color-primary);
+  outline-offset: 1.5px;
+}
+
+/* Body */
+.body {
+  overflow-x: auto;
+}
+
+.surface {
+  min-height: 13rem;
+  padding: 0.85rem 0.9rem;
+  outline: none;
+  line-height: 1.65;
+}
+
+.surface > :first-child { margin-top: 0; }
+.surface > :last-child { margin-bottom: 0; }
+
+.surface h1,
+.surface h2,
+.surface h3 {
+  margin: 1.15em 0 0.5em;
+  color: var(--xe-color-text-strong);
+  line-height: 1.3;
+}
+
+.surface h1 { font-size: 1.5rem; letter-spacing: -0.02em; }
+.surface h2 { font-size: 1.24rem; letter-spacing: -0.015em; }
+.surface h3 { font-size: 1.06rem; }
+
+.surface p { margin: 0.55em 0; }
+
+.surface ul,
+.surface ol {
+  margin: 0.55em 0;
+  padding-left: 1.5rem;
+}
+
+.surface li { margin: 0.2em 0; }
+
+.surface blockquote {
+  margin: 0.8em 0;
+  padding: 0.15rem 0 0.15rem 0.9rem;
+  border-left: 3px solid var(--xe-color-primary-border, var(--xe-color-border-strong));
+  color: var(--xe-color-text-muted);
+}
+
+.surface code {
+  padding: 0.12rem 0.32rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-sm);
+  background: var(--xe-color-surface-subtle);
+  font-family: var(--xe-font-mono, ui-monospace, monospace);
+  font-size: 0.88em;
+}
+
+.surface pre {
+  margin: 0.8em 0;
+  padding: 0.8rem 0.9rem;
+  overflow-x: auto;
+  border-radius: var(--xe-radius-md);
+  background: #151824;
+  color: #e7e9f3;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.surface pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+}
+
+.surface hr {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 1px solid var(--xe-color-border-strong);
+}
+
+.surface a {
+  color: var(--xe-color-primary);
+  text-underline-offset: 2px;
+}
+
+.surface img {
+  max-width: 100%;
+  height: auto;
+  margin: 0.4em 0;
+  border-radius: var(--xe-radius-md);
+}
+
+.surface img:global(.ProseMirror-selectednode) {
+  outline: 2px solid var(--xe-color-primary);
+  outline-offset: 2px;
+}
+
+/* A mediaId with no matching record: show the gap instead of a broken image. */
+.surface img:not([src]),
+.surface img[src=""] {
+  display: inline-block;
+  min-width: 12rem;
+  min-height: 3.5rem;
+  border: 1px dashed var(--xe-color-danger);
+  background: color-mix(in srgb, var(--xe-color-danger-soft, #f8d7da) 25%, transparent);
+}
+
+/* Tables */
+.surface table {
+  width: 100%;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.surface th,
+.surface td {
+  position: relative;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--xe-color-border-strong);
+  vertical-align: top;
+}
+
+.surface th {
+  background: var(--xe-color-surface-subtle);
+  color: var(--xe-color-text-strong);
+  font-weight: 650;
+  text-align: left;
+}
+
+.surface :global(.selectedCell)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--xe-color-primary-soft);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.surface :global(.column-resize-handle) {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--xe-color-primary);
+  pointer-events: none;
+}
+
+/* Upload progress + errors */
+.uploadBar {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  padding: 0.32rem 0.6rem;
+  border: 1px solid var(--xe-color-border);
+  border-radius: 999px;
+  background: var(--xe-color-surface);
+  box-shadow: var(--xe-shadow-card, 0 4px 12px rgb(15 23 42 / 10%));
+  color: var(--xe-color-text-muted);
+  font-size: 0.74rem;
+}
+
+.error {
+  color: var(--xe-color-danger);
+  font-size: 0.74rem;
+}
+
+.linkDialog {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+/* Image picker dialog — the modal sets its own width, so fill it, don't exceed it. */
+.pickerDialog {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+/* Drop zone doubles as the file picker: the whole card is the click target. */
+.pickerUpload {
+  display: grid;
+  justify-items: center;
+  gap: 0.3rem;
+  padding: 1rem 0.75rem;
+  border: 1px dashed var(--xe-color-border-strong);
+  border-radius: var(--xe-radius-md);
+  background: var(--xe-color-surface-subtle);
+  color: var(--xe-color-text-muted);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.pickerUpload:hover,
+.pickerUpload[data-dragging="true"] {
+  border-color: var(--xe-color-primary);
+  background: var(--xe-color-primary-soft);
+}
+
+.pickerUpload:focus-visible {
+  outline: 2px solid var(--xe-color-primary);
+  outline-offset: 2px;
+}
+
+.pickerUploadIcon {
+  color: var(--xe-color-primary);
+}
+
+.pickerUploadTitle {
+  color: var(--xe-color-text-strong);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.pickerHint {
+  margin: 0;
+  color: var(--xe-color-text-muted);
+  font-size: 0.74rem;
+}
+
+.pickerError {
+  margin: 0;
+  color: var(--xe-color-danger);
+  font-size: 0.76rem;
+}
+
+.pickerList {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  display: grid;
+  gap: 0.15rem;
+  max-height: min(45vh, 22rem);
+  overflow-y: auto;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-md);
+}
+
+.pickerRow {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--xe-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickerRow:hover:not(:disabled) {
+  background: var(--xe-color-surface-subtle);
+  border-color: var(--xe-color-border);
+}
+
+.pickerRow:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pickerThumb {
+  width: 2.6rem;
+  height: 2.6rem;
+  object-fit: cover;
+  border: 1px solid var(--xe-color-border);
+  border-radius: var(--xe-radius-sm);
+  background: var(--xe-color-surface-subtle);
+}
+
+.pickerName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pickerEmpty {
+  margin: 0;
+  padding: 1.1rem 0;
+  text-align: center;
+  color: var(--xe-color-text-muted);
+  font-size: 0.85rem;
+}

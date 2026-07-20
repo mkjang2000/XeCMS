@@ -2,7 +2,9 @@
   "name": "@xecms/admin-app",
   "version": "0.4.1",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,6 +13,14 @@
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-table": "^8.21.3",
+    "@tiptap/extension-color": "^3.28.0",
+    "@tiptap/extension-image": "^3.28.0",
+    "@tiptap/extension-table": "^3.28.0",
+    "@tiptap/extension-text-align": "^3.28.0",
+    "@tiptap/extension-text-style": "^3.28.0",
+    "@tiptap/extension-underline": "^3.28.0",
+    "@tiptap/react": "^3.28.0",
+    "@tiptap/starter-kit": "^3.28.0",
     "@xecms/admin": "workspace:*",
     "@xecms/client": "workspace:*",
     "@xecms/schema": "workspace:*",
