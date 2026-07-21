@@ -11,6 +11,7 @@ import "@blocknote/mantine/style.css";
 import type { DocumentFieldEditorProps, MediaRecord } from "@xecms/admin";
 import { MediaLibraryContext, mediaImageSpec, mediaRecordMap } from "./media-image-block.js";
 import { RichTextImageDialog } from "./rich-text-image-dialog.js";
+import { useResizableHeight } from "./use-resizable-height.js";
 import {
   richTextContentOf,
   sameRichTextContent,
@@ -28,6 +29,10 @@ const editorSchema = BlockNoteSchema.create({
 });
 
 type EditorPartialBlock = typeof editorSchema.PartialBlock;
+
+// Matches the editor body's min-height in CSS; the resize handle never shrinks
+// below it, so the toolbar and a first line always stay visible.
+const MIN_BODY_HEIGHT = 208;
 
 function fieldLabel(field: DocumentFieldEditorProps["field"]): string {
   return field.label?.trim() || field.name;
@@ -62,6 +67,8 @@ export function RichTextEditor({
   const [isUploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const { height, onHandlePointerDown, isResizing } = useResizableHeight(bodyRef, field.id, MIN_BODY_HEIGHT);
   // Latest content emitted by this editor, used to tell our own updates apart
   // from an external change (refetch, revision restore) that must reset it.
   const lastEmitted = useRef<readonly RichTextBlock[] | null>(null);
@@ -176,22 +183,42 @@ export function RichTextEditor({
         ref={containerRef}
         className={styles.frame}
         data-read-only={readOnly}
+        data-resizing={isResizing}
         onDropCapture={claimImageFiles}
         onPasteCapture={claimImageFiles}
       >
-        <MediaLibraryContext.Provider value={mediaLibrary}>
-          <BlockNoteView
-            editor={editor}
-            theme="light"
-            editable={!readOnly}
-            slashMenu={false}
-            onChange={emit}
-            onBlur={onBlur}
-          >
-            <SuggestionMenuController triggerCharacter="/" getItems={slashMenuItems} />
-          </BlockNoteView>
-        </MediaLibraryContext.Provider>
+        <div
+          ref={bodyRef}
+          className={styles.body}
+          // Before the first resize height is null → natural auto-growing height.
+          style={height === null ? undefined : { height, overflowY: "auto" }}
+        >
+          <MediaLibraryContext.Provider value={mediaLibrary}>
+            <BlockNoteView
+              editor={editor}
+              theme="light"
+              editable={!readOnly}
+              slashMenu={false}
+              onChange={emit}
+              onBlur={onBlur}
+            >
+              <SuggestionMenuController triggerCharacter="/" getItems={slashMenuItems} />
+            </BlockNoteView>
+          </MediaLibraryContext.Provider>
+        </div>
         {isUploading ? <div className={styles.uploadBar} role="status">이미지 업로드 중…</div> : null}
+        {!readOnly ? (
+          <div
+            className={styles.resizeHandle}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="본문 높이 조절"
+            title="드래그해서 높이 조절"
+            onPointerDown={onHandlePointerDown}
+          >
+            <span className={styles.resizeGrip} aria-hidden="true" />
+          </div>
+        ) : null}
       </div>
       {uploadError !== null ? <small role="alert" className={styles.error}>{uploadError}</small> : null}
       {errorMessage ? <small role="alert" className={styles.error}>{errorMessage}</small> : null}

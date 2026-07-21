@@ -18,6 +18,8 @@
 /* One card holds the whole control so the focus ring wraps it. */
 .frame {
   position: relative;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--xe-color-border-strong);
   border-radius: var(--xe-radius-md);
   background: var(--xe-color-surface);
@@ -31,6 +33,18 @@
 
 .frame[data-read-only="true"] {
   background: var(--xe-color-surface-subtle);
+}
+
+/* While dragging the handle, suppress text selection across the page. */
+.frame[data-resizing="true"] {
+  user-select: none;
+}
+
+/* Scroll region once a fixed height is set; auto-grows before that. The inline
+   `height`/`overflow` come from the resize hook. */
+.body {
+  min-height: 13rem;
+  border-radius: var(--xe-radius-md);
 }
 
 /* BlockNote inherits the admin design tokens instead of shipping its own look. */
@@ -48,12 +62,43 @@
 }
 
 /* Inline padding must fit BlockNote's side menu (+ and drag handle, ~54px);
-   anything narrower pushes the handles outside the frame border. */
+   anything narrower pushes the handles outside the frame border. The min-height
+   lives on `.body`, so the editor fills whatever height that region has. */
 .frame :global(.bn-editor) {
-  min-height: 13rem;
+  min-height: 100%;
   padding: 0.85rem 3.4rem;
   border-radius: var(--xe-radius-md);
   line-height: 1.65;
+}
+
+/* Drag handle: a slim strip along the bottom edge with a centered grip. */
+.resizeHandle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 0.85rem;
+  border-top: 1px solid var(--xe-color-border);
+  border-radius: 0 0 var(--xe-radius-md) var(--xe-radius-md);
+  background: var(--xe-color-surface-subtle);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.resizeHandle:hover,
+.frame[data-resizing="true"] .resizeHandle {
+  background: var(--xe-color-primary-soft);
+}
+
+.resizeGrip {
+  width: 2rem;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--xe-color-border-strong);
+}
+
+.resizeHandle:hover .resizeGrip,
+.frame[data-resizing="true"] .resizeGrip {
+  background: var(--xe-color-primary);
 }
 
 .mediaImage {

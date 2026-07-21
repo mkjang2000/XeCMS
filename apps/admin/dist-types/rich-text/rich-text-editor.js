@@ -7,6 +7,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import { MediaLibraryContext, mediaImageSpec, mediaRecordMap } from "./media-image-block.js";
 import { RichTextImageDialog } from "./rich-text-image-dialog.js";
+import { useResizableHeight } from "./use-resizable-height.js";
 import { richTextContentOf, sameRichTextContent, toRichTextDocument, } from "./rich-text-document.js";
 import styles from "./rich-text-editor.module.css";
 // URL-storing file blocks are cut from the schema: persisted URLs rot when the
@@ -15,6 +16,9 @@ const { audio: _audio, image: _image, video: _video, file: _file, ...retainedBlo
 const editorSchema = BlockNoteSchema.create({
     blockSpecs: { ...retainedBlockSpecs, mediaImage: mediaImageSpec() },
 });
+// Matches the editor body's min-height in CSS; the resize handle never shrinks
+// below it, so the toolbar and a first line always stay visible.
+const MIN_BODY_HEIGHT = 208;
 function fieldLabel(field) {
     return field.label?.trim() || field.name;
 }
@@ -37,6 +41,8 @@ export function RichTextEditor({ field, value, errorMessage, onChange, onBlur, i
     const [isUploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState(null);
     const containerRef = useRef(null);
+    const bodyRef = useRef(null);
+    const { height, onHandlePointerDown, isResizing } = useResizableHeight(bodyRef, field.id, MIN_BODY_HEIGHT);
     // Latest content emitted by this editor, used to tell our own updates apart
     // from an external change (refetch, revision restore) that must reset it.
     const lastEmitted = useRef(null);
@@ -137,7 +143,9 @@ export function RichTextEditor({ field, value, errorMessage, onChange, onBlur, i
         }
         return filterSuggestionItems(items, query);
     }, [editor, canInsertImage]);
-    return (_jsxs("div", { className: styles.field, children: [_jsxs("span", { className: styles.label, children: [fieldLabel(field), field.required ? _jsx("b", { "aria-hidden": "true", children: "*" }) : null] }), _jsxs("div", { ref: containerRef, className: styles.frame, "data-read-only": readOnly, onDropCapture: claimImageFiles, onPasteCapture: claimImageFiles, children: [_jsx(MediaLibraryContext.Provider, { value: mediaLibrary, children: _jsx(BlockNoteView, { editor: editor, theme: "light", editable: !readOnly, slashMenu: false, onChange: emit, onBlur: onBlur, children: _jsx(SuggestionMenuController, { triggerCharacter: "/", getItems: slashMenuItems }) }) }), isUploading ? _jsx("div", { className: styles.uploadBar, role: "status", children: "\uC774\uBBF8\uC9C0 \uC5C5\uB85C\uB4DC \uC911\u2026" }) : null] }), uploadError !== null ? _jsx("small", { role: "alert", className: styles.error, children: uploadError }) : null, errorMessage ? _jsx("small", { role: "alert", className: styles.error, children: errorMessage }) : null, showImageDialog ? (_jsx(RichTextImageDialog, { mediaItems: mediaItems, canUpload: canUpload, ...(onUploadMedia === undefined ? {} : { onUpload: onUploadMedia }), onSelect: insertImage, onClose: () => setShowImageDialog(false) })) : null] }));
+    return (_jsxs("div", { className: styles.field, children: [_jsxs("span", { className: styles.label, children: [fieldLabel(field), field.required ? _jsx("b", { "aria-hidden": "true", children: "*" }) : null] }), _jsxs("div", { ref: containerRef, className: styles.frame, "data-read-only": readOnly, "data-resizing": isResizing, onDropCapture: claimImageFiles, onPasteCapture: claimImageFiles, children: [_jsx("div", { ref: bodyRef, className: styles.body, 
+                        // Before the first resize height is null → natural auto-growing height.
+                        style: height === null ? undefined : { height, overflowY: "auto" }, children: _jsx(MediaLibraryContext.Provider, { value: mediaLibrary, children: _jsx(BlockNoteView, { editor: editor, theme: "light", editable: !readOnly, slashMenu: false, onChange: emit, onBlur: onBlur, children: _jsx(SuggestionMenuController, { triggerCharacter: "/", getItems: slashMenuItems }) }) }) }), isUploading ? _jsx("div", { className: styles.uploadBar, role: "status", children: "\uC774\uBBF8\uC9C0 \uC5C5\uB85C\uB4DC \uC911\u2026" }) : null, !readOnly ? (_jsx("div", { className: styles.resizeHandle, role: "separator", "aria-orientation": "horizontal", "aria-label": "\uBCF8\uBB38 \uB192\uC774 \uC870\uC808", title: "\uB4DC\uB798\uADF8\uD574\uC11C \uB192\uC774 \uC870\uC808", onPointerDown: onHandlePointerDown, children: _jsx("span", { className: styles.resizeGrip, "aria-hidden": "true" }) })) : null] }), uploadError !== null ? _jsx("small", { role: "alert", className: styles.error, children: uploadError }) : null, errorMessage ? _jsx("small", { role: "alert", className: styles.error, children: errorMessage }) : null, showImageDialog ? (_jsx(RichTextImageDialog, { mediaItems: mediaItems, canUpload: canUpload, ...(onUploadMedia === undefined ? {} : { onUpload: onUploadMedia }), onSelect: insertImage, onClose: () => setShowImageDialog(false) })) : null] }));
 }
 function initialBlocksOf(value) {
     const stored = representableBlocks(richTextContentOf(value));
