@@ -1,5 +1,6 @@
 import {
   ApplicationError,
+  SYSTEM_AUTHORIZATION_REALM_ID,
   type AuthorizationAuditDraft,
   type AuthorizationAuditPage,
   type AuthorizationAuditRecord,
@@ -704,8 +705,8 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
     // that switches the protected Binding. Concurrent suspension/disable waits
     // until this command commits, so a stale application precheck cannot make
     // an inactive identity the Realm Owner.
-    const eligible = await client.query(
-      `SELECT 1
+    const eligible = await client.query<{ readonly origin_realm_id: string }>(
+      `SELECT identity.origin_realm_id
          FROM ${this.q("_xecms_auth_subjects")} subject
          JOIN ${this.q("_xecms_realm_memberships")} membership
            ON membership.realm_id = subject.realm_id
@@ -717,16 +718,6 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
          JOIN ${this.q("_xecms_realms")} realm
            ON realm.id = membership.realm_id
           AND realm.workspace_id = membership.workspace_id
-         JOIN ${this.q("_xecms_realm_memberships")} system_membership
-           ON system_membership.identity_id = identity.id
-          AND system_membership.workspace_id = identity.workspace_id
-         JOIN ${this.q("_xecms_realms")} system_realm
-           ON system_realm.id = system_membership.realm_id
-          AND system_realm.workspace_id = system_membership.workspace_id
-         JOIN ${this.q("_xecms_auth_subjects")} system_subject
-           ON system_subject.realm_id = system_realm.id
-          AND system_subject.id = system_membership.subject_id
-          AND system_subject.identity_id = identity.id
         WHERE subject.realm_id = $1 AND subject.id = $2
           AND subject.subject_type = 'user' AND subject.identity_id IS NOT NULL
           AND subject.protected = false AND subject.disabled_at IS NULL
@@ -734,19 +725,48 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
           AND identity.disabled_at IS NULL AND identity.identity_kind = 'human'
           AND identity.is_owner = false
           AND realm.kind = 'content' AND realm.status = 'active'
-          AND system_realm.kind = 'system' AND system_realm.status = 'active'
-          AND system_membership.status = 'active'
-          AND system_subject.subject_type = 'user'
-          AND system_subject.disabled_at IS NULL
-        FOR UPDATE OF subject, membership, identity, system_membership, system_subject`,
-      [value.realmId, value.subjectId],
+          AND identity.origin_realm_id IN (realm.id, $3)
+        FOR UPDATE OF subject, membership, identity, realm`,
+      [value.realmId, value.subjectId, SYSTEM_AUTHORIZATION_REALM_ID],
     );
     if (eligible.rowCount !== 1) {
       throw new ApplicationError(
         "REALM_PRIMARY_OWNER_SUBJECT_INELIGIBLE",
         409,
-        "A Primary Realm Owner must be an active identity-linked System operator.",
+        "A Primary Realm Owner must be an active Realm-native identity or System operator.",
       );
+    }
+    if (eligible.rows[0]?.origin_realm_id === SYSTEM_AUTHORIZATION_REALM_ID) {
+      const systemOperator = await client.query(
+        `SELECT 1
+           FROM ${this.q("_xecms_realm_memberships")} system_membership
+           JOIN ${this.q("_xecms_realms")} system_realm
+             ON system_realm.id = system_membership.realm_id
+            AND system_realm.workspace_id = system_membership.workspace_id
+           JOIN ${this.q("_xecms_auth_subjects")} system_subject
+             ON system_subject.realm_id = system_membership.realm_id
+            AND system_subject.id = system_membership.subject_id
+            AND system_subject.identity_id = system_membership.identity_id
+          WHERE system_membership.realm_id = $1
+            AND system_membership.identity_id = (
+              SELECT identity_id
+                FROM ${this.q("_xecms_auth_subjects")}
+               WHERE realm_id = $2 AND id = $3
+            )
+            AND system_membership.status = 'active'
+            AND system_realm.kind = 'system' AND system_realm.status = 'active'
+            AND system_subject.subject_type = 'user'
+            AND system_subject.disabled_at IS NULL
+          FOR UPDATE OF system_membership, system_realm, system_subject`,
+        [SYSTEM_AUTHORIZATION_REALM_ID, value.realmId, value.subjectId],
+      );
+      if (systemOperator.rowCount !== 1) {
+        throw new ApplicationError(
+          "REALM_PRIMARY_OWNER_SUBJECT_INELIGIBLE",
+          409,
+          "A System-origin Primary Realm Owner must be an active System operator.",
+        );
+      }
     }
   }
 

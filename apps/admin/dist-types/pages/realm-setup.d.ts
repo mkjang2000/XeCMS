@@ -1,9 +1,10 @@
 import type { GlobalIdentity, IdentityRealm, RealmMembership, RealmOwnerStatus } from "@xecms/admin";
 import type { StepStatus } from "../components/stepper.js";
 /**
- * Memberships eligible to become Primary Owner: an active, human, System-origin,
- * non-disabled operator that is not already the current Owner. Shared by the
- * Owner section and the setup checklist so their gating stays consistent.
+ * Memberships eligible to become Primary Owner: an active, human, non-disabled
+ * identity that is native to this Realm or is a System operator, and is not
+ * already the current Owner. Shared by the Owner section and setup checklist so
+ * their gating stays consistent.
  */
 export declare function ownerCandidateMemberships(input: {
     readonly memberships: readonly RealmMembership[] | undefined;
@@ -20,7 +21,7 @@ export interface RealmSetupInput {
     readonly realm: IdentityRealm;
     readonly owner: RealmOwnerStatus | undefined;
     readonly memberships: readonly RealmMembership[] | undefined;
-    /** Count of active System-operator memberships eligible to become Owner. */
+    /** Count of active memberships eligible to become Owner. */
     readonly ownerCandidateCount: number;
 }
 /**

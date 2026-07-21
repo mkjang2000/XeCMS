@@ -471,7 +471,7 @@ function RealmSetupChecklist({
     if (step.id === "owner" && step.status === "blocked") {
       return {
         ...base,
-        description: "소유자로 지정할 활성 운영자가 아직 없습니다. ‘사용자’ 탭에서 기존 운영자를 먼저 연결하세요.",
+        description: "소유자로 지정할 활성 사용자가 아직 없습니다. ‘사용자’ 탭에서 새 사용자를 만들거나 기존 운영자를 연결하세요.",
         action: <Button size="small" variant="secondary" onPress={onGoMembers}>사용자 탭으로 이동</Button>,
       };
     }
@@ -949,13 +949,13 @@ function RealmOwnerSection({ realm, owner, memberships, identities, systemRealmI
         </div>
       ) : null}
       {owner.data?.status === "ownerless" ? (
-        <Callout tone="error"><strong>운영 소유자가 없습니다.</strong> 활성 운영자를 연결한 뒤 소유자를 지정해야 이 사용자 공간의 정상적인 권한 관리 주체가 생깁니다.</Callout>
+        <Callout tone="error"><strong>운영 소유자가 없습니다.</strong> 활성 사용자를 만들거나 운영자를 연결한 뒤 소유자를 지정해야 이 사용자 공간의 정상적인 권한 관리 주체가 생깁니다.</Callout>
       ) : null}
       {owner.data?.status === "invalid" ? (
         <Callout tone="error"><strong>사용자 공간 소유자 상태가 손상되었습니다.</strong> {owner.data.issueCode ? <code>{owner.data.issueCode}</code> : null} 적격 운영자를 선택해 복구하세요.</Callout>
       ) : null}
       {owner.data && candidates.length === 0 ? (
-        <p className={styles.compactHint}>소유자로 지정할 다른 활성 운영자 계정이 없습니다. 아래에서 기존 운영자를 먼저 연결하세요.</p>
+        <p className={styles.compactHint}>소유자로 지정할 다른 활성 사용자가 없습니다. 아래에서 새 사용자를 만들거나 기존 운영자를 연결하세요.</p>
       ) : null}
       {dialogOpen && owner.data ? (
         <ConfirmDialog

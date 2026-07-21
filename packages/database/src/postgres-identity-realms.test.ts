@@ -232,6 +232,11 @@ describe.runIf(RUN)("M4 Identity Realm PostgreSQL migration and store", () => {
       now,
     });
     expect(membership).toMatchObject({ status: "active", provisionedBy: "signup", revision: 1 });
+    await expect(store.isEligibleRealmOwner({
+      realmId: "rlm_community",
+      identityId: identity.id,
+      subjectId: membership.subjectId,
+    })).resolves.toBe(true);
     await expect(store.createMembership({
       id: "membership_community_duplicate",
       workspaceId: DEFAULT_WORKSPACE_ID,

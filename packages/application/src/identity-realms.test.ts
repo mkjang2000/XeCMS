@@ -17,6 +17,7 @@ import {
   type RealmMembershipRecord,
   type RealmOwnerCoordinator,
 } from "./identity-realms.js";
+import type { RealmPrimaryOwnerStatus } from "./authorization.js";
 import {
   InMemoryRealmCollectionEntitlementStore,
 } from "./realm-collection-entitlements.js";
@@ -96,13 +97,15 @@ class MemoryIdentityRealmStore implements IdentityRealmStore {
     const identity = this.identities.get(input.identityId);
     const contentMembership = await this.findMembershipByIdentity(input.realmId, input.identityId);
     const systemMembership = await this.findMembershipByIdentity("rlm_system", input.identityId);
+    const loginScopeEligible = identity?.originRealmId === input.realmId
+      || (identity?.originRealmId === "rlm_system" && systemMembership?.status === "active");
     return identity !== undefined
       && identity.kind === "human"
       && identity.isOwner !== true
       && identity.disabledAt === undefined
       && contentMembership?.status === "active"
       && contentMembership.subjectId === input.subjectId
-      && systemMembership?.status === "active";
+      && loginScopeEligible;
   }
   async suspendMembership(input: Parameters<IdentityRealmStore["suspendMembership"]>[0]) {
     const suspended = this.changeMembership(
@@ -984,6 +987,86 @@ describe("M4-A Identity Realm", () => {
       status: 409,
     });
     expect(store.memberships.get(currentOwnerMembership.id)?.status).toBe("active");
+  });
+
+  it("assigns a newly registered Realm-native user as Primary Realm Owner", async () => {
+    const store = new MemoryIdentityRealmStore();
+    const realm = contentRealm();
+    const targetIdentity = systemIdentity({
+      id: "usr_realm_native_owner",
+      primaryIdentifier: "native-owner@example.com",
+      originRealmId: realm.id,
+    });
+    const targetMembership = activeMembership(targetIdentity.id);
+    store.realms.set(realm.id, realm);
+    store.identities.set(targetIdentity.id, targetIdentity);
+    store.memberships.set(targetMembership.id, targetMembership);
+    const before: RealmPrimaryOwnerStatus = {
+      state: "unassigned",
+      realmId: realm.id,
+      policyRevision: 1,
+      bindingId: `authorization:${realm.id}:binding:primary-owner`,
+      issues: [],
+    };
+    const changed: RealmPrimaryOwnerStatus = {
+      ...before,
+      state: "assigned",
+      policyRevision: 2,
+      subjectId: targetMembership.subjectId,
+      identityId: targetIdentity.id,
+    };
+    const owners = {
+      getPrimaryOwner: vi.fn(async () => before),
+      setPrimaryOwner: vi.fn(async () => changed),
+    } satisfies RealmOwnerCoordinator;
+    const service = new IdentityRealmApplicationService(
+      store,
+      runtime,
+      undefined,
+      undefined,
+      owners,
+    );
+
+    await expect(service.assignOwner({
+      subjectId: "subject_cms_owner",
+      identityId: "usr_cms_owner",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    }, {
+      realmId: realm.id,
+      targetMembershipId: targetMembership.id,
+      expectedPolicyRevision: before.policyRevision,
+      reason: "Appoint the registered Realm user",
+      reauthenticatedAt: NOW,
+    })).resolves.toMatchObject({
+      status: "healthy",
+      owner: {
+        globalIdentityId: targetIdentity.id,
+        membershipId: targetMembership.id,
+      },
+    });
+    expect(owners.setPrimaryOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ accessMode: "cms-owner-control-plane" }),
+      expect.objectContaining({ subjectId: targetMembership.subjectId, operation: "assign" }),
+    );
+
+    store.identities.set(targetIdentity.id, { ...targetIdentity, originRealmId: "rlm_other" });
+    await expect(service.assignOwner({
+      subjectId: "subject_cms_owner",
+      identityId: "usr_cms_owner",
+      workspaceId: WORKSPACE_ID,
+      capabilities: ["schema:apply"],
+    }, {
+      realmId: realm.id,
+      targetMembershipId: targetMembership.id,
+      expectedPolicyRevision: before.policyRevision,
+      reason: "Reject a user native to another Realm",
+      reauthenticatedAt: NOW,
+    })).rejects.toMatchObject({
+      code: "REALM_OWNER_TARGET_IDENTITY_INELIGIBLE",
+      status: 409,
+    });
+    expect(owners.setPrimaryOwner).toHaveBeenCalledTimes(1);
   });
 
   it("applies and audits previous-Owner suspension after the Owner CAS transfer", async () => {

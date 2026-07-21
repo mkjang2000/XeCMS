@@ -1,5 +1,6 @@
 import {
   ApplicationError,
+  SYSTEM_AUTHORIZATION_REALM_ID,
   authorizationPrimaryOwnerBindingId,
   type ContentRealmSessionRecord,
   type GlobalIdentityCredentialRecord,
@@ -282,16 +283,6 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
          JOIN ${this.q("_xecms_realms")} realm
            ON realm.id = membership.realm_id
           AND realm.workspace_id = membership.workspace_id
-         JOIN ${this.q("_xecms_realm_memberships")} system_membership
-           ON system_membership.identity_id = identity.id
-          AND system_membership.workspace_id = identity.workspace_id
-         JOIN ${this.q("_xecms_realms")} system_realm
-           ON system_realm.id = system_membership.realm_id
-          AND system_realm.workspace_id = system_membership.workspace_id
-         JOIN ${this.q("_xecms_auth_subjects")} system_subject
-           ON system_subject.realm_id = system_realm.id
-          AND system_subject.id = system_membership.subject_id
-          AND system_subject.identity_id = identity.id
         WHERE subject.realm_id = $1 AND subject.id = $3
           AND identity.id = $2
           AND subject.subject_type = 'user'
@@ -300,11 +291,31 @@ export class PostgresIdentityRealmStore implements IdentityRealmStore, RealmIden
           AND identity.identity_kind = 'human' AND identity.is_owner = false
           AND identity.disabled_at IS NULL
           AND realm.kind = 'content' AND realm.status = 'active'
-          AND system_realm.kind = 'system' AND system_realm.status = 'active'
-          AND system_membership.status = 'active'
-          AND system_subject.subject_type = 'user'
-          AND system_subject.disabled_at IS NULL`,
-      [input.realmId, input.identityId, input.subjectId],
+          AND (
+            identity.origin_realm_id = realm.id
+            OR (
+              identity.origin_realm_id = $4
+              AND EXISTS (
+                SELECT 1
+                  FROM ${this.q("_xecms_realm_memberships")} system_membership
+                  JOIN ${this.q("_xecms_realms")} system_realm
+                    ON system_realm.id = system_membership.realm_id
+                   AND system_realm.workspace_id = system_membership.workspace_id
+                  JOIN ${this.q("_xecms_auth_subjects")} system_subject
+                    ON system_subject.realm_id = system_membership.realm_id
+                   AND system_subject.id = system_membership.subject_id
+                   AND system_subject.identity_id = identity.id
+                 WHERE system_membership.realm_id = $4
+                   AND system_membership.identity_id = identity.id
+                   AND system_membership.workspace_id = identity.workspace_id
+                   AND system_membership.status = 'active'
+                   AND system_realm.kind = 'system' AND system_realm.status = 'active'
+                   AND system_subject.subject_type = 'user'
+                   AND system_subject.disabled_at IS NULL
+              )
+            )
+          )`,
+      [input.realmId, input.identityId, input.subjectId, SYSTEM_AUTHORIZATION_REALM_ID],
     );
     return result.rowCount === 1;
   }

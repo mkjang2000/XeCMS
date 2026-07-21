@@ -1233,18 +1233,7 @@ export class IdentityRealmApplicationService {
       throw new ApplicationError(
         "REALM_OWNER_TARGET_IDENTITY_INELIGIBLE",
         409,
-        "Realm Owner requires an active System operator Identity.",
-      );
-    }
-    const systemMembership = await this.store.findMembershipByIdentity(
-      SYSTEM_ACTOR_REALM_ID,
-      targetIdentity.id,
-    );
-    if (systemMembership?.status !== "active") {
-      throw new ApplicationError(
-        "REALM_OWNER_TARGET_SYSTEM_OPERATOR_REQUIRED",
-        409,
-        "Realm Owner must be an active System operator.",
+        "Realm Owner requires an active human Identity.",
       );
     }
     if (!await this.store.isEligibleRealmOwner({
@@ -1253,9 +1242,9 @@ export class IdentityRealmApplicationService {
       subjectId: targetMembership.subjectId,
     })) {
       throw new ApplicationError(
-        "REALM_OWNER_TARGET_SYSTEM_OPERATOR_REQUIRED",
+        "REALM_OWNER_TARGET_IDENTITY_INELIGIBLE",
         409,
-        "Realm Owner must be an active, login-capable human System operator.",
+        "Realm Owner must be native to the target Realm or an active System operator.",
       );
     }
     const systemIdentityId = actor.identityId ?? actor.subjectId;

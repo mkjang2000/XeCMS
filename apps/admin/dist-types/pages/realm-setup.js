@@ -1,7 +1,8 @@
 /**
- * Memberships eligible to become Primary Owner: an active, human, System-origin,
- * non-disabled operator that is not already the current Owner. Shared by the
- * Owner section and the setup checklist so their gating stays consistent.
+ * Memberships eligible to become Primary Owner: an active, human, non-disabled
+ * identity that is native to this Realm or is a System operator, and is not
+ * already the current Owner. Shared by the Owner section and setup checklist so
+ * their gating stays consistent.
  */
 export function ownerCandidateMemberships(input) {
     const identityById = new Map((input.identities ?? []).map((identity) => [identity.globalIdentityId, identity]));
@@ -10,7 +11,7 @@ export function ownerCandidateMemberships(input) {
         return membership.status === "active"
             && (input.owner?.status !== "healthy" || membership.membershipId !== input.owner.owner?.membershipId)
             && identity?.kind === "human"
-            && identity?.originRealmId === input.systemRealmId
+            && (identity?.originRealmId === membership.realmId || identity?.originRealmId === input.systemRealmId)
             && identity.disabledAt === undefined;
     });
 }

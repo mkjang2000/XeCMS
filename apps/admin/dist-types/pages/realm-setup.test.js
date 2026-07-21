@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isRealmSetupIncomplete, realmSetupSteps } from "./realm-setup.js";
+import { isRealmSetupIncomplete, ownerCandidateMemberships, realmSetupSteps } from "./realm-setup.js";
 function realm(status) {
     return {
         realmId: "rlm_1", realmKey: "svc", name: "서비스", kind: "content", status,
@@ -68,6 +68,26 @@ describe("realmSetupSteps", () => {
         expect(isRealmSetupIncomplete(done)).toBe(false);
         const pending = realmSetupSteps({ realm: realm("provisioning"), owner: owner("ownerless"), memberships: [], ownerCandidateCount: 0 });
         expect(isRealmSetupIncomplete(pending)).toBe(true);
+    });
+});
+describe("ownerCandidateMemberships", () => {
+    it("includes Realm-native users and System operators, but excludes users native to another Realm", () => {
+        const memberships = [
+            membership({ membershipId: "mem_native", globalIdentityId: "gid_native" }),
+            membership({ membershipId: "mem_system", globalIdentityId: "gid_system" }),
+            membership({ membershipId: "mem_foreign", globalIdentityId: "gid_foreign" }),
+        ];
+        const candidates = ownerCandidateMemberships({
+            memberships,
+            identities: [
+                { globalIdentityId: "gid_native", kind: "human", primaryIdentifier: "native@example.com", originRealmId: "rlm_1", credentialVersion: 1 },
+                { globalIdentityId: "gid_system", kind: "human", primaryIdentifier: "system@example.com", originRealmId: "rlm_system", credentialVersion: 1 },
+                { globalIdentityId: "gid_foreign", kind: "human", primaryIdentifier: "foreign@example.com", originRealmId: "rlm_other", credentialVersion: 1 },
+            ],
+            owner: owner("ownerless"),
+            systemRealmId: "rlm_system",
+        });
+        expect(candidates.map(({ membershipId }) => membershipId)).toEqual(["mem_native", "mem_system"]);
     });
 });
 //# sourceMappingURL=realm-setup.test.js.map

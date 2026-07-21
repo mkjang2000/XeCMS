@@ -47,8 +47,104 @@ interface Policy {
   readonly resources: readonly { readonly id: string; readonly name: string; readonly type: string }[];
   readonly bindings: readonly { readonly id: string; readonly subjectId: string }[];
 }
+interface OwnerStatus {
+  readonly realmId: string;
+  readonly status: "healthy" | "ownerless" | "invalid";
+  readonly policyRevision: number;
+  readonly owner?: {
+    readonly membershipId: string;
+    readonly subjectId: string;
+    readonly primaryIdentifier: string;
+  };
+}
 
 describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
+  it("registers a Realm-native user and assigns that Membership as Owner", async () => {
+    const schema = `xecms_m4a_native_owner_${randomUUID().replaceAll("-", "_")}`;
+    const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 4 });
+    const config = loadServerConfig({
+      NODE_ENV: "development",
+      DATABASE_URL,
+      XECMS_DB_SCHEMA: schema,
+      XECMS_SESSION_SECRET: "m4a-native-owner-session-secret-0123456789",
+      XECMS_ADMIN_ORIGINS: ORIGIN,
+      XECMS_CONTENT_ORIGINS: ORIGIN,
+      XECMS_ADMIN_DIST: "/definitely/not/a/built/admin",
+    });
+    let server: XeCmsServer | undefined;
+    try {
+      server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
+      const cmsOwner = await loginAdmin(server);
+      const createdRealm = await adminJson<Realm>(server, cmsOwner, "POST", "/api/identity-realms", {
+        key: "native-owner",
+        name: "Native Owner",
+        acceptSystemIdentities: true,
+        provisioning: "explicit",
+        registration: "closed",
+        defaultRoleIds: [],
+      }, 201);
+      const realm = await adminJson<Realm>(
+        server,
+        cmsOwner,
+        "POST",
+        `/api/identity-realms/${createdRealm.realmId}/profile-schema`,
+        {
+          collectionName: "nativeOwnerMembers",
+          collectionLabel: "Native Owner Members",
+          identifierFieldName: "memberEmail",
+          includeDisplayName: true,
+        },
+        200,
+      );
+      const registered = await adminJson<Membership>(
+        server,
+        cmsOwner,
+        "POST",
+        `/api/identity-realms/${realm.realmId}/memberships/register`,
+        {
+          identifier: "native.owner@example.test",
+          password: "Native-owner-password-2026!",
+          profile: { displayName: "Native Realm Owner" },
+          reauthPassword: TEST_OWNER_PASSWORD,
+        },
+        201,
+      );
+      const ownerless = await getJson<OwnerStatus>(
+        server,
+        `/api/identity-realms/${realm.realmId}/owner`,
+        cmsOwner.cookie,
+      );
+      expect(ownerless.status).toBe("ownerless");
+
+      const assigned = await adminJson<OwnerStatus>(
+        server,
+        cmsOwner,
+        "POST",
+        `/api/identity-realms/${realm.realmId}/owner/assign`,
+        {
+          targetMembershipId: registered.membershipId,
+          expectedPolicyRevision: ownerless.policyRevision,
+          reason: "Assign newly registered Realm user",
+          password: TEST_OWNER_PASSWORD,
+        },
+        200,
+      );
+      expect(assigned).toMatchObject({
+        status: "healthy",
+        owner: {
+          membershipId: registered.membershipId,
+          subjectId: registered.subjectId,
+          primaryIdentifier: "native.owner@example.test",
+        },
+      });
+    } finally {
+      await server?.close();
+      await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(() => undefined);
+      await database.close();
+    }
+  }, 30_000);
+
   it("keeps Full Access on the admin control plane through restart and suspension", async () => {
     const schema = `xecms_m4a_${randomUUID().replaceAll("-", "_")}`;
     const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 6 });
