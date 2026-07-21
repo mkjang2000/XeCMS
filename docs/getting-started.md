@@ -8,14 +8,17 @@ XeCMS 서버를 설치하고, 최초 Owner 계정을 만들고, 첫 API 요청�
 - **pnpm** 10 (`corepack enable`로 활성화)
 - **PostgreSQL** 16 이상 (Docker Compose 제공)
 
-## 1. 프로젝트 생성
+## 1. 소스 저장소 설치
+
+현재 `@xecms/*` 패키지의 공개 Registry 배포 전에는 clone한 저장소나 GitHub Codespaces에서
+의존성을 설치한다.
 
 ```bash
-pnpm create xecms my-cms
-cd my-cms
+pnpm install --frozen-lockfile
 ```
 
-`create-xecms`는 다음 starter 중 하나를 선택할 수 있습니다.
+패키지 공개 후에는 `pnpm create xecms my-cms`로 독립 프로젝트를 생성하고 다음 starter 중
+하나를 선택할 수 있다.
 
 | Starter | 용도 |
 | --- | --- |
@@ -45,9 +48,9 @@ cp .env.example .env
 로컬 PostgreSQL이 없다면 제공된 Compose로 띄웁니다.
 
 ```bash
-docker compose up -d postgres
-xecms migrate       # 스키마 마이그레이션 적용 (forward-only)
-xecms dev           # API + Admin Studio 개발 서버
+pnpm db:up           # PostgreSQL 시작 및 readiness 대기
+pnpm db:migrate      # 스키마 마이그레이션 적용 (forward-only)
+pnpm dev:m1          # API + Admin Studio 개발 서버
 ```
 
 실행 후 사용할 수 있는 주소:

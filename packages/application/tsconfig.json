@@ -8,10 +8,11 @@
     "types": ["node"]
   },
   "references": [
+    { "path": "../admin-apps" },
     { "path": "../authorization" },
     { "path": "../schema" },
-    { "path": "../core" }
-    ,{ "path": "../plugin-sdk" }
+    { "path": "../core" },
+    { "path": "../plugin-sdk" }
   ],
   "include": ["src/**/*.ts"]
 }

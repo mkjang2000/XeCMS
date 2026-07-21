@@ -6,6 +6,9 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "references": [{ "path": "../schema" }],
+  "references": [
+    { "path": "../admin-apps" },
+    { "path": "../schema" }
+  ],
   "include": ["src/**/*.ts"]
 }

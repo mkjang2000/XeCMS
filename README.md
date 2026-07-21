@@ -47,13 +47,15 @@ PostgreSQL을 공식 저장소로 사용하며 Schema, Migration, REST API, 관�
 - PostgreSQL 16 이상 (Docker Compose 제공)
 
 ```bash
-pnpm create xecms my-cms
-cd my-cms
+pnpm install --frozen-lockfile
 cp .env.example .env
-docker compose up -d postgres
-xecms migrate
-xecms dev
+pnpm db:up
+pnpm db:migrate
+pnpm dev:m1
 ```
+
+현재 공개 Registry 배포 전에는 clone한 저장소나 GitHub Codespaces에서 위 명령을 사용한다.
+`pnpm create xecms my-cms`를 사용하는 독립 프로젝트 생성 절차는 패키지 공개 후 제공한다.
 
 실행 후 다음 주소를 사용할 수 있다.
 
@@ -200,6 +202,5 @@ Release gate에서는 이 전체 회귀와 Chromium 누적 사용자 여정을 �
 - [REST API](./docs/rest-api.md) · [TypeScript SDK](./docs/typescript-sdk.md) · [Schema](./docs/schema.md)
 - [운영 가이드](./docs/operations.md) · [확장 개발](./docs/extending.md)
 
-> **배포 상태**: 이 문서는 정식 공개 배포를 기준으로 작성되었다. 다만 `@xecms/*` 패키지와
-> 공식 컨테이너 이미지의 공개 Registry 배포는 아직 진행되지 않았다. 배포 전까지는 이
-> 저장소를 clone하여 `pnpm install`로 동일한 CLI와 개발 서버를 사용할 수 있다.
+> **배포 상태**: `@xecms/*` 패키지와 공식 컨테이너 이미지의 공개 Registry 배포는 아직
+> 진행되지 않았다. 배포 전까지는 이 저장소를 clone한 뒤 위 빠른 시작 절차로 실행한다.
