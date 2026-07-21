@@ -46,6 +46,8 @@ export function createAdminRouter(api, queryClient) {
             throw redirect("/admin/login");
         if (session.passwordChangeRequired === true)
             throw redirect("/admin/password-change");
+        if (bootstrap.templateRequired || session.schemaRevisionId === null)
+            throw redirect("/admin/setup");
         return session;
     };
     return createBrowserRouter([

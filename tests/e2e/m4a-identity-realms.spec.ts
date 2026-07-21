@@ -4,6 +4,7 @@ const serverUrl = process.env.XECMS_SERVER_URL ?? "http://127.0.0.1:3120";
 const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "Admin-test-only-2026!";
 
 interface AdminSession { readonly csrfToken: string }
+interface SchemaRevision { readonly revisionId: string }
 interface Realm {
   readonly realmId: string;
   readonly name: string;
@@ -40,6 +41,9 @@ test("M4-A Realm Admin과 Community 사용자 흐름을 Chromium에서 완주한
   });
 
   const session = await login(page);
+  const activeSchemaResponse = await page.request.get(`${serverUrl}/api/schema`);
+  expect(activeSchemaResponse.ok(), await activeSchemaResponse.text()).toBe(true);
+  const activeSchema = await activeSchemaResponse.json() as SchemaRevision;
   const realmResponse = await mutate(page, session, "post", "/api/identity-realms", {
     key: "community",
     name: "Community",
@@ -52,7 +56,7 @@ test("M4-A Realm Admin과 Community 사용자 흐름을 Chromium에서 완주한
   let realm = await realmResponse.json() as Realm;
 
   const imported = await mutate(page, session, "put", "/api/schema/manifest", {
-    baseRevisionId: null,
+    baseRevisionId: activeSchema.revisionId,
     expectedDraftVersion: null,
     schema: {
       format: "xecms.schema",
@@ -83,7 +87,7 @@ test("M4-A Realm Admin과 Community 사용자 흐름을 Chromium에서 완주한
   const plan = await preview.json();
   const applied = await mutate(page, session, "post", "/api/schema/apply", {
     planId: plan.planId,
-    expectedRevisionId: null,
+    expectedRevisionId: activeSchema.revisionId,
     expectedDraftVersion: draft.draftVersion,
     approveDestructive: false,
   });
@@ -119,7 +123,7 @@ test("M4-A Realm Admin과 Community 사용자 흐름을 Chromium에서 완주한
     await expect(page.getByRole("heading", { name: "Community" })).toBeVisible();
     await expect(page.getByText("활성", { exact: true }).first()).toBeVisible();
     await page.getByRole("tab", { name: "권한" }).click();
-    await page.getByRole("button", { name: "Realm 권한 관리" }).click();
+    await page.getByRole("button", { name: "사용자 공간 권한 관리" }).click();
     await expect(page).toHaveURL(new RegExp(`/admin/realms/${encodeURIComponent(realm.realmId)}/access/roles`));
     await expect(page.getByRole("heading", { name: "레벨과 역할" })).toBeVisible();
     await expect(page.getByText("Editor", { exact: true })).toBeVisible();

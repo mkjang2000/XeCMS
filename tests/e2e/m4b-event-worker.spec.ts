@@ -4,6 +4,7 @@ const serverUrl = process.env.XECMS_SERVER_URL ?? "http://127.0.0.1:3130";
 const ownerPassword = process.env.XECMS_E2E_OWNER_PASSWORD ?? "Admin-test-only-2026!";
 
 interface Session { readonly csrfToken: string }
+interface SchemaRevision { readonly revisionId: string }
 
 async function login(page: Page): Promise<Session> {
   await page.goto("/admin/login");
@@ -33,8 +34,11 @@ test("M4-B Outbox 작업을 Admin UI에서 실행하고 조사한다", async ({ 
   });
 
   const session = await login(page);
+  const activeSchemaResponse = await page.request.get(`${serverUrl}/api/schema`);
+  expect(activeSchemaResponse.ok(), await activeSchemaResponse.text()).toBe(true);
+  const activeSchema = await activeSchemaResponse.json() as SchemaRevision;
   const imported = await mutate(page, session, "put", "/api/schema/manifest", {
-    baseRevisionId: null,
+    baseRevisionId: activeSchema.revisionId,
     expectedDraftVersion: null,
     schema: {
       format: "xecms.schema",
@@ -57,7 +61,7 @@ test("M4-B Outbox 작업을 Admin UI에서 실행하고 조사한다", async ({ 
   const plan = await preview.json();
   const applied = await mutate(page, session, "post", "/api/schema/apply", {
     planId: plan.planId,
-    expectedRevisionId: null,
+    expectedRevisionId: activeSchema.revisionId,
     expectedDraftVersion: draft.draftVersion,
     approveDestructive: false,
   });

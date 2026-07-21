@@ -62,10 +62,19 @@ pnpm dev:m1          # API + Admin Studio 개발 서버
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
 
-## 4. 최초 Owner 만들기
+## 4. 최초 설정 완료하기
 
 빈 데이터베이스에서는 초기 계정이 자동 생성되지 않습니다. 첫 접근은
-`/admin/setup`으로 이동하며, 여기서 12자 이상의 비밀번호로 최초 Owner 계정을 만듭니다.
+`/admin/setup`으로 이동하며 다음 순서로 진행합니다.
+
+1. 12자 이상의 비밀번호로 최초 Owner 계정 생성
+2. 빈 프로젝트, 블로그, 커뮤니티 중 템플릿 선택
+3. 선택 기능과 컬렉션 표시 이름 조정
+4. 구성을 확인하고 첫 Schema 적용
+
+Owner 생성 뒤 화면을 닫아도 다시 로그인하면 템플릿 선택 단계부터 이어진다. 필드 타입,
+기술 이름, ID와 Relation 같은 상세 설정은 초기 설정을 마친 뒤 Schema 편집기에서 변경한다.
+커뮤니티 템플릿은 Members 인증 Schema에 필요한 Content Realm도 함께 준비한다.
 
 동일한 작업을 API로도 할 수 있습니다.
 
@@ -73,13 +82,20 @@ pnpm dev:m1          # API + Admin Studio 개발 서버
 # 부트스트랩이 필요한지 확인
 curl http://127.0.0.1:3100/api/bootstrap/status
 
-# 최초 Owner 생성
-curl -X POST http://127.0.0.1:3100/api/bootstrap \
+# 최초 Owner 생성 및 세션 쿠키 저장
+curl -c cookies.txt -X POST http://127.0.0.1:3100/api/bootstrap \
   -H "Content-Type: application/json" \
   -d '{ "username": "owner", "password": "change-me-please-2026" }'
+
+# 응답의 csrfToken을 사용해 빈 프로젝트 템플릿 적용
+curl -b cookies.txt -X POST http://127.0.0.1:3100/api/setup/template \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: <bootstrap 응답의 csrfToken>" \
+  -d '{ "starter": "minimal", "enabledModuleIds": [], "collectionLabels": {} }'
 ```
 
-성공하면 세션 쿠키가 설정되고 인증된 상태가 됩니다.
+`bootstrap/status`의 `required`는 Owner 생성 필요 여부, `templateRequired`는 첫 Schema 적용
+필요 여부를 나타낸다.
 
 ## 5. 첫 API 요청
 

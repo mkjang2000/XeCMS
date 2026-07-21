@@ -69,8 +69,9 @@ pnpm dev:m1
 자세한 설치와 첫 요청은 [시작하기](./docs/getting-started.md)를 참고한다.
 
 빈 데이터베이스의 첫 접근은 `/admin/setup`으로 이동한다. 여기서 12자 이상의 비밀번호로
-최초 Owner 계정을 생성한다. 실행 환경과 관계없이 초기 계정은 자동 생성되지 않으며,
-자동화 테스트도 동일한 Bootstrap API를 사용한다.
+최초 Owner를 만든 뒤 `빈 프로젝트 / 블로그 / 커뮤니티` 템플릿을 선택한다. 선택 기능과
+컬렉션 표시 이름을 간단히 조정한 후 첫 Schema를 적용하며, 중간에 브라우저를 닫아도
+Owner로 다시 로그인해 템플릿 단계부터 계속할 수 있다. 초기 계정은 자동 생성되지 않는다.
 
 ## 콘텐츠와 권한 모델
 
@@ -147,7 +148,8 @@ Project scaffold는 다음 starter를 제공한다.
 | `blog` | Posts, Pages와 Category hierarchy |
 | `community` | 인증 가능한 Members Realm과 Posts |
 
-`pnpm create xecms`로 독립 프로젝트를 생성할 수 있다.
+Admin setup이 대화형 템플릿 선택의 기본 경로다. CLI의 starter 옵션은 자동화와 기존 프로젝트
+호환성을 위해 유지하며, 패키지 공개 후 `pnpm create xecms`로 독립 프로젝트를 생성할 수 있다.
 
 주요 CLI 계약은 다음과 같다.
 

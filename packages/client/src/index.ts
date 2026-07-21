@@ -1,6 +1,7 @@
 import {
   isProblemDetails,
   type ApplySchemaRequest,
+  type ApplySetupTemplateRequest,
   type AuthorizationAuditListDto,
   type AuthorizationDecisionDto,
   type AuthorizationPolicyDto,
@@ -245,6 +246,7 @@ export interface XeCmsClient {
   readonly auth: {
     getBootstrapStatus(): Promise<BootstrapStatusDto>;
     bootstrap(input: BootstrapRequest): Promise<AuthenticatedSessionDto>;
+    applySetupTemplate(input: ApplySetupTemplateRequest): Promise<SchemaRevisionEnvelopeDto>;
     getSession(): Promise<SessionDto>;
     login(input: LoginRequest): Promise<AuthenticatedSessionDto>;
     logout(): Promise<void>;
@@ -750,6 +752,12 @@ export function createXeCmsClient(options: XeCmsClientOptions = {}): XeCmsClient
         request<AuthenticatedSessionDto>("/bootstrap", {
           method: "POST",
           body: json(input),
+        }),
+      applySetupTemplate: (input) =>
+        request<SchemaRevisionEnvelopeDto>("/setup/template", {
+          method: "POST",
+          body: json(input),
+          csrf: true,
         }),
       getSession: () => request<SessionDto>("/auth/session"),
       login: (input) =>

@@ -34,6 +34,28 @@ describe("createXeCmsClient", () => {
     expect(logoutRequest?.credentials).toBe("same-origin");
   });
 
+  it("applies the controlled setup template with the bootstrap session CSRF token", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse({
+        user: { id: "user_owner", username: "admin" },
+        csrfToken: "csrf-setup",
+        workspace: { id: "wrk_default", name: "Default" },
+        capabilities: [],
+        schema: { revisionId: null },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ revisionId: "rev_setup", schema: { collections: [] } }));
+    const client = createXeCmsClient({ fetch });
+    await client.auth.getSession();
+    const input = { starter: "minimal" as const, enabledModuleIds: [], collectionLabels: {} };
+    await client.auth.applySetupTemplate(input);
+
+    expect(fetch.mock.calls[1]?.[0]).toBe("/api/setup/template");
+    expect(fetch.mock.calls[1]?.[1]?.method).toBe("POST");
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(input));
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get("x-csrf-token")).toBe("csrf-setup");
+  });
+
   it("throws a structured error and maps issue paths to field errors", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
       jsonResponse(

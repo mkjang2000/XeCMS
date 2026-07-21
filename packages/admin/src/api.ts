@@ -50,11 +50,14 @@ export interface AdminUser {
 export interface SessionResult {
   readonly user: AdminUser | null;
   readonly passwordChangeRequired?: boolean;
+  readonly schemaRevisionId?: string | null;
 }
 
 export interface BootstrapStatus {
   readonly required: boolean;
+  readonly templateRequired: boolean;
 }
+export interface SetupTemplateInput {readonly starter:"minimal"|"blog"|"community";readonly enabledModuleIds:readonly string[];readonly collectionLabels:Readonly<Record<string,string>>}
 export interface SystemDiagnostics { readonly environment:"development"|"test"|"production";readonly xecmsVersion:string;readonly nodeVersion:string;readonly postgresVersion:string;readonly schemaMode:"editable"|"locked"|"manifest-only";readonly workerEnabled:boolean;readonly uploadLimitBytes:number;readonly allowedMimeTypes:readonly string[];readonly adminOriginCount:number;readonly contentOriginCount:number;readonly storageAdapter:"local"; }
 export interface WorkspaceSettings { readonly workspaceId:string;readonly displayName:string;readonly defaultTimezone:string;readonly adminLocale:string;readonly revision:number;readonly updatedAt:string;readonly updatedBy:string; }
 export interface Site { readonly siteId:string;readonly workspaceId:string;readonly key:string;readonly name:string;readonly canonicalUrl?:string;readonly status:"active"|"archived";readonly isDefault:boolean;readonly revision:number;readonly createdAt:string;readonly createdBy:string;readonly updatedAt:string;readonly updatedBy:string;readonly archivedAt?:string;readonly collectionIds:readonly string[]; }
@@ -1019,6 +1022,7 @@ export interface AdminApi {
   readonly auth: {
     getBootstrapStatus(): Promise<BootstrapStatus>;
     bootstrap(credentials: AuthCredentials): Promise<{ readonly user: AdminUser }>;
+    applySetupTemplate(input: SetupTemplateInput): Promise<{readonly revisionId:string}>;
     getSession(): Promise<SessionResult>;
     login(credentials: AuthCredentials): Promise<{ readonly user: AdminUser; readonly passwordChangeRequired?: boolean }>;
     logout(): Promise<void>;

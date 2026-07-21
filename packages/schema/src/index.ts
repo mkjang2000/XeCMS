@@ -4,6 +4,7 @@ export * from "./decode.js";
 export * from "./errors.js";
 export * from "./generate-types.js";
 export * from "./ids.js";
+export * from "./starters.js";
 export { normalizeSchema, serializeSchema } from "./normalize.js";
 export * from "./types.js";
 export * from "./validate.js";

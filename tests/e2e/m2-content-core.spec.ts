@@ -133,7 +133,7 @@ function action(page: Page, name: RegExp): Locator {
 }
 
 async function loginOrBootstrap(page: Page): Promise<string> {
-  const status = await json<{ readonly required: boolean }>(
+  const status = await json<{ readonly required: boolean; readonly templateRequired: boolean }>(
     await page.request.get(`${serverUrl}/api/bootstrap/status`),
   );
 
@@ -143,7 +143,11 @@ async function loginOrBootstrap(page: Page): Promise<string> {
     await form.getByLabel("사용자 이름").fill("admin");
     await form.getByLabel("비밀번호").first().fill(ownerPassword);
     await form.getByLabel("비밀번호 확인").fill(ownerPassword);
-    await form.getByRole("button", { name: "초기 관리자 생성" }).click();
+    await form.getByRole("button", { name: "관리자 생성 후 계속" }).click();
+    await page.getByRole("button", { name: /빈 프로젝트/ }).click();
+    await page.getByRole("button", { name: "이 템플릿으로 계속" }).click();
+    await page.getByRole("button", { name: "구성 확인" }).click();
+    await page.getByRole("button", { name: "템플릿 적용하고 시작" }).click();
   } else {
     await page.goto("/admin/login");
     const form = page.getByRole("form", { name: "로그인" });

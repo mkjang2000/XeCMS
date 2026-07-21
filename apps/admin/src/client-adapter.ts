@@ -401,9 +401,17 @@ export function createAdminApi(client: XeCmsClient = createXeCmsClient()): Admin
         const session = await client.auth.bootstrap(credentials);
         return { user: session.user };
       }),
+      applySetupTemplate: (input) => call(async () => {
+        const revision = await client.auth.applySetupTemplate(input);
+        return { revisionId: revision.revisionId };
+      }),
       getSession: () => call(async () => {
         const session = await client.auth.getSession();
-        return { user: session.user, ...(session.passwordChangeRequired === undefined ? {} : { passwordChangeRequired: session.passwordChangeRequired }) };
+        return {
+          user: session.user,
+          ...(session.passwordChangeRequired === undefined ? {} : { passwordChangeRequired: session.passwordChangeRequired }),
+          ...(session.schema === undefined ? {} : { schemaRevisionId: session.schema.revisionId }),
+        };
       }),
       login: (credentials) => call(async () => {
         const session = await client.auth.login(credentials);

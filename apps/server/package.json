@@ -16,7 +16,7 @@
     "start": "node dist/main.js",
     "db:migrate": "tsx --tsconfig ../../tsconfig.dev.json src/migrate.ts",
     "db:migrate:built": "node dist/migrate.js",
-    "test:integration": "XECMS_RUN_POSTGRES_TESTS=true vitest run --config vitest.config.ts src/server.integration.test.ts src/m2.integration.test.ts src/m3-acceptance.integration.test.ts",
+    "test:integration": "XECMS_RUN_POSTGRES_TESTS=true vitest run --config vitest.config.ts src/server.integration.test.ts src/setup-template.integration.test.ts src/m2.integration.test.ts src/m3-acceptance.integration.test.ts",
     "test:integration:m2": "XECMS_RUN_POSTGRES_TESTS=true vitest run --config vitest.config.ts src/m2.integration.test.ts"
   },
   "dependencies": {

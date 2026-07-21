@@ -245,11 +245,18 @@ export interface AuthenticatedSessionDto extends SessionDto {
 
 export interface BootstrapStatusDto {
   readonly required: boolean;
+  readonly templateRequired: boolean;
 }
 
 export interface BootstrapRequest {
   readonly username: string;
   readonly password: string;
+}
+
+export interface ApplySetupTemplateRequest {
+  readonly starter: "minimal" | "blog" | "community";
+  readonly enabledModuleIds: readonly string[];
+  readonly collectionLabels: Readonly<Record<string, string>>;
 }
 
 export type LoginRequest = BootstrapRequest;

@@ -53,6 +53,7 @@ import {
 } from "@xecms/application";
 import type {
   ApplySchemaRequest,
+  ApplySetupTemplateRequest,
   AuthenticatedSessionDto,
   BootstrapRequest,
   CollectionListDto,
@@ -115,7 +116,7 @@ import {
   ScryptPasswordHasher,
   qualifiedName,
 } from "@xecms/database";
-import { serializeSchema, type CollectionDefinition, type SchemaIrV1 } from "@xecms/schema";
+import { isStarterName, serializeSchema, starterSchema, type CollectionDefinition, type SchemaIrV1 } from "@xecms/schema";
 import { pluginManifestDigest, type XeCmsPluginModule } from "@xecms/plugin-sdk";
 import Fastify, {
   type FastifyInstance,
@@ -1818,6 +1819,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
 
   app.get("/api/bootstrap/status", async () => ({
     required: await auth.bootstrapRequired(),
+    templateRequired: (await database.getActiveSchema()) === null,
   }));
 
   const bootstrapHandler = async (
@@ -1849,6 +1851,65 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   };
   app.post("/api/bootstrap", bootstrapHandler);
   app.post("/api/admin/bootstrap", bootstrapHandler);
+
+  const ensureSetupTemplateRealms = async (
+    actor: ActorContext,
+    templateSchema: SchemaIrV1,
+  ): Promise<void> => {
+    for (const collection of templateSchema.collections) {
+      const definition = collection.auth;
+      if (definition === undefined) continue;
+      const existingRealm = await identityRealmStore.getRealmByKey(actor.workspaceId, definition.realmKey);
+      if (existingRealm === null) {
+        const realm = await identityRealms.createRealm(actor, {
+          key: definition.realmKey,
+          name: definition.realmKey.charAt(0).toUpperCase() + definition.realmKey.slice(1),
+          acceptSystemIdentities: definition.acceptSystemIdentities,
+          provisioning: definition.provisioning,
+          registration: "closed",
+          defaultRoleIds: definition.defaultRoleIds,
+        });
+        await database.withContentProjectionLock(async () => {
+          await realmAuthorization.ensureRealmPolicy(realm);
+          const collections = (await database.getActiveSchema())?.schema.collections ?? [];
+          await realmAuthorization.syncCollectionResources({
+            realm,
+            collections: collections.map(({ id, name }) => ({ id: String(id), name })),
+          });
+        });
+        await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
+      }
+    }
+  };
+
+  app.post("/api/setup/template", async (request): Promise<SchemaRevisionEnvelopeDto> => {
+    const { actor } = await requireActor(request, auth, authorization, config, true);
+    if ((await database.getActiveSchema()) !== null) {
+      throw new ApplicationError("SETUP_ALREADY_COMPLETED", 409, "The initial template has already been applied.");
+    }
+    const input = setupTemplateInput(request.body);
+    let templateSchema: SchemaIrV1;
+    try {
+      templateSchema = starterSchema(input.starter, input);
+    } catch (error: unknown) {
+      if (error instanceof RangeError) throw badRequest("SETUP_TEMPLATE_INVALID", error.message);
+      throw error;
+    }
+    await ensureSetupTemplateRealms(actor, templateSchema);
+    const existingDraft = await schema.getDraft(actor);
+    const draft = await schema.importManifest(actor, {
+      baseRevisionId: null,
+      expectedDraftVersion: existingDraft?.draftVersion ?? null,
+      schema: templateSchema,
+    });
+    const preview = await schema.preview(actor, { expectedDraftVersion: draft.draftVersion });
+    return revisionDto(await applySchemaWithProjection(actor, {
+      expectedRevisionId: null,
+      expectedDraftVersion: draft.draftVersion,
+      planId: preview.planId,
+      approveDestructive: false,
+    }));
+  });
 
   app.post("/api/auth/login", async (request, reply): Promise<AuthenticatedSessionDto> => {
     assertAllowedOrigin(request, config);
@@ -3358,6 +3419,31 @@ function credentials(input: unknown): BootstrapRequest & LoginRequest {
   const username = requiredString(body["username"], "username");
   const password = requiredString(body["password"], "password");
   return { username, password };
+}
+
+function setupTemplateInput(input: unknown): ApplySetupTemplateRequest {
+  const body = objectBody(input);
+  const starter = requiredString(body["starter"], "starter");
+  if (!isStarterName(starter)) {
+    throw badRequest("SETUP_TEMPLATE_INVALID", "starter must be minimal, blog or community.");
+  }
+  const rawModules = body["enabledModuleIds"];
+  if (!Array.isArray(rawModules) || rawModules.some((value) => typeof value !== "string")) {
+    throw badRequest("SETUP_TEMPLATE_INVALID", "enabledModuleIds must be an array of strings.");
+  }
+  const enabledModuleIds = [...new Set(rawModules as string[])];
+  const rawLabels = body["collectionLabels"];
+  if (rawLabels === null || typeof rawLabels !== "object" || Array.isArray(rawLabels)) {
+    throw badRequest("SETUP_TEMPLATE_INVALID", "collectionLabels must be an object of strings.");
+  }
+  const collectionLabels: Record<string, string> = {};
+  for (const [collectionId, label] of Object.entries(rawLabels as Record<string, unknown>)) {
+    if (typeof label !== "string") {
+      throw badRequest("SETUP_TEMPLATE_INVALID", `collectionLabels.${collectionId} must be a string.`);
+    }
+    collectionLabels[collectionId] = label;
+  }
+  return { starter, enabledModuleIds, collectionLabels };
 }
 
 function documentDto(document: DocumentRecord): DocumentRecordDto {

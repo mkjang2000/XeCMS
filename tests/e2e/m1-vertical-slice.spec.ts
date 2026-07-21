@@ -64,7 +64,12 @@ test("setup부터 Schema, migration, Document REST 정합성까지 완주한다"
     await setupForm.getByLabel("사용자 이름").fill("admin");
     await setupForm.getByLabel("비밀번호").first().fill(ownerPassword);
     await setupForm.getByLabel("비밀번호 확인").fill(ownerPassword);
-    await setupForm.getByRole("button", { name: "초기 관리자 생성" }).click();
+    await setupForm.getByRole("button", { name: "관리자 생성 후 계속" }).click();
+
+    await page.getByRole("button", { name: /빈 프로젝트/ }).click();
+    await page.getByRole("button", { name: "이 템플릿으로 계속" }).click();
+    await page.getByRole("button", { name: "구성 확인" }).click();
+    await page.getByRole("button", { name: "템플릿 적용하고 시작" }).click();
 
     await expect(page).toHaveURL(/\/admin\/schema(?:\/)?$/);
 
@@ -72,7 +77,7 @@ test("setup부터 Schema, migration, Document REST 정합성까지 완주한다"
       `${serverUrl}/api/bootstrap/status`,
     );
     expect(statusResponse.ok()).toBe(true);
-    expect(await statusResponse.json()).toMatchObject({ required: false });
+    expect(await statusResponse.json()).toMatchObject({ required: false, templateRequired: false });
 
     const repeatedBootstrap = await page.request.post(
       `${serverUrl}/api/bootstrap`,

@@ -57,7 +57,7 @@ describe.runIf(RUN)("XeCMS M1 PostgreSQL vertical slice", () => {
   it("bootstraps exactly once with a strong password and creates a reload-safe session", async () => {
     const status = await server.app.inject({ method: "GET", url: "/api/bootstrap/status" });
     expect(status.statusCode).toBe(200);
-    expect(status.json()).toEqual({ required: true });
+    expect(status.json()).toEqual({ required: true, templateRequired: true });
 
     const weak = await server.app.inject({
       method: "POST",
@@ -538,7 +538,7 @@ describe.runIf(RUN)("development bootstrap boundary", () => {
     });
     try {
       const status = await server.app.inject({ method: "GET", url: "/api/bootstrap/status" });
-      expect(status.json()).toEqual({ required: true });
+      expect(status.json()).toEqual({ required: true, templateRequired: true });
       const login = await server.app.inject({
         method: "POST",
         url: "/api/auth/login",

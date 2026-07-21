@@ -172,6 +172,7 @@ Collection·Document에 대한 권한을 요구합니다.
 | --- | --- | --- |
 | GET | `/api/bootstrap/status` | 최초 Owner 부트스트랩 필요 여부 |
 | POST | `/api/bootstrap` | 최초 Owner 생성 |
+| POST | `/api/setup/template` | 인증된 Owner가 제한된 커스텀으로 첫 템플릿 적용 |
 | POST | `/api/auth/login` | 운영자 로그인 |
 | POST | `/api/auth/logout` | 운영자 로그아웃 |
 | GET | `/api/auth/session` | 현재 운영자 세션 |
