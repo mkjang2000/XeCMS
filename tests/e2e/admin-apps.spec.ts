@@ -38,12 +38,37 @@ test("App Builder에서 생성·적용한 System App으로 문서를 생성하�
         format: "xecms.schema",
         formatVersion: 1,
         collections: [...current.schema.collections, {
+          id: "col_task_categories",
+          name: "taskCategories",
+          label: "Task Categories",
+          hierarchy: { enabled: true, ordering: "manual", permissionInheritance: true },
+          fields: [
+            { id: "fld_task_category_title", name: "title", label: "Category Title", type: "text", required: true },
+          ],
+        }, {
           id: "col_tasks",
           name: "tasks",
           label: "Tasks",
           fields: [
             { id: "fld_task_title", name: "title", label: "Title", type: "text", required: true },
             { id: "fld_task_done", name: "done", label: "Done", type: "boolean" },
+            {
+              id: "fld_task_category",
+              name: "category",
+              label: "Category",
+              type: "relation",
+              relationId: "rel_task_category",
+              targetCollectionId: "col_task_categories",
+              cardinality: "one",
+              onDelete: "restrict",
+            },
+            {
+              id: "fld_task_attachment",
+              name: "attachment",
+              label: "Attachment",
+              type: "upload",
+              acceptedMimeTypes: ["image/png"],
+            },
           ],
         }],
       },
@@ -62,11 +87,12 @@ test("App Builder에서 생성·적용한 System App으로 문서를 생성하�
   expect(applied.ok(), await applied.text()).toBe(true);
 
   await page.goto("/admin/apps");
-  await expect(page.getByRole("heading", { name: "운영 앱" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "운영 앱", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "새 App" }).click();
   await page.getByLabel("App 이름").fill("Task Operations");
   await page.getByLabel("URL key").fill("task-ops");
-  await page.getByRole("checkbox").check();
+  await page.getByRole("checkbox", { name: /Task Categories/ }).check();
+  await page.getByRole("checkbox", { name: /Tasks/ }).check();
   await page.getByRole("button", { name: "Draft 생성" }).click();
   await expect(page).toHaveURL(/\/admin\/apps\/aap_/);
 
@@ -77,8 +103,38 @@ test("App Builder에서 생성·적용한 System App으로 문서를 생성하�
 
   await page.goto("/apps/task-ops");
   await expect(page.getByText("Task Operations", { exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "Task Operations 메뉴" }).getByRole("button", { name: "새 문서" }).click();
+  const runtimeNavigation = page.getByRole("navigation", { name: "Task Operations 메뉴" });
+  const categoriesMenu = runtimeNavigation.getByRole("region", { name: "Task Categories 메뉴 그룹" });
+  const tasksMenu = runtimeNavigation.getByRole("region", { name: "Tasks 메뉴 그룹" });
+
+  await categoriesMenu.getByRole("button", { name: "새 문서" }).click();
+  await page.getByLabel(/Category Title/).fill("Parent category");
+  await page.getByRole("button", { name: "저장" }).click();
+  await expect(page.getByRole("heading", { name: "Task Categories detail" })).toBeVisible();
+  await categoriesMenu.getByRole("button", { name: "새 문서" }).click();
+  await page.getByLabel(/Category Title/).fill("Child category");
+  await page.getByRole("button", { name: "저장" }).click();
+  await expect(page.getByRole("heading", { name: "Task Categories detail" })).toBeVisible();
+  await categoriesMenu.getByRole("button", { name: "목록" }).click();
+  await page.getByRole("button", { name: "트리 보기" }).click();
+  const childNode = page.getByRole("listitem").filter({
+    has: page.getByRole("button", { name: /^Child category ·/ }),
+  });
+  await childNode.getByLabel("부모").selectOption({ index: 1 });
+  await childNode.getByRole("button", { name: "이동 Preview" }).click();
+  await expect(page.getByRole("dialog", { name: "계층 이동 확인" })).toContainText("영향 문서 1개");
+  await page.getByRole("button", { name: "확인 후 이동" }).click();
+  await expect(page.getByText(/Child category.*이동 완료/)).toBeVisible();
+
+  await tasksMenu.getByRole("button", { name: "새 문서" }).click();
   await page.getByLabel(/Title/).fill("First runtime task");
+  await page.getByLabel(/Category/).selectOption({ index: 1 });
+  await page.getByLabel("새 파일 업로드", { exact: true }).setInputFiles({
+    name: "runtime-image.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(page.getByLabel(/Attachment/).locator("option:checked")).toContainText("runtime-image.png");
   await page.getByRole("button", { name: "저장" }).click();
   await expect(page.getByRole("heading", { name: "Tasks detail" })).toBeVisible();
   await page.getByRole("button", { name: "Publish" }).click();
@@ -118,6 +174,7 @@ test("Content Realm App에서 경계, 계정 전환, 접근 권한 부여와 회
         id: "col_realm_tasks",
         name: "realmTasks",
         label: "Realm Tasks",
+        hierarchy: { enabled: true, ordering: "manual", permissionInheritance: false },
         fields: [{ id: "fld_realm_task_title", name: "title", label: "Title", type: "text", required: true }],
       }],
     },
@@ -223,9 +280,30 @@ test("Content Realm App에서 경계, 계정 전환, 접근 권한 부여와 회
   await page.getByLabel("비밀번호").fill(authorizedPassword);
   await page.getByRole("button", { name: "로그인" }).click();
   await expect(page.getByText("Realm Console", { exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "Realm Console 메뉴" }).getByRole("button", { name: "목록" }).click();
+  const realmTasksMenu = page.getByRole("navigation", { name: "Realm Console 메뉴" })
+    .getByRole("region", { name: "Realm Tasks 메뉴 그룹" });
+  await realmTasksMenu.getByRole("button", { name: "새 문서" }).click();
+  await page.getByLabel(/Title/).fill("Realm parent task");
+  await page.getByRole("button", { name: "저장" }).click();
+  await expect(page.getByRole("heading", { name: "Realm Tasks detail" })).toBeVisible();
+  await realmTasksMenu.getByRole("button", { name: "새 문서" }).click();
+  await page.getByLabel(/Title/).fill("Realm child task");
+  await page.getByRole("button", { name: "저장" }).click();
+  await expect(page.getByRole("heading", { name: "Realm Tasks detail" })).toBeVisible();
+  await realmTasksMenu.getByRole("button", { name: "목록" }).click();
   await expect(page.getByRole("heading", { name: "Realm Tasks" })).toBeVisible();
+  await page.getByRole("button", { name: "트리 보기" }).click();
+  const realmChildNode = page.getByRole("listitem").filter({
+    has: page.getByRole("button", { name: /^Realm child task ·/ }),
+  });
+  await realmChildNode.getByLabel("부모").selectOption({ index: 1 });
+  await realmChildNode.getByRole("button", { name: "이동 Preview" }).click();
+  await expect(page.getByRole("dialog", { name: "계층 이동 확인" }))
+    .toContainText("Authorization 경로 변화가 없습니다");
+  await page.getByRole("button", { name: "확인 후 이동" }).click();
+  await expect(page.getByText(/Realm child task.*이동 완료/)).toBeVisible();
 
+  policy = await getPolicy(page, alpha.realmId);
   const revoked = await mutateAdmin(page, admin, "delete", `/api/identity-realms/${alpha.realmId}/authorization/bindings/${appBinding!.id}`, {
     expectedPolicyRevision: policy.revision,
   });

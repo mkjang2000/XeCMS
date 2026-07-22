@@ -42,6 +42,8 @@ import {
   SYSTEM_PUBLIC_SUBJECT_ID,
   SYSTEM_WORKSPACE_RESOURCE_ID,
   collectionResourceId,
+  realmAuthorizationRootResourceId,
+  realmDocumentResourceId,
   type AuthorizationActor,
   type AuthorizationPolicyManagementActor,
   type ActorContext,
@@ -58,6 +60,7 @@ import type {
   AuthenticatedSessionDto,
   BootstrapRequest,
   CollectionListDto,
+  CreateDocumentRequest,
   CreateRealmProfileFieldRequest,
   CreateRealmProfileSchemaRequest,
   DeleteDocumentRequest,
@@ -1045,7 +1048,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   }
   await app.register(cookie);
   app.addContentTypeParser("*", (request, payload, done) => {
-    if (request.url.startsWith("/api/media") && request.method === "POST") {
+    const runtimeMediaUpload = /^\/api\/admin-apps\/runtime\/[^/]+\/media(?:\?|$)/.test(request.url);
+    if ((request.url.startsWith("/api/media") || runtimeMediaUpload) && request.method === "POST") {
       done(null, payload);
       return;
     }
@@ -1227,7 +1231,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     workspaceId: DEFAULT_WORKSPACE_ID,
     runtime: adminAppRuntime,
     authorization,
-    authenticate: async (request, audience) => {
+    authenticate: async (request, audience, requireCsrf) => {
       if (audience.type === "system") {
         if (request.cookies[SESSION_COOKIE] === undefined) {
           throw new ApplicationError(
@@ -1237,7 +1241,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
             { details: { audience: { type: "system" } } },
           );
         }
-        const authenticated = await requireSession(request, auth, config, false);
+        const authenticated = await requireSession(request, auth, config, requireCsrf);
         const identity = authenticated.session.identity;
         const policyActor = authorizationActor(identity.id);
         return {
@@ -1283,6 +1287,18 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         realmKey: realm.key,
         sessionToken,
       });
+      if (requireCsrf) {
+        await assertAllowedContentOrigin(request, config);
+        const csrfToken = request.headers["x-csrf-token"];
+        if (typeof csrfToken !== "string") {
+          throw new ApplicationError("CSRF_TOKEN_REQUIRED", 403, "X-CSRF-Token is required.");
+        }
+        await contentRealmAuthentication.assertCsrfToken({
+          realmKey: realm.key,
+          sessionToken,
+          csrfToken,
+        });
+      }
       const policyActor = { realmId: realm.id, subjectId: session.membership.subjectId };
       return {
         audienceHint: {
@@ -1312,6 +1328,56 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     getActiveSchema: async () => {
       const active = await database.getActiveSchema();
       return active === null ? null : { revisionId: active.revisionId, schema: active.schema };
+    },
+    data: {
+      tree: (actor, collectionId) => treeDto(actor, collectionId, { kind: "all" }),
+      previewMove: (actor, collectionId, documentId, body) =>
+        database.withContentProjectionLock(async () =>
+          (await calculateMovePreview(actor, collectionId, documentId, body)).dto),
+      move: (actor, collectionId, documentId, body) =>
+        moveHierarchyDocument(actor, collectionId, documentId, body),
+      listMedia: async (actor) => {
+        await requireRuntimeMediaPermission(actor, "media.read");
+        const [records, consistency] = await Promise.all([
+          media.list(actor.workspaceId),
+          media.checkConsistency(actor.workspaceId),
+        ]);
+        const missing = new Set(consistency.missing.map(({ id }) => id));
+        return { items: records.map((record) => mediaRecordDto(record, missing.has(record.id))) };
+      },
+      uploadMedia: async (actor, input) => {
+        await requireRuntimeMediaPermission(actor, "media.upload");
+        const encodedFileName = singleHeader(input.encodedFileName, "x-file-name");
+        let originalFileName: string;
+        try {
+          originalFileName = decodeURIComponent(encodedFileName);
+        } catch {
+          throw badRequest("MEDIA_FILE_NAME_INVALID", "x-file-name must be URI encoded UTF-8.");
+        }
+        const declaredMimeType = (input.declaredMimeType ?? input.contentType ?? "")
+          .split(";", 1)[0]?.trim() ?? "";
+        if (input.contentLength !== undefined) {
+          const byteLength = Number(input.contentLength);
+          if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+            throw badRequest("MEDIA_CONTENT_LENGTH_INVALID", "content-length must be a non-negative integer.");
+          }
+          if (byteLength > config.mediaMaxUploadBytes) {
+            throw new ApplicationError(
+              "MEDIA_SIZE_LIMIT_EXCEEDED",
+              413,
+              `Media exceeds the ${config.mediaMaxUploadBytes} byte upload limit.`,
+            );
+          }
+        }
+        const uploaded = await media.upload({
+          workspaceId: actor.workspaceId,
+          actorId: actor.subjectId,
+          originalFileName,
+          declaredMimeType,
+          stream: byteStream(input.body),
+        });
+        return mediaRecordDto(uploaded.media, false);
+      },
     },
   });
   registerOperationsRoutes({
@@ -1801,20 +1867,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       },
       getDocument: ({ actor, collectionId, documentId }) =>
         documents.get(actor, collectionId, documentId),
-      createDocument: async ({ actor, collectionId, request }) => {
-        const active = await database.getActiveSchema();
-        const collection = active?.schema.collections.find(
-          ({ id, name }) => String(id) === collectionId || name === collectionId,
-        );
-        if (collection?.hierarchy?.enabled === true || request.hierarchy !== undefined) {
-          throw new ApplicationError(
-            "CONTENT_REALM_HIERARCHY_MUTATION_UNAVAILABLE",
-            409,
-            "Content Realm hierarchy mutations require the dedicated hierarchy workflow.",
-          );
-        }
-        return documents.create(actor, collectionId, request.data);
-      },
+      createDocument: ({ actor, collectionId, request }) =>
+        createContentDocument(actor, collectionId, request),
       updateDocument: ({ actor, collectionId, documentId, request }) =>
         documents.update(actor, collectionId, documentId, {
           data: request.data,
@@ -2244,11 +2298,61 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     return collectionList(active, draft);
   });
 
-  const treeDto = async (
+  async function requireRuntimeMediaPermission(actor: ActorContext, action: "media.read" | "media.upload"): Promise<void> {
+    if (actor.authorization === undefined) {
+      throw new ApplicationError("ACCESS_DENIED", 403, `The '${action}' permission is required.`);
+    }
+    const realmId = actor.realmId ?? SYSTEM_AUTHORIZATION_REALM_ID;
+    await actor.authorization.require({
+      action,
+      resourceId: realmId === SYSTEM_AUTHORIZATION_REALM_ID
+        ? SYSTEM_WORKSPACE_RESOURCE_ID
+        : realmAuthorizationRootResourceId(realmId),
+    });
+  }
+
+  async function createContentDocument(
+    actor: ActorContext,
+    collectionId: string,
+    request: CreateDocumentRequest,
+  ): Promise<DocumentRecordDto> {
+    await sites.assertCollectionWritable(actor.workspaceId, collectionId);
+    return database.withContentProjectionLock(async () => {
+      const active = await database.getActiveSchema();
+      const collection = active?.schema.collections.find(
+        ({ id, name }) => String(id) === collectionId || name === collectionId,
+      );
+      let placement: CreateDocumentRequest["hierarchy"];
+      if (collection?.hierarchy?.enabled === true) {
+        if (request.hierarchy === undefined) {
+          const roots = await hierarchy.listRoots(actor, collectionId);
+          placement = { parentId: null, position: roots.items.length, expectedVersion: roots.version };
+        } else {
+          placement = request.hierarchy;
+        }
+      } else if (request.hierarchy !== undefined) {
+        throw badRequest("HIERARCHY_NOT_ENABLED", "This collection does not enable hierarchy.");
+      }
+      const created = await documents.create(actor, collectionId, request.data, placement);
+      try {
+        await reconcileAuthorizationHierarchy(
+          { realmId: actor.realmId ?? SYSTEM_AUTHORIZATION_REALM_ID, subjectId: actor.subjectId },
+          (await database.getActiveSchema())?.schema.collections ?? [],
+          "hierarchy.create",
+        );
+      } catch (error: unknown) {
+        // The new resource is absent, so every document-level check naturally fails closed.
+        throw error;
+      }
+      return documentDto(created);
+    });
+  }
+
+  async function treeDto(
     actor: ActorContext,
     collectionId: string,
     mode: { readonly kind: "all" | "roots" | "children" | "ancestors" | "descendants" | "subtree"; readonly documentId?: string },
-  ): Promise<DocumentTreeDto> => {
+  ): Promise<DocumentTreeDto> {
     let result: ContentHierarchyQueryResult;
     if (mode.kind === "roots") {
       result = await hierarchy.listRoots(actor, collectionId);
@@ -2264,7 +2368,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       result = await hierarchy.listAll(actor, collectionId);
     }
     return presentTree(actor, collectionId, result, documents);
-  };
+  }
 
   app.get<{
     Params: { collectionId: string };
@@ -2315,7 +2419,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     },
   );
 
-  const calculateMovePreview = async (
+  async function calculateMovePreview(
     actor: ActorContext,
     collectionId: string,
     documentId: string,
@@ -2329,7 +2433,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       readonly position: number;
       readonly expectedVersion: number;
     };
-  }> => {
+  }> {
     const body = objectBody(rawBody);
     const request = {
       newParentId: nullableString(body["newParentId"], "newParentId"),
@@ -2350,7 +2454,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     )) {
       throw badRequest("POLICY_REVISION_INVALID", "expectedPolicyRevision must be a positive integer.");
     }
-    const policyRevision = await authorization.currentPolicyRevision(SYSTEM_AUTHORIZATION_REALM_ID);
+    const actorAuthorizationRealmId = actor.realmId ?? SYSTEM_AUTHORIZATION_REALM_ID;
+    const policyActor = { realmId: actorAuthorizationRealmId, subjectId: actor.subjectId };
+    const policyRevision = await authorization.currentPolicyRevision(actorAuthorizationRealmId);
     if (expectedPolicyRevisionValue !== undefined && expectedPolicyRevisionValue !== policyRevision) {
       throw new ApplicationError(
         "POLICY_REVISION_CONFLICT",
@@ -2376,7 +2482,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
             );
           }
           return [
-            `resource:document:${affectedDocumentId}`,
+            realmDocumentResourceId(actorAuthorizationRealmId, affectedDocumentId),
             {
               ownerSubjectId: String(aggregate.identity.createdBy),
               status: aggregate.identity.deletion !== null
@@ -2393,7 +2499,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         }),
       ));
       const effective = await authorization.previewResourceParentChange(
-        authorizationActor(actor.subjectId),
+        policyActor,
         {
           resourceId: permissionImpact.documentResourceId,
           newParentResourceId: permissionImpact.afterParentResourceId,
@@ -2428,7 +2534,141 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         permissionImpact,
       },
     };
-  };
+  }
+
+  async function moveHierarchyDocument(
+    actor: ActorContext,
+    collectionId: string,
+    documentId: string,
+    body: unknown,
+  ): Promise<MoveDocumentResultDto> {
+    await sites.assertCollectionWritable(actor.workspaceId, collectionId);
+    return database.withContentProjectionLock(async () => {
+      const preview = await calculateMovePreview(actor, collectionId, documentId, body, true);
+      const policyActor = {
+        realmId: actor.realmId ?? SYSTEM_AUTHORIZATION_REALM_ID,
+        subjectId: actor.subjectId,
+      };
+      if (preview.dto.permissionImpact?.requiresAuthorizationManagement === true) {
+        await authorization.requireHierarchyPolicyManagement(policyActor);
+      }
+
+      // Load every response-visible node before persistence so a committed move
+      // can never be followed by a response authorization failure.
+      const hypotheticalById = new Map(preview.hypotheticalTree.items.map((position) => [
+        String(position.documentId),
+        position,
+      ]));
+      const movedPosition = hypotheticalById.get(documentId);
+      if (movedPosition === undefined) {
+        throw new ApplicationError("HIERARCHY_INVARIANT_VIOLATION", 500, "Moved node is missing.");
+      }
+      const candidateIds = new Set<string>([documentId]);
+      let pathCursor: string | null = documentId;
+      while (pathCursor !== null) {
+        candidateIds.add(pathCursor);
+        const position = hypotheticalById.get(pathCursor);
+        pathCursor = position?.parentId === null || position?.parentId === undefined
+          ? null
+          : String(position.parentId);
+      }
+      preview.hypotheticalTree.items.forEach((position) => {
+        if (position.parentId !== null && String(position.parentId) === documentId) {
+          candidateIds.add(String(position.documentId));
+        }
+      });
+      const readableDocuments = new Map<string, Awaited<ReturnType<typeof documents.get>>>();
+      for (const candidateId of candidateIds) {
+        try {
+          readableDocuments.set(candidateId, await documents.get(actor, collectionId, candidateId));
+        } catch (error: unknown) {
+          if (candidateId === documentId || !(error instanceof ApplicationError) || error.status !== 403) {
+            throw error;
+          }
+        }
+      }
+      const movedDocument = readableDocuments.get(documentId);
+      if (movedDocument === undefined) {
+        throw new ApplicationError("AUTHORIZATION_DENIED", 403, "The moved document is not readable.");
+      }
+
+      let affectedResourceIds: readonly string[] = [];
+      let fenced = false;
+      let result;
+      try {
+        result = await hierarchy.moveNode(
+          actor,
+          collectionId,
+          { documentId, ...preview.request },
+          {
+            beforeCommit: async (authorizedPreview) => {
+              affectedResourceIds = authorizedPreview.permissionImpact?.affectedResourceIds ?? [];
+              await authorization.quarantineContentResources(
+                policyActor,
+                affectedResourceIds,
+                "hierarchy-move-pending",
+              );
+              fenced = true;
+            },
+          },
+        );
+      } catch (error: unknown) {
+        if (fenced) await authorization.releaseContentResourceQuarantine(policyActor, affectedResourceIds);
+        throw error;
+      }
+      let policyRevision = preview.dto.policyRevision;
+      try {
+        const reconciled = await reconcileAuthorizationHierarchy(
+          policyActor,
+          (await database.getActiveSchema())?.schema.collections ?? [],
+          "hierarchy.move",
+          preview.dto.policyRevision,
+        );
+        policyRevision = reconciled.revision;
+      } catch (error: unknown) {
+        // Durable quarantine intentionally remains until a later reconcile or restart.
+        throw error;
+      }
+      const committedPosition = result.state.positions.find(
+        (position) => String(position.documentId) === documentId,
+      );
+      if (committedPosition === undefined) {
+        throw new ApplicationError("HIERARCHY_INVARIANT_VIOLATION", 500, "Moved node is missing.");
+      }
+      const visiblePath: string[] = [documentId];
+      let visibleCursor = committedPosition.parentId === null ? null : String(committedPosition.parentId);
+      while (visibleCursor !== null && readableDocuments.has(visibleCursor)) {
+        visiblePath.unshift(visibleCursor);
+        const parent = result.state.positions.find((position) => String(position.documentId) === visibleCursor);
+        visibleCursor = parent?.parentId === null || parent?.parentId === undefined
+          ? null
+          : String(parent.parentId);
+      }
+      const visibleParentId = committedPosition.parentId !== null
+        && readableDocuments.has(String(committedPosition.parentId))
+        ? String(committedPosition.parentId)
+        : null;
+      return {
+        version: result.state.version,
+        node: {
+          document: documentDto(movedDocument),
+          parentId: visibleParentId,
+          position: committedPosition.sortKey,
+          depth: visiblePath.length - 1,
+          path: visiblePath,
+          hasChildren: result.state.positions.some((position) =>
+            position.parentId !== null
+            && String(position.parentId) === documentId
+            && readableDocuments.has(String(position.documentId))),
+        },
+        previousParentId: eventStringOrNull(result.event.before, "parentId"),
+        previousPosition: eventInteger(result.event.before, "sortKey"),
+        affectedDocumentIds: result.event.affectedDocumentIds,
+        policyRevision,
+        permissionImpact: preview.dto.permissionImpact,
+      };
+    });
+  }
 
   app.post<{ Params: { collectionId: string; documentId: string } }>(
     "/api/collections/:collectionId/documents/:documentId/move/preview",
@@ -2447,140 +2687,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     "/api/collections/:collectionId/documents/:documentId/move",
     async (request): Promise<MoveDocumentResultDto> => {
       const { actor } = await requireActor(request, auth, authorization, config, true);
-      await sites.assertCollectionWritable(actor.workspaceId, request.params.collectionId);
-      return database.withContentProjectionLock(async () => {
-        const preview = await calculateMovePreview(
-          actor,
-          request.params.collectionId,
-          request.params.documentId,
-          request.body,
-          true,
-        );
-        const policyActor = authorizationActor(actor.subjectId);
-        if (preview.dto.permissionImpact?.requiresAuthorizationManagement === true) {
-          await authorization.requireHierarchyPolicyManagement(policyActor);
-        }
-
-        // Prepare every read needed by the response before the command. A
-        // successful write can therefore never be followed by a response 403.
-        const hypotheticalById = new Map(preview.hypotheticalTree.items.map((position) => [
-          String(position.documentId),
-          position,
-        ]));
-        const movedPosition = hypotheticalById.get(request.params.documentId);
-        if (movedPosition === undefined) {
-          throw new ApplicationError("HIERARCHY_INVARIANT_VIOLATION", 500, "Moved node is missing.");
-        }
-        const candidateIds = new Set<string>([request.params.documentId]);
-        let pathCursor: string | null = request.params.documentId;
-        while (pathCursor !== null) {
-          candidateIds.add(pathCursor);
-          const position = hypotheticalById.get(pathCursor);
-          pathCursor = position?.parentId === null || position?.parentId === undefined
-            ? null
-            : String(position.parentId);
-        }
-        preview.hypotheticalTree.items.forEach((position) => {
-          if (position.parentId !== null && String(position.parentId) === request.params.documentId) {
-            candidateIds.add(String(position.documentId));
-          }
-        });
-        const readableDocuments = new Map<string, Awaited<ReturnType<typeof documents.get>>>();
-        for (const candidateId of candidateIds) {
-          try {
-            readableDocuments.set(
-              candidateId,
-              await documents.get(actor, request.params.collectionId, candidateId),
-            );
-          } catch (error: unknown) {
-            if (candidateId === request.params.documentId || !(error instanceof ApplicationError) || error.status !== 403) {
-              throw error;
-            }
-          }
-        }
-        const movedDocument = readableDocuments.get(request.params.documentId);
-        if (movedDocument === undefined) {
-          throw new ApplicationError("AUTHORIZATION_DENIED", 403, "The moved document is not readable.");
-        }
-
-        let affectedResourceIds: readonly string[] = [];
-        let fenced = false;
-        let result;
-        try {
-          result = await hierarchy.moveNode(
-            actor,
-            request.params.collectionId,
-            { documentId: request.params.documentId, ...preview.request },
-            {
-              beforeCommit: async (authorizedPreview) => {
-                affectedResourceIds = authorizedPreview.permissionImpact?.affectedResourceIds ?? [];
-                await authorization.quarantineContentResources(
-                  policyActor,
-                  affectedResourceIds,
-                  "hierarchy-move-pending",
-                );
-                fenced = true;
-              },
-            },
-          );
-        } catch (error: unknown) {
-          if (fenced) {
-            await authorization.releaseContentResourceQuarantine(policyActor, affectedResourceIds);
-          }
-          throw error;
-        }
-        let policyRevision = preview.dto.policyRevision;
-        try {
-          const reconciled = await reconcileAuthorizationHierarchy(
-            policyActor,
-            (await database.getActiveSchema())?.schema.collections ?? [],
-            "hierarchy.move",
-            preview.dto.policyRevision,
-          );
-          policyRevision = reconciled.revision;
-        } catch (error: unknown) {
-          // Durable quarantine intentionally remains until a later reconcile or restart.
-          throw error;
-        }
-        const committedPosition = result.state.positions.find(
-          ({ documentId }) => String(documentId) === request.params.documentId,
-        );
-        if (committedPosition === undefined) {
-          throw new ApplicationError("HIERARCHY_INVARIANT_VIOLATION", 500, "Moved node is missing.");
-        }
-        const visiblePath: string[] = [request.params.documentId];
-        let visibleCursor = committedPosition.parentId === null ? null : String(committedPosition.parentId);
-        while (visibleCursor !== null && readableDocuments.has(visibleCursor)) {
-          visiblePath.unshift(visibleCursor);
-          const parent = result.state.positions.find(({ documentId }) => String(documentId) === visibleCursor);
-          visibleCursor = parent?.parentId === null || parent?.parentId === undefined
-            ? null
-            : String(parent.parentId);
-        }
-        const visibleParentId = committedPosition.parentId !== null &&
-          readableDocuments.has(String(committedPosition.parentId))
-          ? String(committedPosition.parentId)
-          : null;
-        return {
-          version: result.state.version,
-          node: {
-            document: movedDocument,
-            parentId: visibleParentId,
-            position: committedPosition.sortKey,
-            depth: visiblePath.length - 1,
-            path: visiblePath,
-            hasChildren: result.state.positions.some((position) =>
-              position.parentId !== null &&
-              String(position.parentId) === request.params.documentId &&
-              readableDocuments.has(String(position.documentId))),
-          },
-          previousParentId: eventStringOrNull(result.event.before, "parentId"),
-          previousPosition: eventInteger(result.event.before, "sortKey"),
-          affectedDocumentIds: result.event.affectedDocumentIds,
-          policyRevision,
-          permissionImpact: preview.dto.permissionImpact,
-        };
-      });
+      return moveHierarchyDocument(
+        actor,
+        request.params.collectionId,
+        request.params.documentId,
+        request.body,
+      );
     },
   );
 
@@ -2677,51 +2789,16 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       if (!("data" in body)) {
         throw badRequest("REQUEST_BODY_INVALID", "data is required.");
       }
-      const result = await database.withContentProjectionLock(async () => {
-        const active = await database.getActiveSchema();
-        const collection = active?.schema.collections.find(
-          ({ id, name }) => String(id) === request.params.collectionId || name === request.params.collectionId,
-        );
-        let placement: {
-          readonly parentId: string | null;
-          readonly position: number;
-          readonly expectedVersion: number;
-        } | undefined;
-        if (collection?.hierarchy?.enabled === true) {
-          if (body["hierarchy"] === undefined) {
-            const roots = await hierarchy.listRoots(actor, request.params.collectionId);
-            placement = { parentId: null, position: roots.items.length, expectedVersion: roots.version };
-          } else {
-            const hierarchyBody = objectBody(body["hierarchy"]);
-            placement = {
-              parentId: nullableString(hierarchyBody["parentId"], "hierarchy.parentId"),
-              position: nonNegativeInteger(hierarchyBody["position"], "hierarchy.position"),
-              expectedVersion: nonNegativeInteger(
-                hierarchyBody["expectedVersion"],
-                "hierarchy.expectedVersion",
-              ),
-            };
-          }
-        } else if (body["hierarchy"] !== undefined) {
-          throw badRequest("HIERARCHY_NOT_ENABLED", "This collection does not enable hierarchy.");
-        }
-        const created = await documents.create(
-          actor,
-          request.params.collectionId,
-          body["data"],
-          placement,
-        );
-        try {
-          await reconcileAuthorizationHierarchy(
-            authorizationActor(actor.subjectId),
-            (await database.getActiveSchema())?.schema.collections ?? [],
-            "hierarchy.create",
-          );
-        } catch (error: unknown) {
-          // The new resource is absent, so every document-level check naturally fails closed.
-          throw error;
-        }
-        return created;
+      const hierarchyBody = body["hierarchy"] === undefined ? undefined : objectBody(body["hierarchy"]);
+      const result = await createContentDocument(actor, request.params.collectionId, {
+        data: objectBody(body["data"]),
+        ...(hierarchyBody === undefined ? {} : {
+          hierarchy: {
+            parentId: nullableString(hierarchyBody["parentId"], "hierarchy.parentId"),
+            position: nonNegativeInteger(hierarchyBody["position"], "hierarchy.position"),
+            expectedVersion: nonNegativeInteger(hierarchyBody["expectedVersion"], "hierarchy.expectedVersion"),
+          },
+        }),
       });
       reply.code(201);
       return result;

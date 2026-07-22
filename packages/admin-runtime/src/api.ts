@@ -5,6 +5,13 @@ import type {
   DocumentQueryResultDto,
   DocumentRecordDto,
   DocumentRevisionListDto,
+  DocumentTreeDto,
+  MediaListDto,
+  MediaRecordDto,
+  MoveDocumentPreviewDto,
+  MoveDocumentPreviewRequest,
+  MoveDocumentRequest,
+  MoveDocumentResultDto,
   ProblemDetails,
   SessionDto,
 } from "@xecms/contracts";
@@ -24,7 +31,11 @@ export class AdminRuntimeApiError extends Error {
 export interface AdminRuntimeDataClient {
   query(collectionId: string, input: DocumentQueryRequest): Promise<DocumentQueryResultDto>;
   get(collectionId: string, documentId: string): Promise<DocumentRecordDto>;
-  create(collectionId: string, data: Readonly<Record<string, unknown>>): Promise<DocumentRecordDto>;
+  create(
+    collectionId: string,
+    data: Readonly<Record<string, unknown>>,
+    hierarchy?: { readonly parentId: string | null; readonly position: number; readonly expectedVersion: number },
+  ): Promise<DocumentRecordDto>;
   update(
     collectionId: string,
     documentId: string,
@@ -37,6 +48,12 @@ export interface AdminRuntimeDataClient {
   restore(collectionId: string, documentId: string, expectedVersion: number): Promise<DocumentRecordDto>;
   revisions(collectionId: string, documentId: string): Promise<DocumentRevisionListDto>;
   restoreRevision(collectionId: string, documentId: string, revisionId: string, expectedVersion: number): Promise<DocumentRecordDto>;
+  tree(collectionId: string): Promise<DocumentTreeDto>;
+  previewMove(collectionId: string, documentId: string, input: MoveDocumentPreviewRequest): Promise<MoveDocumentPreviewDto>;
+  move(collectionId: string, documentId: string, input: MoveDocumentRequest): Promise<MoveDocumentResultDto>;
+  listMedia(): Promise<MediaListDto>;
+  uploadMedia(file: File): Promise<MediaRecordDto>;
+  mediaContentUrl(mediaId: string): string;
   logout(): Promise<void>;
 }
 
@@ -49,6 +66,7 @@ export function createAdminRuntimeDataClient(runtime: AdminAppRuntimeDto): Admin
   const prefix = realmKey === undefined
     ? "/api"
     : `/api/content-realms/${encodeURIComponent(realmKey)}`;
+  const runtimePrefix = `/api/admin-apps/runtime/${encodeURIComponent(runtime.app.key)}`;
   let csrfToken: string | undefined;
 
   const csrf = async (): Promise<string> => {
@@ -70,12 +88,12 @@ export function createAdminRuntimeDataClient(runtime: AdminAppRuntimeDto): Admin
     get: (collectionId, documentId) => request(
       `${prefix}/collections/${encodeURIComponent(collectionId)}/documents/${encodeURIComponent(documentId)}`,
     ),
-    create: async (collectionId, data) => request(
+    create: async (collectionId, data, hierarchy) => request(
       `${prefix}/collections/${encodeURIComponent(collectionId)}/documents`,
       {
         method: "POST",
         headers: { "x-csrf-token": await csrf() },
-        body: JSON.stringify({ data }),
+        body: JSON.stringify({ data, ...(hierarchy === undefined ? {} : { hierarchy }) }),
       },
     ),
     update: async (collectionId, documentId, data, expectedVersion) => request(
@@ -109,6 +127,29 @@ export function createAdminRuntimeDataClient(runtime: AdminAppRuntimeDto): Admin
       `${prefix}/collections/${encodeURIComponent(collectionId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
       { method: "POST", headers: { "x-csrf-token": await csrf() }, body: JSON.stringify({ expectedVersion }) },
     ),
+    tree: (collectionId) => request(
+      `${runtimePrefix}/collections/${encodeURIComponent(collectionId)}/tree`,
+    ),
+    previewMove: async (collectionId, documentId, input) => request(
+      `${runtimePrefix}/collections/${encodeURIComponent(collectionId)}/documents/${encodeURIComponent(documentId)}/move/preview`,
+      { method: "POST", headers: { "x-csrf-token": await csrf() }, body: JSON.stringify(input) },
+    ),
+    move: async (collectionId, documentId, input) => request(
+      `${runtimePrefix}/collections/${encodeURIComponent(collectionId)}/documents/${encodeURIComponent(documentId)}/move`,
+      { method: "POST", headers: { "x-csrf-token": await csrf() }, body: JSON.stringify(input) },
+    ),
+    listMedia: () => request(`${runtimePrefix}/media`),
+    uploadMedia: async (file) => request(`${runtimePrefix}/media`, {
+      method: "POST",
+      headers: {
+        "x-csrf-token": await csrf(),
+        "content-type": "application/octet-stream",
+        "x-media-content-type": file.type || "application/octet-stream",
+        "x-file-name": encodeURIComponent(file.name),
+      },
+      body: file,
+    }),
+    mediaContentUrl: (mediaId) => `/api/media/${encodeURIComponent(mediaId)}/content`,
     logout: async () => request(
       realmKey === undefined ? "/api/auth/logout" : `${prefix}/logout`,
       { method: "POST", headers: { "x-csrf-token": await csrf() } },

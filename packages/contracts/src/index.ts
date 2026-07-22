@@ -404,6 +404,11 @@ export interface FieldSummaryDto {
   readonly label?: string;
   readonly type: ContentFieldType;
   readonly required: boolean;
+  readonly options?: readonly { readonly label: string; readonly value: string }[];
+  readonly multiple?: boolean;
+  readonly targetCollectionId?: string;
+  readonly relationCardinality?: "one" | "many";
+  readonly acceptedMimeTypes?: readonly string[];
 }
 
 export interface CollectionSummaryDto {

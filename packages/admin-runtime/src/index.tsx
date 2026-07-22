@@ -11,7 +11,11 @@ import type {
   DocumentQueryRequest,
   DocumentRecordDto,
   DocumentRevisionSummaryDto,
+  DocumentTreeNodeDto,
   FieldSummaryDto,
+  MediaRecordDto,
+  MoveDocumentPermissionImpactDto,
+  MoveDocumentPreviewDto,
 } from "@xecms/contracts";
 import { Button, Callout, LoadingIndicator } from "@xecms/ui";
 
@@ -171,6 +175,8 @@ function CollectionList({ runtime, page, client, navigate }: {
   const [error, setError] = useState<string | null>(null);
   const [filterId, setFilterId] = useState(visibleFilters[0]?.id ?? "");
   const [filterValue, setFilterValue] = useState("");
+  const [view, setView] = useState<"table" | "tree">("table");
+  const hierarchyEnabled = collection?.hierarchy?.enabled === true;
 
   useEffect(() => {
     let current = true;
@@ -215,6 +221,19 @@ function CollectionList({ runtime, page, client, navigate }: {
         title={page.title ?? collection?.label ?? collection?.name ?? "문서"}
         action={createPage === undefined ? null : <Button onPress={() => navigate(createPage.id)}>새 문서</Button>}
       />
+      {hierarchyEnabled ? <div className={styles.viewSwitcher} aria-label="문서 목록 보기 방식">
+        <Button size="small" variant={view === "table" ? "primary" : "quiet"} onPress={() => setView("table")}>표 보기</Button>
+        <Button size="small" variant={view === "tree" ? "primary" : "quiet"} onPress={() => setView("tree")}>트리 보기</Button>
+      </div> : null}
+      {view === "tree" && hierarchyEnabled ? (
+        <HierarchyTree
+          collectionId={page.collectionId}
+          collectionLabel={collection?.label ?? collection?.name ?? page.collectionId}
+          client={client}
+          canMove={runtime.access.actions[`${page.id}:core.action.hierarchy.move`] === true}
+          onOpen={(documentId) => page.rowClick && navigate(`${page.rowClick.pageId}/${documentId}`)}
+        />
+      ) : <>
       {error ? <Callout tone="error">{error}</Callout> : null}
       {visibleFilters.length > 0 ? <div className={styles.filterBar}>
         <select aria-label="필터 필드" value={filterId} onChange={(event) => { setFilterId(event.target.value); setCursor(undefined); setHistory([]); }}>
@@ -267,8 +286,245 @@ function CollectionList({ runtime, page, client, navigate }: {
           }}
         >다음</Button>
       </div>
+      </>}
     </section>
   );
+}
+
+interface PendingHierarchyMove {
+  readonly node: DocumentTreeNodeDto;
+  readonly parentId: string | null;
+  readonly position: number;
+  readonly expectedVersion: number;
+  readonly preview: MoveDocumentPreviewDto;
+}
+
+function HierarchyTree({ collectionId, collectionLabel, client, canMove, onOpen }: {
+  readonly collectionId: string;
+  readonly collectionLabel: string;
+  readonly client: AdminRuntimeDataClient;
+  readonly canMove: boolean;
+  readonly onOpen: (documentId: string) => void;
+}) {
+  const [nodes, setNodes] = useState<readonly DocumentTreeNodeDto[]>([]);
+  const [version, setVersion] = useState(0);
+  const [pending, setPending] = useState(true);
+  const [moving, setMoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PendingHierarchyMove | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const reload = async () => {
+    setPending(true); setError(null);
+    try {
+      const tree = await client.tree(collectionId);
+      setNodes(tree.items); setVersion(tree.version);
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+  useEffect(() => { void reload(); }, [client, collectionId]);
+
+  const requestPreview = async (node: DocumentTreeNodeDto, parentId: string | null, position: number) => {
+    setMoving(true); setError(null); setResult(null);
+    try {
+      const movePreview = await client.previewMove(collectionId, node.document.id, {
+        newParentId: parentId,
+        position,
+        expectedVersion: version,
+      });
+      setPreview({ node, parentId, position, expectedVersion: version, preview: movePreview });
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setMoving(false);
+    }
+  };
+  const applyMove = async () => {
+    if (preview === null) return;
+    setMoving(true); setError(null);
+    try {
+      const moved = await client.move(collectionId, preview.node.document.id, {
+        newParentId: preview.parentId,
+        position: preview.position,
+        expectedVersion: preview.expectedVersion,
+        expectedPolicyRevision: preview.preview.policyRevision,
+      });
+      setPreview(null);
+      setResult(`${documentChoiceLabel(moved.node.document)} 이동 완료 · Tree v${moved.version} · Policy r${moved.policyRevision}`);
+      await reload();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  if (pending) return <LoadingIndicator label="콘텐츠 트리를 불러오는 중" />;
+  return <section className={styles.hierarchyCard} aria-label={`${collectionLabel} 콘텐츠 트리`}>
+    <header className={styles.hierarchyHeader}>
+      <div><strong>계층 구조</strong><small>Tree v{version} · 보이는 문서와 허용된 작업만 표시됩니다.</small></div>
+      <Button size="small" variant="quiet" onPress={() => void reload()}>새로고침</Button>
+    </header>
+    {error ? <Callout tone="error">{error}</Callout> : null}
+    {result ? <Callout tone="success">{result}</Callout> : null}
+    {nodes.length === 0 ? <p className={styles.empty}>표시할 계층 문서가 없습니다.</p> : <ol className={styles.hierarchyList}>
+      {nodes.map((node) => <HierarchyRow
+        key={node.document.id}
+        node={node}
+        nodes={nodes}
+        version={version}
+        disabled={moving}
+        canMove={canMove}
+        onOpen={onOpen}
+        onMove={(parentId, position) => void requestPreview(node, parentId, position)}
+      />)}
+    </ol>}
+    {preview ? <div className={styles.previewBackdrop} role="presentation">
+      <section className={styles.movePreview} role="dialog" aria-modal="true" aria-labelledby="runtime-move-preview-title">
+        <header><div><span>MOVE PREVIEW</span><h2 id="runtime-move-preview-title">계층 이동 확인</h2></div><button type="button" aria-label="닫기" onClick={() => setPreview(null)}>×</button></header>
+        <p><strong>{documentChoiceLabel(preview.node.document)}</strong>의 구조와 권한 영향을 확인하세요.</p>
+        <MoveImpact preview={preview} nodes={nodes} />
+        <footer>
+          <Button variant="quiet" isDisabled={moving} onPress={() => setPreview(null)}>취소</Button>
+          <Button isDisabled={moving} onPress={() => void applyMove()}>{moving ? "이동 중…" : "확인 후 이동"}</Button>
+        </footer>
+      </section>
+    </div> : null}
+  </section>;
+}
+
+function HierarchyRow({ node, nodes, version, disabled, canMove, onOpen, onMove }: {
+  readonly node: DocumentTreeNodeDto;
+  readonly nodes: readonly DocumentTreeNodeDto[];
+  readonly version: number;
+  readonly disabled: boolean;
+  readonly canMove: boolean;
+  readonly onOpen: (documentId: string) => void;
+  readonly onMove: (parentId: string | null, position: number) => void;
+}) {
+  const [parentId, setParentId] = useState(node.parentId ?? "");
+  const [position, setPosition] = useState(String(node.position));
+  useEffect(() => {
+    setParentId(node.parentId ?? ""); setPosition(String(node.position));
+  }, [node.parentId, node.position, version]);
+  const descendants = new Set(nodes
+    .filter((candidate) => candidate.path.includes(node.document.id))
+    .map((candidate) => candidate.document.id));
+  const titles = new Map(nodes.map((candidate) => [candidate.document.id, documentChoiceLabel(candidate.document)]));
+  return <li className={styles.hierarchyNode} style={{ marginInlineStart: `${Math.min(node.depth, 8) * 1.1}rem` }}>
+    <div className={styles.hierarchyNodeTitle}>
+      <button type="button" onClick={() => onOpen(node.document.id)}>{documentChoiceLabel(node.document)}</button>
+      <small>{node.path.map((id) => titles.get(id) ?? id).join(" / ") || "최상위"}</small>
+      <span className={styles.status}>{node.document.displayState}</span>
+    </div>
+    {canMove ? <div className={styles.hierarchyControls} aria-label={`${documentChoiceLabel(node.document)} 계층 편집`}>
+      <label><span>부모</span><select value={parentId} disabled={disabled} onChange={(event) => {
+        setParentId(event.target.value);
+        setPosition("0");
+      }}>
+        <option value="">최상위</option>
+        {nodes.filter((candidate) => candidate.document.id !== node.document.id && !descendants.has(candidate.document.id))
+          .map((candidate) => <option key={candidate.document.id} value={candidate.document.id}>{"　".repeat(candidate.depth)}{documentChoiceLabel(candidate.document)}</option>)}
+      </select></label>
+      <label><span>순서</span><input type="number" min="0" value={position} disabled={disabled} onChange={(event) => setPosition(event.target.value)} /></label>
+      <Button size="small" variant="secondary" isDisabled={disabled} onPress={() => onMove(parentId || null, Math.max(0, Number(position) || 0))}>이동 Preview</Button>
+    </div> : null}
+  </li>;
+}
+
+function MoveImpact({ preview, nodes }: {
+  readonly preview: PendingHierarchyMove;
+  readonly nodes: readonly DocumentTreeNodeDto[];
+}) {
+  const titles = new Map(nodes.map((node) => [node.document.id, documentChoiceLabel(node.document)]));
+  const parent = (id: string | null) => id === null ? "최상위" : titles.get(id) ?? id;
+  const impact = preview.preview.permissionImpact;
+  return <div className={styles.moveImpact}>
+    <div className={styles.movePath}><div><span>현재 부모</span><strong>{parent(preview.preview.previousParentId)}</strong><small>순서 {preview.preview.previousPosition}</small></div><b aria-hidden="true">→</b><div><span>새 부모</span><strong>{parent(preview.parentId)}</strong><small>순서 {preview.position}</small></div></div>
+    {impact === null ? <Callout tone="info">권한 상속을 사용하지 않아 Authorization 경로 변화가 없습니다.</Callout> : <PermissionImpact impact={impact} titles={titles} />}
+    <small>Tree v{preview.expectedVersion} · Policy r{preview.preview.policyRevision} 기준</small>
+  </div>;
+}
+
+function PermissionImpact({ impact, titles }: {
+  readonly impact: MoveDocumentPermissionImpactDto;
+  readonly titles: ReadonlyMap<string, string>;
+}) {
+  const path = (ids: readonly string[]) => ids.map((id) => titles.get(id) ?? id).join(" / ") || "최상위";
+  return <div className={styles.permissionImpact}>
+    <Callout tone={impact.requiresAuthorizationManagement ? "warning" : "info"}>
+      영향 문서 {impact.affectedDocumentIds.length}개 · {path(impact.beforeDocumentPath)} → {path(impact.afterDocumentPath)}
+      {impact.requiresAuthorizationManagement ? " · Authorization 관리 권한이 필요합니다." : ""}
+    </Callout>
+    {(impact.effectivePermissionChanges?.length ?? 0) > 0 ? <ul>
+      {impact.effectivePermissionChanges?.map((change) => <li key={`${change.subjectId}:${change.resourceId}:${change.permission}`}>
+        <strong>{change.change === "granted" ? "획득" : "상실"}</strong> {change.subjectId} · <code>{change.permission}</code>
+      </li>)}
+    </ul> : null}
+    {(impact.effectiveFieldAccessChanges?.length ?? 0) > 0 ? <ul>
+      {impact.effectiveFieldAccessChanges?.map((change) => <li key={`${change.subjectId}:${change.resourceId}:${change.operation}`}>
+        <strong>필드 {change.change === "broadened" ? "확대" : change.change === "narrowed" ? "축소" : "변경"}</strong> {change.subjectId} · {change.operation}
+      </li>)}
+    </ul> : null}
+    {impact.effectivePermissionChangesTruncated ? <small>변경 수가 많아 일부 권한 영향만 표시됩니다.</small> : null}
+  </div>;
+}
+
+interface RuntimeFormResources {
+  readonly relations: Readonly<Record<string, readonly DocumentRecordDto[]>>;
+  readonly media: readonly MediaRecordDto[];
+  readonly error: string | null;
+  readonly uploadMedia: (file: File) => Promise<MediaRecordDto>;
+}
+
+function useRuntimeFormResources(
+  runtime: AdminAppRuntimeDto,
+  pageId: string,
+  collection: CollectionSummaryDto | undefined,
+  client: AdminRuntimeDataClient,
+): RuntimeFormResources {
+  const [relations, setRelations] = useState<Readonly<Record<string, readonly DocumentRecordDto[]>>>({});
+  const [media, setMedia] = useState<readonly MediaRecordDto[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const relationTargetIds = useMemo(() => [...new Set((collection?.fields ?? []).flatMap((field) =>
+    field.type === "relation" && field.targetCollectionId !== undefined
+      && runtime.schema.collections.some(({ id }) => id === field.targetCollectionId)
+      ? [field.targetCollectionId]
+      : []))], [collection, runtime.schema.collections]);
+  const needsMedia = collection?.fields.some(({ type }) => type === "upload") === true;
+  const canReadMedia = runtime.access.actions[`${pageId}:core.action.media.read`] === true;
+
+  useEffect(() => {
+    let current = true;
+    setError(null);
+    void Promise.all([
+      ...relationTargetIds.map(async (targetId) => [
+        targetId,
+        (await client.query(targetId, { limit: 100, state: "active" })).items,
+      ] as const),
+      ...(needsMedia && canReadMedia ? [client.listMedia().then((result) => ["__media", result.items] as const)] : []),
+    ]).then((entries) => {
+      if (!current) return;
+      setRelations(Object.fromEntries(entries.filter(([key]) => key !== "__media")));
+      const mediaEntry = entries.find(([key]) => key === "__media");
+      setMedia((mediaEntry?.[1] ?? []) as readonly MediaRecordDto[]);
+    }).catch((caught) => current && setError(message(caught)));
+    return () => { current = false; };
+  }, [canReadMedia, client, needsMedia, relationTargetIds]);
+
+  return {
+    relations,
+    media,
+    error,
+    uploadMedia: async (file) => {
+      const uploaded = await client.uploadMedia(file);
+      setMedia((items) => [uploaded, ...items.filter(({ id }) => id !== uploaded.id)]);
+      return uploaded;
+    },
+  };
 }
 
 function DocumentForm({ runtime, page, documentId, client, navigate, onDirtyChange }: {
@@ -288,6 +544,7 @@ function DocumentForm({ runtime, page, documentId, client, navigate, onDirtyChan
   const [fieldErrors, setFieldErrors] = useState<Readonly<Record<string, string>>>({});
   const [baseline, setBaseline] = useState("{}");
   const writable = runtime.access.writableFields[page.collectionId];
+  const resources = useRuntimeFormResources(runtime, page.id, collection, client);
 
   useEffect(() => {
     if (documentId === undefined) return;
@@ -326,6 +583,7 @@ function DocumentForm({ runtime, page, documentId, client, navigate, onDirtyChan
     <section className={styles.page}>
       <PageHeader eyebrow={collection?.label ?? page.collectionId} title={document === null ? "새 문서" : "문서 편집"} />
       {error ? <Callout tone="error">{error}</Callout> : null}
+      {resources.error ? <Callout tone="error">선택 항목을 불러오지 못했습니다. {resources.error}</Callout> : null}
       <form className={styles.formCard} onSubmit={(event) => void save(event)}>
         <FormNodes
           nodes={page.layout.nodes}
@@ -334,6 +592,8 @@ function DocumentForm({ runtime, page, documentId, client, navigate, onDirtyChan
           readable={runtime.access.readableFields[page.collectionId]}
           writable={writable}
           errors={fieldErrors}
+          resources={resources}
+          canUploadMedia={runtime.access.actions[`${page.id}:core.action.media.upload`] === true}
           onChange={(name, value) => {
             setValues((current) => ({ ...current, [name]: value }));
             setFieldErrors((current) => withoutKey(current, name));
@@ -359,6 +619,7 @@ function SingletonForm({ runtime, page, client, onDirtyChange }: {
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Readonly<Record<string, string>>>({});
   const [baseline, setBaseline] = useState("{}");
+  const resources = useRuntimeFormResources(runtime, page.id, collection, client);
   useEffect(() => {
     let current = true;
     void client.query(page.collectionId, { limit: 1, state: "active" }).then((result) => {
@@ -388,10 +649,13 @@ function SingletonForm({ runtime, page, client, onDirtyChange }: {
   return <section className={styles.page}>
     <PageHeader eyebrow={collection?.label ?? page.collectionId} title={page.title ?? collection?.label ?? "설정"} />
     {error ? <Callout tone="error">{error}</Callout> : null}
+    {resources.error ? <Callout tone="error">선택 항목을 불러오지 못했습니다. {resources.error}</Callout> : null}
     <form className={styles.formCard} onSubmit={(event) => void save(event)}>
       <FormNodes nodes={page.layout.nodes} collection={collection} values={values} errors={fieldErrors}
         readable={runtime.access.readableFields[page.collectionId]}
         writable={runtime.access.writableFields[page.collectionId]}
+        resources={resources}
+        canUploadMedia={runtime.access.actions[`${page.id}:core.action.media.upload`] === true}
         onChange={(name, value) => {
           setValues((current) => ({ ...current, [name]: value }));
           setFieldErrors((current) => withoutKey(current, name));
@@ -494,13 +758,15 @@ function Dashboard({ runtime, page }: {
   </section>;
 }
 
-function FormNodes({ nodes, collection, values, readable, writable, errors, onChange }: {
+function FormNodes({ nodes, collection, values, readable, writable, errors, resources, canUploadMedia, onChange }: {
   readonly nodes: readonly FormLayoutNode[];
   readonly collection: CollectionSummaryDto | undefined;
   readonly values: Readonly<Record<string, unknown>>;
   readonly readable: readonly string[] | null | undefined;
   readonly writable: readonly string[] | null | undefined;
   readonly errors: Readonly<Record<string, string>>;
+  readonly resources: RuntimeFormResources;
+  readonly canUploadMedia: boolean;
   readonly onChange: (name: string, value: unknown) => void;
 }) {
   return <>{nodes.map((node) => {
@@ -512,28 +778,38 @@ function FormNodes({ nodes, collection, values, readable, writable, errors, onCh
       return <FieldControl key={node.id} field={field} value={values[field.name]}
         readOnly={node.readOnly === true || (writable !== null && !writable?.includes(field.id))}
         label={node.label} description={node.description} error={errors[field.name]}
+        relationOptions={field.targetCollectionId === undefined ? [] : resources.relations[field.targetCollectionId] ?? []}
+        media={resources.media}
+        canUploadMedia={canUploadMedia}
+        onUploadMedia={resources.uploadMedia}
         onChange={(value) => onChange(field.name, value)} />;
     }
     if (node.type === "section") return <fieldset key={node.id} className={styles.formSection}>
       {node.title ? <legend>{node.title}</legend> : null}{node.description ? <p>{node.description}</p> : null}
       <div className={styles.formGrid} style={{ gridTemplateColumns: `repeat(${node.columns ?? 1}, minmax(0, 1fr))` }}>
-        <FormNodes nodes={node.children} collection={collection} values={values} readable={readable} writable={writable} errors={errors} onChange={onChange} />
+        <FormNodes nodes={node.children} collection={collection} values={values} readable={readable} writable={writable} errors={errors} resources={resources} canUploadMedia={canUploadMedia} onChange={onChange} />
       </div>
     </fieldset>;
-    if (node.type === "tabs") return <div key={node.id} className={styles.formSection}>{node.tabs.map((tab) => <section key={tab.id}><h3>{tab.label}</h3><FormNodes nodes={tab.children} collection={collection} values={values} readable={readable} writable={writable} errors={errors} onChange={onChange} /></section>)}</div>;
-    return <details key={node.id} className={styles.formSection} open={node.initiallyOpen}><summary>{node.title}</summary><FormNodes nodes={node.children} collection={collection} values={values} readable={readable} writable={writable} errors={errors} onChange={onChange} /></details>;
+    if (node.type === "tabs") return <div key={node.id} className={styles.formSection}>{node.tabs.map((tab) => <section key={tab.id}><h3>{tab.label}</h3><FormNodes nodes={tab.children} collection={collection} values={values} readable={readable} writable={writable} errors={errors} resources={resources} canUploadMedia={canUploadMedia} onChange={onChange} /></section>)}</div>;
+    return <details key={node.id} className={styles.formSection} open={node.initiallyOpen}><summary>{node.title}</summary><FormNodes nodes={node.children} collection={collection} values={values} readable={readable} writable={writable} errors={errors} resources={resources} canUploadMedia={canUploadMedia} onChange={onChange} /></details>;
   })}</>;
 }
 
-function FieldControl({ field, value, readOnly, label, description, error, onChange }: {
+function FieldControl({ field, value, readOnly, label, description, error, relationOptions, media, canUploadMedia, onUploadMedia, onChange }: {
   readonly field: FieldSummaryDto;
   readonly value: unknown;
   readonly readOnly: boolean;
   readonly label?: string;
   readonly description?: string;
   readonly error?: string;
+  readonly relationOptions: readonly DocumentRecordDto[];
+  readonly media: readonly MediaRecordDto[];
+  readonly canUploadMedia: boolean;
+  readonly onUploadMedia: (file: File) => Promise<MediaRecordDto>;
   readonly onChange: (value: unknown) => void;
 }) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const title = label ?? field.label ?? field.name;
   const id = `runtime-field-${field.id}`;
   const common = { id, name: field.name, disabled: readOnly, required: field.required, "aria-invalid": error === undefined ? undefined : true };
@@ -546,14 +822,69 @@ function FieldControl({ field, value, readOnly, label, description, error, onCha
     control = <input {...common} type="number" value={typeof value === "number" ? value : ""} onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))} />;
   } else if (field.type === "date" || field.type === "datetime") {
     control = <input {...common} type={field.type === "date" ? "date" : "datetime-local"} value={typeof value === "string" ? value.slice(0, field.type === "date" ? 10 : 16) : ""} onChange={(event) => onChange(event.target.value)} />;
-  } else if (["json", "object", "array", "blocks", "relation", "upload", "component"].includes(field.type)) {
+  } else if (field.type === "select" || field.type === "enum") {
+    const selected = field.multiple === true
+      ? (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [])
+      : (typeof value === "string" ? value : "");
+    control = <select {...common} multiple={field.multiple === true} value={selected} onChange={(event) => onChange(field.multiple === true
+      ? [...event.currentTarget.selectedOptions].map(({ value: selectedValue }) => selectedValue)
+      : event.currentTarget.value || null)}>
+      {field.multiple === true ? null : <option value="">선택하지 않음</option>}
+      {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>;
+  } else if (field.type === "relation") {
+    const selected = field.relationCardinality === "many"
+      ? (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [])
+      : (typeof value === "string" ? value : "");
+    control = <select {...common} multiple={field.relationCardinality === "many"} value={selected} onChange={(event) => onChange(field.relationCardinality === "many"
+      ? [...event.currentTarget.selectedOptions].map(({ value: selectedValue }) => selectedValue)
+      : event.currentTarget.value || null)}>
+      {field.relationCardinality === "many" ? null : <option value="">연결하지 않음</option>}
+      {relationOptions.map((document) => <option key={document.id} value={document.id}>{documentChoiceLabel(document)}</option>)}
+    </select>;
+  } else if (field.type === "upload") {
+    const selected = field.multiple === true
+      ? (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [])
+      : (typeof value === "string" ? value : "");
+    control = <div className={styles.mediaPicker}>
+      <select {...common} multiple={field.multiple === true} value={selected} onChange={(event) => onChange(field.multiple === true
+        ? [...event.currentTarget.selectedOptions].map(({ value: selectedValue }) => selectedValue)
+        : event.currentTarget.value || null)}>
+        {field.multiple === true ? null : <option value="">미디어 없음</option>}
+        {media.filter(({ mimeType }) => field.acceptedMimeTypes === undefined || field.acceptedMimeTypes.includes(mimeType))
+          .map((item) => <option key={item.id} value={item.id}>{item.fileName} · {item.mimeType}</option>)}
+      </select>
+      {canUploadMedia && !readOnly ? <label className={styles.uploadButton}>
+        {uploading ? "업로드 중…" : "새 파일 업로드"}
+        <input type="file" disabled={uploading} accept={field.acceptedMimeTypes?.join(",")} onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file === undefined) return;
+          setUploading(true); setUploadError(null);
+          void onUploadMedia(file).then((uploaded) => {
+            if (field.multiple === true) {
+              const current = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+              onChange([...current, uploaded.id]);
+            } else {
+              onChange(uploaded.id);
+            }
+          }).catch((caught) => setUploadError(message(caught))).finally(() => setUploading(false));
+        }} />
+      </label> : null}
+      {uploadError ? <small className={styles.fieldError}>{uploadError}</small> : null}
+    </div>;
+  } else if (["json", "object", "array", "blocks", "component"].includes(field.type)) {
     control = <textarea {...common} rows={5} value={value === undefined ? "" : JSON.stringify(value, null, 2)} onChange={(event) => {
       try { onChange(event.target.value === "" ? null : JSON.parse(event.target.value)); } catch { /* keep editing until valid JSON */ }
     }} />;
   } else {
     control = <input {...common} type="text" value={typeof value === "string" ? value : ""} onChange={(event) => onChange(event.target.value)} />;
   }
-  return <label className={styles.field} htmlFor={id}><span>{title}{field.required ? " *" : ""}</span>{control}{description ? <small>{description}</small> : null}{error ? <small className={styles.fieldError}>{error}</small> : null}</label>;
+  return <div className={styles.field}>
+    <label htmlFor={id}>{title}{field.required ? " *" : ""}</label>
+    {control}
+    {description ? <small>{description}</small> : null}
+    {error ? <small className={styles.fieldError}>{error}</small> : null}
+  </div>;
 }
 
 function NavigationItem({ item, currentPageId, onNavigate }: {
@@ -565,7 +896,7 @@ function NavigationItem({ item, currentPageId, onNavigate }: {
     const target = item.pageId;
     return <button type="button" data-active={target === currentPageId} onClick={() => onNavigate(target)}>{item.label}</button>;
   }
-  return <section className={styles.navGroup}><span>{item.label}</span>{item.children?.map((child) => <NavigationItem key={child.id} item={child} currentPageId={currentPageId} onNavigate={onNavigate} />)}</section>;
+  return <section className={styles.navGroup} aria-label={`${item.label} 메뉴 그룹`}><span>{item.label}</span>{item.children?.map((child) => <NavigationItem key={child.id} item={child} currentPageId={currentPageId} onNavigate={onNavigate} />)}</section>;
 }
 
 function visibleNavigationItem(item: AdminNavigationItem, runtime: AdminAppRuntimeDto): AdminNavigationItem | null {
@@ -614,6 +945,16 @@ function renderValue(value: unknown): ReactNode {
   if (typeof value === "boolean") return value ? "예" : "아니요";
   if (typeof value === "string" || typeof value === "number") return String(value);
   return <code>{JSON.stringify(value)}</code>;
+}
+
+function documentChoiceLabel(document: DocumentRecordDto): string {
+  const preferred = ["title", "name", "label", "slug"]
+    .map((key) => document.data[key])
+    .find((value) => typeof value === "string" && value.trim().length > 0);
+  if (typeof preferred === "string") return `${preferred} · ${document.id}`;
+  const fallback = Object.values(document.data)
+    .find((value) => typeof value === "string" && value.trim().length > 0);
+  return typeof fallback === "string" ? `${fallback} · ${document.id}` : document.id;
 }
 
 function audienceLabel(runtime: AdminAppRuntimeDto): string {

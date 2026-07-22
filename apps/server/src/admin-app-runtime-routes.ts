@@ -2,7 +2,10 @@ import {
   ApplicationError,
   adminAppAuthorizationResourceId,
   collectionResourceId,
+  realmAuthorizationRootResourceId,
   realmCollectionResourceId,
+  SYSTEM_AUTHORIZATION_REALM_ID,
+  SYSTEM_WORKSPACE_RESOURCE_ID,
   type ActorContext,
   type AdminAppRecord,
   type AdminAppRuntimeApplicationService,
@@ -16,6 +19,11 @@ import type {
   AdminAppRuntimeDto,
   AdminAppRuntimeUserDto,
   CollectionSummaryDto,
+  DocumentTreeDto,
+  MediaListDto,
+  MediaRecordDto,
+  MoveDocumentPreviewDto,
+  MoveDocumentResultDto,
 } from "@xecms/contracts";
 import type { CollectionDefinition, SchemaIrV1 } from "@xecms/schema";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -47,11 +55,35 @@ interface Options {
   readonly authenticate: (
     request: FastifyRequest,
     audience: AdminAppRecord["audience"],
+    requireCsrf: boolean,
   ) => Promise<RuntimeIdentity>;
   readonly getActiveSchema: () => Promise<{
     readonly revisionId: string;
     readonly schema: SchemaIrV1;
   } | null>;
+  readonly data: {
+    readonly tree: (actor: ActorContext, collectionId: string) => Promise<DocumentTreeDto>;
+    readonly previewMove: (
+      actor: ActorContext,
+      collectionId: string,
+      documentId: string,
+      body: unknown,
+    ) => Promise<MoveDocumentPreviewDto>;
+    readonly move: (
+      actor: ActorContext,
+      collectionId: string,
+      documentId: string,
+      body: unknown,
+    ) => Promise<MoveDocumentResultDto>;
+    readonly listMedia: (actor: ActorContext) => Promise<MediaListDto>;
+    readonly uploadMedia: (actor: ActorContext, input: {
+      readonly encodedFileName: string | string[] | undefined;
+      readonly contentType: string | undefined;
+      readonly declaredMimeType: string | undefined;
+      readonly contentLength: string | undefined;
+      readonly body: unknown;
+    }) => Promise<MediaRecordDto>;
+  };
 }
 
 export function registerAdminAppRuntimeRoutes(options: Options): void {
@@ -59,7 +91,7 @@ export function registerAdminAppRuntimeRoutes(options: Options): void {
     const appKey = routeKey(request.params);
     const audience = await options.runtime.audience(options.workspaceId, appKey);
     if (audience === null) runtimeNotFound();
-    const identity = await options.authenticate(request, audience);
+    const identity = await options.authenticate(request, audience, false);
     const runtime = options.runtime.load(identity.actor, appKey).catch((error: unknown) => {
       if (error instanceof ApplicationError && error.status === 403) {
         throw new ApplicationError(
@@ -82,7 +114,12 @@ export function registerAdminAppRuntimeRoutes(options: Options): void {
         "The active Schema required by this Admin App is unavailable.",
       );
     }
-    const collections = runtimeCollections(loaded.revision.manifest, activeSchema.schema, activeSchema.revisionId);
+    const collections = runtimeCollections(
+      loaded.revision.manifest,
+      activeSchema.schema,
+      activeSchema.revisionId,
+      identity.user.realmKey,
+    );
     const access = await accessProfile(
       options.authorization,
       identity.actor,
@@ -104,6 +141,87 @@ export function registerAdminAppRuntimeRoutes(options: Options): void {
 
   options.app.get("/api/admin-apps/runtime/:appKey", respond);
   options.app.post("/api/admin-apps/runtime/:appKey/access", respond);
+
+  const dataContext = async (request: FastifyRequest, requireCsrf: boolean) => {
+    const appKey = routeKey(request.params);
+    const audience = await options.runtime.audience(options.workspaceId, appKey);
+    if (audience === null) runtimeNotFound();
+    const identity = await options.authenticate(request, audience, requireCsrf);
+    const loaded = await options.runtime.load(identity.actor, appKey);
+    return { identity, manifest: loaded.revision.manifest };
+  };
+  const collectionContext = async (request: FastifyRequest, requireCsrf: boolean) => {
+    const context = await dataContext(request, requireCsrf);
+    const collectionId = routeValue(request.params, "collectionId");
+    if (!extractAdminAppDependencies(context.manifest).collectionIds.includes(collectionId)) {
+      throw new ApplicationError(
+        "ADMIN_APP_COLLECTION_NOT_INCLUDED",
+        404,
+        "The Collection is not included in this Admin App Revision.",
+      );
+    }
+    return { ...context, collectionId };
+  };
+
+  options.app.get(
+    "/api/admin-apps/runtime/:appKey/collections/:collectionId/tree",
+    async (request, reply): Promise<DocumentTreeDto> => {
+      const context = await collectionContext(request, false);
+      reply.header("cache-control", "private, no-store");
+      return options.data.tree(context.identity.actor, context.collectionId);
+    },
+  );
+  options.app.post(
+    "/api/admin-apps/runtime/:appKey/collections/:collectionId/documents/:documentId/move/preview",
+    async (request, reply): Promise<MoveDocumentPreviewDto> => {
+      const context = await collectionContext(request, true);
+      reply.header("cache-control", "private, no-store");
+      return options.data.previewMove(
+        context.identity.actor,
+        context.collectionId,
+        routeValue(request.params, "documentId"),
+        request.body,
+      );
+    },
+  );
+  options.app.post(
+    "/api/admin-apps/runtime/:appKey/collections/:collectionId/documents/:documentId/move",
+    async (request, reply): Promise<MoveDocumentResultDto> => {
+      const context = await collectionContext(request, true);
+      reply.header("cache-control", "private, no-store");
+      return options.data.move(
+        context.identity.actor,
+        context.collectionId,
+        routeValue(request.params, "documentId"),
+        request.body,
+      );
+    },
+  );
+  options.app.get(
+    "/api/admin-apps/runtime/:appKey/media",
+    async (request, reply): Promise<MediaListDto> => {
+      const context = await dataContext(request, false);
+      reply.header("cache-control", "private, no-store");
+      return options.data.listMedia(context.identity.actor);
+    },
+  );
+  options.app.post(
+    "/api/admin-apps/runtime/:appKey/media",
+    async (request, reply): Promise<MediaRecordDto> => {
+      const context = await dataContext(request, true);
+      const declaredMimeType = request.headers["x-media-content-type"];
+      const result = await options.data.uploadMedia(context.identity.actor, {
+        encodedFileName: request.headers["x-file-name"],
+        contentType: request.headers["content-type"],
+        declaredMimeType: typeof declaredMimeType === "string" ? declaredMimeType : undefined,
+        contentLength: request.headers["content-length"],
+        body: request.body,
+      });
+      reply.header("cache-control", "private, no-store");
+      reply.code(201);
+      return result;
+    },
+  );
 }
 
 async function accessProfile(
@@ -150,6 +268,21 @@ async function accessProfile(
         actionChecks.set(`${page.id}:core.action.revision.restore`, checks.permission("content.revision.restore", resourceId));
       }
       const collection = collectionById.get(pageCollectionId(page)!);
+      if (page.type === "collection-list" && collection?.hierarchy?.enabled === true) {
+        actionChecks.set(
+          `${page.id}:core.action.hierarchy.move`,
+          checks.permission("content.update", resourceId),
+        );
+      }
+      if ((page.type === "document-form" || page.type === "singleton")
+        && collection?.fields.some(({ type }) => type === "upload" || type === "rich-text") === true) {
+        const realmId = actor.realmId ?? SYSTEM_AUTHORIZATION_REALM_ID;
+        const mediaResourceId = realmId === SYSTEM_AUTHORIZATION_REALM_ID
+          ? SYSTEM_WORKSPACE_RESOURCE_ID
+          : realmAuthorizationRootResourceId(realmId);
+        actionChecks.set(`${page.id}:core.action.media.read`, checks.permission("media.read", mediaResourceId));
+        actionChecks.set(`${page.id}:core.action.media.upload`, checks.permission("media.upload", mediaResourceId));
+      }
       for (const field of collection?.fields ?? []) {
         const key = `${collection!.id}:${field.id}`;
         if (fieldChecks.has(key)) continue;
@@ -318,8 +451,20 @@ function runtimeCollections(
   manifest: AdminAppManifestV1,
   schema: SchemaIrV1,
   revisionId: string,
+  audienceRealmKey?: string,
 ): readonly CollectionSummaryDto[] {
   const ids = new Set(extractAdminAppDependencies(manifest).collectionIds);
+  const byId = new Map(schema.collections.map((collection) => [String(collection.id), collection]));
+  for (const collectionId of [...ids]) {
+    const collection = byId.get(collectionId);
+    for (const field of collection?.fields ?? []) {
+      if (field.type !== "relation") continue;
+      const target = byId.get(String(field.targetCollectionId));
+      if (target !== undefined && (target.auth === undefined || target.auth.realmKey === audienceRealmKey)) {
+        ids.add(String(target.id));
+      }
+    }
+  }
   return schema.collections.filter(({ id }) => ids.has(String(id))).map((collection) =>
     collectionDto(collection, revisionId));
 }
@@ -344,6 +489,18 @@ function collectionDto(collection: CollectionDefinition, revisionId: string): Co
       ...(field.label === undefined ? {} : { label: field.label }),
       type: field.type,
       required: field.required === true,
+      ...(field.type === "select" || field.type === "enum" ? {
+        options: field.options,
+        multiple: field.multiple === true,
+      } : {}),
+      ...(field.type === "relation" ? {
+        targetCollectionId: String(field.targetCollectionId),
+        relationCardinality: field.cardinality,
+      } : {}),
+      ...(field.type === "upload" ? {
+        multiple: field.multiple === true,
+        ...(field.acceptedMimeTypes === undefined ? {} : { acceptedMimeTypes: field.acceptedMimeTypes }),
+      } : {}),
     })),
     status: "applied",
     hasPendingChanges: false,
@@ -378,6 +535,14 @@ function routeKey(value: unknown): string {
     ? (value as Readonly<Record<string, unknown>>)["appKey"]
     : undefined;
   if (typeof candidate !== "string" || candidate.length < 1 || candidate.length > 63) runtimeNotFound();
+  return candidate;
+}
+
+function routeValue(value: unknown, key: string): string {
+  const candidate = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)[key]
+    : undefined;
+  if (typeof candidate !== "string" || candidate.length === 0) runtimeNotFound();
   return candidate;
 }
 
