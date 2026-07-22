@@ -1180,6 +1180,8 @@ describe.runIf(RUN)("XeCMS 0003 document lifecycle event upgrade", () => {
         "0024_m4_realm_full_access_lifecycle",
         "0025_m4_realm_collection_entitlements",
         "0026_m4_realm_management_delegations",
+        "0027_admin_app_access_reconciliation",
+        "0028_realm_auth_entitlement_cleanup",
       ]);
 
       await migrateCore(database.pool, schemaName);

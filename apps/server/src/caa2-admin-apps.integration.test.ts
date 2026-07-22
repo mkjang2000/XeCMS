@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { minimalBackofficeManifest } from "@xecms/admin-apps";
-import { PostgresDatabase, quoteIdentifier } from "@xecms/database";
+import { PostgresDatabase, qualifiedName, quoteIdentifier } from "@xecms/database";
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 
@@ -21,7 +21,7 @@ const ORIGIN = "http://127.0.0.1:3198";
 
 interface Session { readonly cookie: string; readonly csrfToken: string }
 
-describe.runIf(RUN)("CAA-2B/2C Admin App HTTP workflow and live dependencies", () => {
+describe.runIf(RUN)("CAA-2B/2C/2D Admin App HTTP workflow, dependencies and Resource", () => {
   it("creates, validates, previews, applies, exports, revises, rolls back and archives", async () => {
     const schema = `xecms_caa2b_${randomUUID().replaceAll("-", "_")}`;
     const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 5 });
@@ -108,6 +108,61 @@ describe.runIf(RUN)("CAA-2B/2C Admin App HTTP workflow and live dependencies", (
       const first = firstApply.json();
       expect(first.app).toMatchObject({ routeVersion: 2, activeRevisionId: first.revision.id });
       expect(first.revision).toMatchObject({ sequence: 1, parentRevisionId: null });
+      const appResource = await database.pool.query<{
+        realm_id: string; resource_type: string; parent_id: string; protected: boolean;
+      }>(
+        `SELECT realm_id, resource_type, parent_id, protected
+           FROM ${qualifiedName(schema, "_xecms_auth_resources")} WHERE id = $1`,
+        [`resource:admin-app:${appId}`],
+      );
+      expect(appResource.rows[0]).toEqual({
+        realm_id: "rlm_system",
+        resource_type: "admin-app",
+        parent_id: "resource:workspace",
+        protected: true,
+      });
+      const healthy = await get(server, owner, `/api/admin-apps/${appId}/health`);
+      expect(healthy.statusCode, healthy.body).toBe(200);
+      expect(healthy.json()).toMatchObject({
+        activeRevisionId: first.revision.id,
+        state: "healthy",
+        blockers: [],
+      });
+      const anonymousRuntime = await server.app.inject({
+        method: "GET",
+        url: "/api/admin-apps/runtime/backoffice",
+      });
+      expect(anonymousRuntime.statusCode).toBe(401);
+      expect(anonymousRuntime.body).not.toContain("col_orders");
+      const runtime = await get(server, owner, "/api/admin-apps/runtime/backoffice");
+      expect(runtime.statusCode, runtime.body).toBe(200);
+      expect(runtime.json()).toMatchObject({
+        app: { id: appId, key: "backoffice", status: "active" },
+        revisionId: first.revision.id,
+        manifest: { id: "backoffice", startPageId: "overview" },
+        schema: {
+          collections: expect.arrayContaining([expect.objectContaining({ id: "col_orders" })]),
+        },
+        user: { displayName: TEST_OWNER_USERNAME, realmId: "rlm_system" },
+        access: { appAllowed: true },
+        dependencyHealth: { healthy: true },
+      });
+      expect(runtime.json().access.pages).toMatchObject({
+        "order-list": true,
+        "order-create": true,
+        "order-detail": true,
+      });
+      const refreshedAccess = await mutate(
+        server,
+        owner,
+        "POST",
+        "/api/admin-apps/runtime/backoffice/access",
+        {},
+      );
+      expect(refreshedAccess.statusCode, refreshedAccess.body).toBe(200);
+      expect(refreshedAccess.json().access.policyRevision).toBe(
+        runtime.json().access.policyRevision,
+      );
 
       const exported = await get(server, owner, `/api/admin-apps/${appId}/export`);
       expect(exported.statusCode, exported.body).toBe(200);
@@ -202,7 +257,16 @@ describe.runIf(RUN)("CAA-2B/2C Admin App HTTP workflow and live dependencies", (
       });
       expect(archived.statusCode, archived.body).toBe(200);
       expect(archived.json()).toMatchObject({ status: "archived", routeVersion: 5 });
+      // Archive retains the protected Resource and its Bindings for a later
+      // reactivation; the Runtime status gate (CAA-3) prevents App access.
+      expect((await database.pool.query(
+        `SELECT 1 FROM ${qualifiedName(schema, "_xecms_auth_resources")} WHERE id = $1`,
+        [`resource:admin-app:${appId}`],
+      )).rowCount).toBe(1);
       expect((await get(server, owner, "/api/admin-apps")).json().items).toEqual([]);
+      const archivedRuntime = await get(server, owner, "/api/admin-apps/runtime/backoffice");
+      expect(archivedRuntime.statusCode).toBe(404);
+      expect(archivedRuntime.body).not.toContain("col_orders");
       expect((await get(server, owner, "/api/admin-apps?includeArchived=true")).json().items)
         .toEqual([expect.objectContaining({ id: appId, status: "archived" })]);
 

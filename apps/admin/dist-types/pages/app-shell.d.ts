@@ -1,11 +1,12 @@
 import { type AccessEvaluationProfile } from "@xecms/admin";
 import { type IconName } from "../components/icon.js";
 import { type DisplayMode } from "../display-mode.js";
-export declare const navigationAccessChecks: readonly [import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck];
+export declare const navigationAccessChecks: readonly [import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck, import("@xecms/admin").AccessEvaluationCheck];
 export declare const navigationItems: readonly {
     readonly to: string;
     readonly icon: IconName;
     readonly label: string;
+    readonly group: "content" | "people" | "system";
     readonly minimum: DisplayMode;
     readonly access: readonly string[];
     readonly requireAll?: boolean;
@@ -14,6 +15,7 @@ export declare function visibleNavigationItems(mode: DisplayMode, profile: Acces
     readonly to: string;
     readonly icon: IconName;
     readonly label: string;
+    readonly group: "content" | "people" | "system";
     readonly minimum: DisplayMode;
     readonly access: readonly string[];
     readonly requireAll?: boolean;

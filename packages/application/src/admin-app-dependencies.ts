@@ -91,7 +91,7 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
       this.catalog.getAuthorization(input.workspaceId, targetRealmId),
     ]);
 
-    this.resolveSchema(input.manifest, schema, records, blockers);
+    this.resolveSchema(input.manifest, schema, realm, records, blockers);
     this.resolveRealm(input.manifest, targetRealmId, realm, records, blockers);
     this.resolveAuthorization(targetRealmId, extracted.permissionReferences, extracted.resourceIds,
       authorization, records, blockers);
@@ -108,6 +108,7 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
   private resolveSchema(
     manifest: AdminAppManifestV1,
     schema: AdminAppSchemaDependencySnapshot | null,
+    realm: AdminAppRealmDependencySnapshot | null,
     records: Map<string, AdminAppDependencyRecord>,
     blockers: AdminAppPreviewBlocker[],
   ): void {
@@ -129,7 +130,25 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
       if (collection === undefined) {
         blockers.push(missing("COLLECTION_MISSING", "Collection", id));
       } else {
-        replace(records, "collection", id, schema.hash, { name: collection.name, schemaRevisionId: schema.revisionId });
+        replace(records, "collection", id, schema.hash, {
+          name: collection.name,
+          schemaRevisionId: schema.revisionId,
+          ...(collection.authRealmKey === undefined ? {} : { authRealmKey: collection.authRealmKey }),
+        });
+        if (collection.authRealmKey !== undefined && (
+          manifest.audience.type === "system" || collection.authRealmKey !== realm?.key
+        )) {
+          blockers.push(blocker(
+            "AUTH_COLLECTION_REALM_MISMATCH",
+            `Auth Collection '${id}' belongs to Realm '${collection.authRealmKey}' and cannot be included in this App Realm.`,
+            {
+              collectionId: id,
+              collectionRealmKey: collection.authRealmKey,
+              appRealmId: realm?.id ?? (manifest.audience.type === "system" ? "rlm_system" : manifest.audience.realmId),
+              appRealmKey: realm?.key,
+            },
+          ));
+        }
       }
     }
     for (const id of extracted.fieldIds) {
@@ -296,14 +315,14 @@ interface IndexedSchemaField {
 }
 interface IndexedSchemaRelation extends IndexedSchemaField { readonly targetCollectionId: string }
 interface IndexedSchema {
-  readonly collections: Map<string, { readonly name: string }>;
+  readonly collections: Map<string, { readonly name: string; readonly authRealmKey?: string }>;
   readonly components: Map<string, { readonly name: string; readonly fields: readonly FieldDefinition[] }>;
   readonly fields: Map<string, IndexedSchemaField>;
   readonly relations: Map<string, IndexedSchemaRelation>;
 }
 
 function indexSchema(schema: SchemaIrV1): IndexedSchema {
-  const collections = new Map<string, { readonly name: string }>();
+  const collections = new Map<string, { readonly name: string; readonly authRealmKey?: string }>();
   const components = new Map<string, { readonly name: string; readonly fields: readonly FieldDefinition[] }>();
   const fields = new Map<string, IndexedSchemaField>();
   const relations = new Map<string, IndexedSchemaRelation>();
@@ -317,7 +336,10 @@ function indexSchema(schema: SchemaIrV1): IndexedSchema {
     }
   };
   for (const collection of schema.collections) {
-    collections.set(collection.id, { name: collection.name });
+    collections.set(collection.id, {
+      name: collection.name,
+      ...(collection.auth === undefined ? {} : { authRealmKey: collection.auth.realmKey }),
+    });
     visit(collection.fields, collection.id, "collection");
   }
   for (const component of schema.components ?? []) {

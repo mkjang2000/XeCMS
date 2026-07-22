@@ -43,7 +43,7 @@ interface Membership {
 }
 interface Policy {
   readonly revision: number;
-  readonly roles: readonly { readonly id: string; readonly name: string }[];
+  readonly roles: readonly { readonly id: string; readonly name: string; readonly levelId: string }[];
   readonly resources: readonly { readonly id: string; readonly name: string; readonly type: string }[];
   readonly bindings: readonly { readonly id: string; readonly subjectId: string }[];
 }
@@ -282,6 +282,92 @@ describe.runIf(RUN)("M4-A Identity Realm acceptance", () => {
       );
       expect(updated.body.version).toBe(created.body.version + 1);
 
+      const contentAppManifest = {
+        format: "xecms.admin-app",
+        formatVersion: 1,
+        id: "community-operations",
+        name: "Community Operations",
+        key: "community-operations",
+        audience: { type: "content-realm", realmId: realm.realmId },
+        navigation: [{ id: "articles-nav", label: "Articles", pageId: "articles" }],
+        pages: [{
+          id: "articles",
+          type: "collection-list",
+          collectionId: "col_articles",
+          title: "Articles",
+          columns: [
+            { id: "title", field: { kind: "data", fieldId: "fld_article_title" }, label: "Title" },
+            { id: "updated", field: { kind: "system", field: "updatedAt" }, label: "Updated" },
+          ],
+        }],
+        startPageId: "articles",
+      };
+      const appDraft = await adminJson<{ readonly app: { readonly id: string }; readonly draft: { readonly draftVersion: number } }>(
+        server, owner, "POST", "/api/admin-apps", { manifest: contentAppManifest }, 201,
+      );
+      const appPreview = await adminJson<{ readonly planId: string }>(
+        server, owner, "POST", `/api/admin-apps/${appDraft.app.id}/preview`, {
+          expectedActiveRevisionId: null, expectedRouteVersion: 1,
+          expectedDraftVersion: appDraft.draft.draftVersion,
+        }, 200,
+      );
+      await adminJson(server, owner, "POST", `/api/admin-apps/${appDraft.app.id}/apply`, {
+        expectedActiveRevisionId: null, expectedRouteVersion: 1,
+        expectedDraftVersion: appDraft.draft.draftVersion, planId: appPreview.planId,
+      }, 200);
+      policy = await getJson<Policy>(server, `/api/identity-realms/${realm.realmId}/authorization/policy`, owner.cookie);
+      const appResource = policy.resources.find(({ id }) => id === `resource:admin-app:${appDraft.app.id}`);
+      expect(appResource).toBeDefined();
+      const deniedRuntime = await contentRequest(
+        server, member, "GET", "/api/admin-apps/runtime/community-operations",
+      );
+      expect(deniedRuntime.statusCode, deniedRuntime.body).toBe(403);
+      expect(deniedRuntime.json()).toMatchObject({
+        code: "ADMIN_APP_ACCESS_DENIED",
+        details: {
+          audience: {
+            type: "content-realm",
+            realmId: realm.realmId,
+            realmKey: "community",
+            name: "Community",
+          },
+        },
+      });
+      policy = await adminJson<Policy>(server, owner, "POST", `/api/identity-realms/${realm.realmId}/authorization/roles`, {
+        expectedPolicyRevision: policy.revision,
+        name: "Admin App User",
+        levelId: editor!.levelId,
+        permissions: ["admin-app.access"],
+        delegatablePermissions: [],
+      }, 201);
+      const appUserRole = policy.roles.find(({ name }) => name === "Admin App User");
+      expect(appUserRole).toBeDefined();
+      policy = await adminJson<Policy>(server, owner, "POST", `/api/identity-realms/${realm.realmId}/authorization/bindings`, {
+        expectedPolicyRevision: policy.revision,
+        subjectId: signup.body.subjectId,
+        roleId: appUserRole!.id,
+        resourceId: appResource!.id,
+        propagation: "self",
+      }, 201);
+      const contentRuntime = await contentRequest(
+        server, member, "GET", "/api/admin-apps/runtime/community-operations",
+      );
+      expect(contentRuntime.statusCode, contentRuntime.body).toBe(200);
+      expect(contentRuntime.json()).toMatchObject({
+        manifest: { id: "community-operations", audience: { realmId: realm.realmId } },
+        user: { realmId: realm.realmId, realmKey: "community", subjectId: signup.body.subjectId },
+        access: { appAllowed: true, pages: { articles: true } },
+      });
+      const wrongAudience = await server.app.inject({
+        method: "GET",
+        url: "/api/admin-apps/runtime/community-operations",
+        headers: { cookie: owner.cookie, origin: ORIGIN },
+      });
+      expect(wrongAudience.statusCode).toBe(401);
+      expect(wrongAudience.json().details.audience).toMatchObject({
+        type: "content-realm", realmKey: "community",
+      });
+
       await adminJson(server, owner, "DELETE", `/api/identity-realms/${realm.realmId}/authorization/bindings/${editorBinding!.id}`, {
         expectedPolicyRevision: policy.revision,
       }, 200);
@@ -449,7 +535,11 @@ function adminRequest(server: XeCmsServer, session: Session, method: "POST" | "P
 async function contentJson<T>(server: XeCmsServer, session: Session | undefined, method: "POST" | "PATCH", url: string, payload: Readonly<Record<string, unknown>>, expected: number): Promise<{ readonly body: T; readonly cookie: string }> {
   const response = await contentRequest(server, session, method, url, payload);
   expect(response.statusCode, response.body).toBe(expected);
-  return { body: response.json() as T, cookie: String(response.headers["set-cookie"] ?? session?.cookie ?? "").split(";", 1)[0]! };
+  const setCookie = response.headers["set-cookie"];
+  const issued = (Array.isArray(setCookie) ? setCookie : setCookie === undefined ? [] : [setCookie])
+    .map((value) => String(value).split(";", 1)[0]!)
+    .join("; ");
+  return { body: response.json() as T, cookie: issued || session?.cookie || "" };
 }
 
 function contentRequest(server: XeCmsServer, session: Session | undefined, method: "GET" | "POST" | "PATCH", url: string, payload?: Readonly<Record<string, unknown>>): Promise<LightMyRequestResponse> {

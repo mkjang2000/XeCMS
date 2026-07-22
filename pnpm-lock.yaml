@@ -47,6 +47,12 @@ importers:
       '@xecms/admin':
         specifier: workspace:*
         version: link:../../packages/admin
+      '@xecms/admin-apps':
+        specifier: workspace:*
+        version: link:../../packages/admin-apps
+      '@xecms/admin-runtime':
+        specifier: workspace:*
+        version: link:../../packages/admin-runtime
       '@xecms/client':
         specifier: workspace:*
         version: link:../../packages/client
@@ -178,6 +184,31 @@ importers:
         version: 19.2.7(react@19.2.7)
 
   packages/admin-apps: {}
+
+  packages/admin-runtime:
+    dependencies:
+      '@xecms/admin-apps':
+        specifier: workspace:*
+        version: link:../admin-apps
+      '@xecms/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@xecms/ui':
+        specifier: workspace:*
+        version: link:../ui
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.17)
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
 
   packages/application:
     dependencies:

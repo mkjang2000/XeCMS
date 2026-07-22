@@ -62,7 +62,16 @@ export function loadServerConfig(
   if (disableAdminOrigins && rawNodeEnv !== "development") {
     throw new Error("DISABLE_ADMIN_ORIGINS=true is allowed only in development.");
   }
-  const contentOrigins = normalizeOrigins(env["XECMS_CONTENT_ORIGINS"], "XECMS_CONTENT_ORIGINS");
+  const configuredContentOrigins = normalizeOrigins(
+    env["XECMS_CONTENT_ORIGINS"],
+    "XECMS_CONTENT_ORIGINS",
+  );
+  // The development Admin bundle also hosts Custom Admin Apps under /apps/.
+  // Its trusted origins must therefore be able to establish Content Realm
+  // sessions, while production keeps the two allowlists explicitly separate.
+  const contentOrigins = rawNodeEnv === "development"
+    ? [...new Set([...configuredContentOrigins, ...adminOrigins])]
+    : configuredContentOrigins;
   const mediaMaxUploadBytes = Number(env["XECMS_MEDIA_MAX_UPLOAD_BYTES"] ?? String(25 * 1024 * 1024));
   if (!Number.isSafeInteger(mediaMaxUploadBytes) || mediaMaxUploadBytes < 1) {
     throw new Error("XECMS_MEDIA_MAX_UPLOAD_BYTES must be a positive safe integer.");

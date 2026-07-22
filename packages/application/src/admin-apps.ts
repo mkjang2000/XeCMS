@@ -14,6 +14,14 @@ import { ApplicationError, assertCapability, actorRealmId, type ActorContext } f
 
 export type AdminAppStatus = "active" | "archived";
 
+/** Stable authorization target used by admin-app.access Bindings. */
+export function adminAppAuthorizationResourceId(appId: string): string {
+  if (appId.trim().length === 0) {
+    throw new ApplicationError("ADMIN_APP_ID_INVALID", 422, "Admin App ID cannot be empty.");
+  }
+  return `resource:admin-app:${appId}`;
+}
+
 export interface AdminAppRecord {
   readonly id: string;
   readonly workspaceId: string;
@@ -114,6 +122,7 @@ interface AdminAppAuthorInput {
 export interface AdminAppStore {
   listApps(workspaceId: string, includeArchived?: boolean): Promise<readonly AdminAppRecord[]>;
   getApp(workspaceId: string, appId: string): Promise<AdminAppRecord | null>;
+  getAppByKey(workspaceId: string, appKey: string): Promise<AdminAppRecord | null>;
   createAppDraft(input: AdminAppAuthorInput & {
     readonly id: string;
     readonly workspaceId: string;
@@ -170,6 +179,89 @@ export interface AdminAppStore {
     readonly workspaceId: string;
     readonly expectedRouteVersion: number;
   }): Promise<void>;
+}
+
+export interface AdminAppRuntimeRecord {
+  readonly app: AdminAppRecord;
+  readonly revision: AdminAppRevisionRecord;
+  readonly dependencyHealth: {
+    readonly healthy: boolean;
+    readonly checkedAt: string;
+    readonly blockers: readonly AdminAppPreviewBlocker[];
+  };
+}
+
+export interface AdminAppManagementHealth {
+  readonly activeRevisionId: string | null;
+  readonly state: "not-applied" | "healthy" | "degraded";
+  readonly checkedAt: string;
+  readonly blockers: readonly AdminAppPreviewBlocker[];
+}
+
+/**
+ * Read-only execution boundary for an applied Admin App. The route adapter may
+ * inspect only the audience before authentication; Manifest data is returned
+ * only after the matching Realm actor passes admin-app.access.
+ */
+export class AdminAppRuntimeApplicationService {
+  public constructor(
+    private readonly store: AdminAppStore,
+    private readonly dependencies: AdminAppDependencyResolver,
+    private readonly now: () => string,
+  ) {}
+
+  public async audience(
+    workspaceId: string,
+    appKey: string,
+  ): Promise<AdminAppAudience | null> {
+    const app = await this.store.getAppByKey(workspaceId, appKey);
+    if (app === null || app.status !== "active" || app.activeRevisionId === null) return null;
+    return app.audience;
+  }
+
+  public async load(actor: ActorContext, appKey: string): Promise<AdminAppRuntimeRecord> {
+    const app = await this.store.getAppByKey(actor.workspaceId, appKey);
+    if (app === null || app.status !== "active" || app.activeRevisionId === null) {
+      throw runtimeNotFound();
+    }
+    const audienceRealmId = app.audience.type === "system" ? "rlm_system" : app.audience.realmId;
+    if (actorRealmId(actor) !== audienceRealmId) {
+      throw new ApplicationError(
+        "ADMIN_APP_AUDIENCE_SESSION_REQUIRED",
+        401,
+        "A session for the Admin App audience is required.",
+      );
+    }
+    if (actor.authorization === undefined) {
+      throw new ApplicationError("ACCESS_DENIED", 403, "Admin App access is denied.");
+    }
+    await actor.authorization.require({
+      action: "admin-app.access",
+      resourceId: adminAppAuthorizationResourceId(app.id),
+    });
+    const revision = await this.store.getRevision(actor.workspaceId, app.id, app.activeRevisionId);
+    if (revision === null) {
+      throw new ApplicationError(
+        "ADMIN_APP_RUNTIME_INTEGRITY_ERROR",
+        503,
+        "The active Admin App revision is unavailable.",
+      );
+    }
+    const resolution = await this.dependencies.resolve({
+      workspaceId: actor.workspaceId,
+      manifest: revision.manifest,
+    });
+    const blockers = dependencyHealthBlockers(revision.dependencies, resolution);
+    return {
+      app,
+      revision,
+      dependencyHealth: {
+        healthy: blockers.length === 0,
+        checkedAt: this.now(),
+        blockers,
+      },
+    };
+  }
 }
 
 export interface AdminAppPreviewBlocker {
@@ -277,6 +369,7 @@ export class AdminAppApplicationService {
   }> {
     await this.allow(actor, "create");
     const manifest = decodeManifest(input.manifest);
+    await this.assertRealmBoundary(actor.workspaceId, manifest);
     return this.store.createAppDraft({
       id: this.runtime.newAppId(),
       workspaceId: actor.workspaceId,
@@ -304,12 +397,14 @@ export class AdminAppApplicationService {
     readonly manifest: unknown;
   }): Promise<AdminAppDraftRecord> {
     await this.allow(actor, "update");
+    const manifest = decodeManifest(input.manifest);
+    await this.assertRealmBoundary(actor.workspaceId, manifest);
     return this.store.saveDraft({
       workspaceId: actor.workspaceId,
       appId: input.appId,
       expectedDraftVersion: input.expectedDraftVersion,
       expectedBaseRevisionId: input.expectedBaseRevisionId,
-      manifest: decodeManifest(input.manifest),
+      manifest,
       ...author(actor, this.runtime.now()),
     });
   }
@@ -340,6 +435,32 @@ export class AdminAppApplicationService {
       serialized,
       hash: sha256(serialized),
       resolution: await this.dependencies.resolve({ workspaceId: actor.workspaceId, manifest }),
+    };
+  }
+
+  public async health(actor: ActorContext, appId: string): Promise<AdminAppManagementHealth> {
+    await this.allow(actor, "read");
+    const app = await this.requireApp(actor.workspaceId, appId);
+    const checkedAt = this.runtime.now();
+    if (app.activeRevisionId === null) {
+      return {
+        activeRevisionId: null,
+        state: "not-applied",
+        checkedAt,
+        blockers: [],
+      };
+    }
+    const revision = await this.requireRevision(actor.workspaceId, app.id, app.activeRevisionId);
+    const resolution = await this.dependencies.resolve({
+      workspaceId: actor.workspaceId,
+      manifest: revision.manifest,
+    });
+    const blockers = dependencyHealthBlockers(revision.dependencies, resolution);
+    return {
+      activeRevisionId: revision.id,
+      state: blockers.length === 0 ? "healthy" : "degraded",
+      checkedAt,
+      blockers,
     };
   }
 
@@ -502,6 +623,7 @@ export class AdminAppApplicationService {
     const manifest = decodeManifest(input.manifest);
     if (input.appId === undefined) return this.create(actor, { manifest });
     await this.allow(actor, "update");
+    await this.assertRealmBoundary(actor.workspaceId, manifest);
     const app = await this.requireApp(actor.workspaceId, input.appId);
     let draft = await this.store.getDraft(actor.workspaceId, app.id);
     if (draft === null) {
@@ -533,6 +655,23 @@ export class AdminAppApplicationService {
       ...author(actor, this.runtime.now()),
     });
     return { app, draft: saved };
+  }
+
+  private async assertRealmBoundary(
+    workspaceId: string,
+    manifest: AdminAppManifestV1,
+  ): Promise<void> {
+    const resolution = await this.dependencies.resolve({ workspaceId, manifest });
+    const blockers = resolution.blockers.filter(
+      ({ code }) => code === "AUTH_COLLECTION_REALM_MISMATCH",
+    );
+    if (blockers.length === 0) return;
+    throw new ApplicationError(
+      "ADMIN_APP_REALM_BOUNDARY_VIOLATION",
+      422,
+      "An Admin App cannot include an Auth Collection owned by another Realm.",
+      { details: { blockers } },
+    );
   }
 
   private async allow(
@@ -603,6 +742,42 @@ function previewId(input: Omit<AdminAppPreview, "planId">): string {
   return `admin_app_plan_${sha256(JSON.stringify(input))}`;
 }
 
+function dependencyHealthBlockers(
+  expected: readonly AdminAppDependencyRecord[],
+  resolution: AdminAppDependencyResolution,
+): readonly AdminAppPreviewBlocker[] {
+  const blockers = [...resolution.blockers];
+  const actual = new Map(resolution.dependencies.map((dependency) => [
+    `${dependency.kind}\0${dependency.id}`,
+    dependency,
+  ]));
+  for (const dependency of expected) {
+    if (dependency.fingerprint === undefined) continue;
+    // Authorization policy revisions change during normal App Resource/Binding
+    // administration. Existence and compatibility are resolved above; treating
+    // their shared policy revision as immutable drift would degrade an App
+    // immediately after Apply or every access grant/revoke.
+    if (
+      dependency.kind === "authorization-policy"
+      || dependency.kind === "permission"
+      || dependency.kind === "resource"
+    ) continue;
+    const current = actual.get(`${dependency.kind}\0${dependency.id}`);
+    if (current === undefined || current.fingerprint === dependency.fingerprint) continue;
+    blockers.push({
+      code: "ADMIN_APP_DEPENDENCY_DRIFT",
+      message: `${dependency.kind} '${dependency.id}' changed after this App Revision was applied.`,
+      details: {
+        kind: dependency.kind,
+        id: dependency.id,
+        expectedFingerprint: dependency.fingerprint,
+        actualFingerprint: current.fingerprint ?? null,
+      },
+    });
+  }
+  return blockers;
+}
+
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -639,5 +814,13 @@ function draftConflict(expected: number | null, actual: number | null): never {
     409,
     "The Admin App Draft was changed by another editor.",
     { details: { expectedDraftVersion: expected, actualDraftVersion: actual } },
+  );
+}
+
+function runtimeNotFound(): ApplicationError {
+  return new ApplicationError(
+    "ADMIN_APP_RUNTIME_NOT_FOUND",
+    404,
+    "The requested Admin App is not available.",
   );
 }

@@ -178,6 +178,12 @@ export interface AdminAppPreviewDto {
   readonly diff:AdminAppManifestDiff|null; readonly dependencies:readonly AdminAppDependencyDto[];
   readonly blockers:readonly AdminAppPreviewBlockerDto[];
 }
+export interface AdminAppHealthDto {
+  readonly activeRevisionId:string|null;
+  readonly state:"not-applied"|"healthy"|"degraded";
+  readonly checkedAt:string;
+  readonly blockers:readonly AdminAppPreviewBlockerDto[];
+}
 export interface AdminAppActivationDto { readonly app:AdminAppDto; readonly revision:AdminAppRevisionDto; }
 export interface AdminAppManifestArtifactDto { readonly format:"xecms.admin-app-export";
   readonly formatVersion:1; readonly appId:string; readonly revisionId:string|null;
@@ -198,6 +204,41 @@ export interface DeleteAdminAppRequest { readonly expectedRouteVersion:number;
 export interface ImportAdminAppRequest { readonly appId?:string; readonly expectedRouteVersion?:number;
   readonly expectedDraftVersion?:number|null; readonly expectedBaseRevisionId?:string|null;
   readonly manifest:unknown; }
+
+export interface AdminAppRuntimeAccessProfileDto {
+  readonly appAllowed:boolean;
+  readonly pages:Readonly<Record<string,boolean>>;
+  readonly actions:Readonly<Record<string,boolean>>;
+  readonly permissions:Readonly<Record<string,boolean>>;
+  readonly readableFields:Readonly<Record<string,readonly string[]|null>>;
+  readonly writableFields:Readonly<Record<string,readonly string[]|null>>;
+  readonly policyRevision:number;
+}
+export interface AdminAppRuntimeSchemaDto {
+  readonly revisionId:string;
+  readonly collections:readonly CollectionSummaryDto[];
+}
+export interface AdminAppRuntimeUserDto {
+  readonly identityId:string;
+  readonly subjectId:string;
+  readonly displayName:string;
+  readonly realmId:string;
+  readonly realmKey?:string;
+}
+export interface AdminAppRuntimeDependencyHealthDto {
+  readonly healthy:boolean;
+  readonly checkedAt:string;
+  readonly blockers:readonly AdminAppPreviewBlockerDto[];
+}
+export interface AdminAppRuntimeDto {
+  readonly app:AdminAppDto;
+  readonly revisionId:string;
+  readonly manifest:AdminAppManifestV1;
+  readonly schema:AdminAppRuntimeSchemaDto;
+  readonly user:AdminAppRuntimeUserDto;
+  readonly access:AdminAppRuntimeAccessProfileDto;
+  readonly dependencyHealth:AdminAppRuntimeDependencyHealthDto;
+}
 
 export interface UserDto {
   readonly id: string;
@@ -369,6 +410,14 @@ export interface CollectionSummaryDto {
   readonly id: string;
   readonly name: string;
   readonly label?: string;
+  /** Present only for the profile Collection owned by a Content Realm. */
+  readonly authRealmKey?: string;
+  readonly kind?: "collection" | "singleton";
+  readonly hierarchy?: {
+    readonly enabled: boolean;
+    readonly ordering: "manual" | "created-at" | "field";
+    readonly permissionInheritance: boolean;
+  };
   readonly fields: readonly FieldSummaryDto[];
   readonly status: "draft" | "applied";
   /** True when an applied collection has unapplied changes in the global Schema draft. */

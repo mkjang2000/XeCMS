@@ -153,7 +153,7 @@ function decodePage(input: unknown, path: Path): AdminPageDefinition {
 
 function decodeCollectionListPage(value: UnknownRecord, path: Path): AdminPageDefinition {
   exact(value, [
-    "id", "type", "collectionId", "title", "columns", "fixedFilter", "availableFilters",
+    "id", "type", "collectionId", "title", "state", "columns", "fixedFilter", "availableFilters",
     "defaultSort", "rowActions", "bulkActions", "rowClick",
   ], path);
   return {
@@ -161,6 +161,9 @@ function decodeCollectionListPage(value: UnknownRecord, path: Path): AdminPageDe
     type: "collection-list",
     collectionId: text(required(value, "collectionId", path), [...path, "collectionId"]),
     ...optionalText(value, "title", path),
+    ...(has(value, "state") ? {
+      state: choice(value["state"], ["active", "deleted"] as const, [...path, "state"]),
+    } : {}),
     columns: list(required(value, "columns", path), [...path, "columns"]).map(
       (item, index) => decodeColumn(item, [...path, "columns", index]),
     ),

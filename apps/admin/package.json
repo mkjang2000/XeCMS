@@ -20,6 +20,8 @@
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-table": "^8.21.3",
     "@xecms/admin": "workspace:*",
+    "@xecms/admin-runtime": "workspace:*",
+    "@xecms/admin-apps": "workspace:*",
     "@xecms/client": "workspace:*",
     "@xecms/schema": "workspace:*",
     "@xecms/ui": "workspace:*",

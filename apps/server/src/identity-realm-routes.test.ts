@@ -670,6 +670,29 @@ describe("registerIdentityRealmRoutes", () => {
       headers: mutationHeaders,
       payload: { expectedVersion: 1, data: { title: "Updated" } },
     });
+    const published = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/collections/col_articles/documents/doc_article/publish",
+      headers: mutationHeaders,
+      payload: { expectedVersion: 1 },
+    });
+    const revisions = await harness.app.inject({
+      method: "GET",
+      url: "/api/content-realms/community/collections/col_articles/documents/doc_article/revisions",
+      headers,
+    });
+    const restoredRevision = await harness.app.inject({
+      method: "POST",
+      url: "/api/content-realms/community/collections/col_articles/documents/doc_article/revisions/revision_1/restore",
+      headers: mutationHeaders,
+      payload: { expectedVersion: 1 },
+    });
+    const deleted = await harness.app.inject({
+      method: "DELETE",
+      url: "/api/content-realms/community/collections/col_articles/documents/doc_article",
+      headers: mutationHeaders,
+      payload: { expectedVersion: 1 },
+    });
 
     expect(collections.statusCode).toBe(200);
     expect(listed.json()).toMatchObject({ page: 1, total: 1 });
@@ -677,6 +700,10 @@ describe("registerIdentityRealmRoutes", () => {
     expect(fetched.json()).toMatchObject({ id: "doc_article" });
     expect(created.statusCode).toBe(201);
     expect(updated.json()).toMatchObject({ version: 2, data: { title: "Updated" } });
+    expect(published.statusCode).toBe(200);
+    expect(revisions.json()).toMatchObject({ documentVersion: 1, items: [] });
+    expect(restoredRevision.statusCode).toBe(200);
+    expect(deleted.statusCode).toBe(204);
     expect(harness.documents.listDocuments).toHaveBeenCalledWith(expect.objectContaining({
       collectionId: "col_articles",
       page: 2,
@@ -700,7 +727,16 @@ describe("registerIdentityRealmRoutes", () => {
       }),
     }));
     expect(harness.documents.createDocument.mock.calls[0]?.[0].actor).not.toHaveProperty("execution");
-    expect(harness.contentAuthentication.assertCsrfToken).toHaveBeenCalledTimes(2);
+    expect(harness.documents.publishDocument).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: "doc_article", expectedVersion: 1,
+    }));
+    expect(harness.documents.restoreRevision).toHaveBeenCalledWith(expect.objectContaining({
+      revisionId: "revision_1", expectedVersion: 1,
+    }));
+    expect(harness.documents.deleteDocument).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: "doc_article", expectedVersion: 1,
+    }));
+    expect(harness.contentAuthentication.assertCsrfToken).toHaveBeenCalledTimes(5);
     expect(harness.actors.requireSystemActor).not.toHaveBeenCalled();
   });
 
@@ -1025,6 +1061,20 @@ async function createHarness(): Promise<{
     updateDocument: vi.fn<ContentRealmDocumentRouteAdapter["updateDocument"]>(
       async ({ request }) => ({ ...document, data: request.data, version: request.expectedVersion + 1 }),
     ),
+    deleteDocument: vi.fn<ContentRealmDocumentRouteAdapter["deleteDocument"]>(async () => undefined),
+    publishDocument: vi.fn<ContentRealmDocumentRouteAdapter["publishDocument"]>(async () => document),
+    unpublishDocument: vi.fn<ContentRealmDocumentRouteAdapter["unpublishDocument"]>(async () => document),
+    restoreDeletedDocument: vi.fn<ContentRealmDocumentRouteAdapter["restoreDeletedDocument"]>(async () => document),
+    listRevisions: vi.fn<ContentRealmDocumentRouteAdapter["listRevisions"]>(async () => ({
+      items: [], documentVersion: document.version,
+    })),
+    getRevision: vi.fn<ContentRealmDocumentRouteAdapter["getRevision"]>(async () => ({
+      id: "revision_1", sequence: 1, schemaRevisionId: "schema_1",
+      origin: { kind: "create" }, createdAt: document.createdAt,
+      createdBy: "subject_member", isCurrentDraft: true, isPublished: false,
+      data: document.data,
+    })),
+    restoreRevision: vi.fn<ContentRealmDocumentRouteAdapter["restoreRevision"]>(async () => document),
   };
 
   const security = {

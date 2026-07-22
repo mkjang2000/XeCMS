@@ -7,6 +7,7 @@ import { AuthorizationApplicationService } from "@xecms/application";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, SYSTEM_REALM_ID, migrateCore } from "./migrate.js";
 import { applyRealmCollectionEntitlementsMigration } from "./realm-collection-entitlements-migration.js";
+import { applyRealmAuthEntitlementCleanupMigration } from "./realm-auth-entitlement-cleanup-migration.js";
 import { PostgresAuthorizationStore } from "./postgres-authorization.js";
 import { PostgresIdentityRealmStore } from "./postgres-identity-realms.js";
 import { PostgresRealmCollectionEntitlementStore } from "./postgres-realm-collection-entitlements.js";
@@ -146,6 +147,7 @@ describe.runIf(RUN)("0025 access-preserving migration", () => {
   let auth: AuthorizationApplicationService;
   const now = "2026-07-19T09:00:00.000Z";
   const REALM = "rlm_preserve";
+  const AUTH_REALM = "rlm_auth_owner";
   const OWNER_SUBJECT = "subject:preserve-owner";
 
   beforeAll(async () => {
@@ -178,8 +180,23 @@ describe.runIf(RUN)("0025 access-preserving migration", () => {
     // Project a "posts" collection resource (child of content root).
     await auth.syncCoreResources(ownerActor, {
       expectedRevision: revision,
-      collections: [{ id: "posts", name: "Posts" }],
+      collections: [
+        { id: "posts", name: "Posts" },
+        { id: "foreign_auth", name: "Foreign Auth" },
+      ],
     });
+    await realmStore.createRealm({
+      id: AUTH_REALM, workspaceId: DEFAULT_WORKSPACE_ID, key: "auth-owner", name: "Auth Owner",
+      authentication: { acceptSystemIdentities: true, provisioning: "jit", registration: "open", defaultRoleIds: [] },
+      actorIdentityId: "usr_preserve", now,
+    });
+    await pool.query(
+      `INSERT INTO ${qualifiedName(schema, "_xecms_auth_collection_configs")}
+         (collection_id, realm_id, identifier_field_ids, status,
+          created_at, created_by, updated_at, updated_by)
+       VALUES ('foreign_auth', $1, ARRAY['identifier'], 'active', $2, 'usr_preserve', $2, 'usr_preserve')`,
+      [AUTH_REALM, now],
+    );
     // Re-run the 0025 apply to trigger preservation now that the realm has a
     // root binding propagating content.* into the "posts" collection.
     await applyRealmCollectionEntitlementsMigration(pool, schema);
@@ -202,6 +219,11 @@ describe.runIf(RUN)("0025 access-preserving migration", () => {
     expect(posts?.constraint).toBeUndefined(); // no conditions
   });
 
+  it("never seeds an entitlement for an Auth Collection", async () => {
+    const entitlements = await entStore.listByRealm(REALM);
+    expect(entitlements.some(({ collectionId }) => collectionId === "foreign_auth")).toBe(false);
+  });
+
   it("flips the realm to enforced", async () => {
     expect(await entStore.getEnforcement(REALM)).toMatchObject({ state: "enforced" });
   });
@@ -214,5 +236,57 @@ describe.runIf(RUN)("0025 access-preserving migration", () => {
       .resolves.toMatchObject({ allowed: true });
     await expect(auth.authorize(ownerActor, { action: "content.update", resourceId: posts }))
       .resolves.toMatchObject({ allowed: true });
+  });
+
+  it("seeds only collections explicitly introduced by a later Schema apply", async () => {
+    const ownerActor = { realmId: REALM, subjectId: OWNER_SUBJECT };
+    const revision = (await auth.getPolicy(ownerActor)).revision;
+    await auth.syncCoreResources(ownerActor, {
+      expectedRevision: revision,
+      collections: [
+        { id: "posts", name: "Posts" },
+        { id: "foreign_auth", name: "Foreign Auth" },
+        { id: "new_articles", name: "New Articles" },
+      ],
+    });
+
+    await entStore.reconcileRealmFromPolicy(REALM, DEFAULT_WORKSPACE_ID, ["new_articles"]);
+    const entitlements = await entStore.listByRealm(REALM);
+    expect(entitlements.find(({ collectionId }) => collectionId === "new_articles")?.actions)
+      .toEqual(expect.arrayContaining(["list", "read", "create", "update"]));
+    expect(entitlements.some(({ collectionId }) => collectionId === "foreign_auth")).toBe(false);
+  });
+
+  it("cleans historical Auth rows and does not resurrect explicit CMS denials", async () => {
+    const q = (name: string): string => qualifiedName(schema, name);
+    await pool.query(
+      `INSERT INTO ${q("_xecms_realm_collection_entitlements")}
+         (workspace_id, realm_id, collection_id, actions, revision, updated_at, updated_by)
+       VALUES ($1, $2, 'foreign_auth', ARRAY['read'], 1, $3, 'system:legacy')`,
+      [DEFAULT_WORKSPACE_ID, REALM, now],
+    );
+    const versionBefore = (await entStore.getEnforcement(REALM))!.version;
+    await applyRealmAuthEntitlementCleanupMigration(pool, schema);
+    expect((await entStore.listByRealm(REALM)).some(({ collectionId }) => collectionId === "foreign_auth"))
+      .toBe(false);
+    expect((await entStore.getEnforcement(REALM))!.version).toBe(versionBefore + 1);
+
+    // Reconciliation also removes rows inserted by an old/direct writer.
+    await pool.query(
+      `INSERT INTO ${q("_xecms_realm_collection_entitlements")}
+         (workspace_id, realm_id, collection_id, actions, revision, updated_at, updated_by)
+       VALUES ($1, $2, 'foreign_auth', ARRAY['read'], 1, $3, 'system:legacy')`,
+      [DEFAULT_WORKSPACE_ID, REALM, now],
+    );
+    await entStore.reconcileRealmFromPolicy(REALM, DEFAULT_WORKSPACE_ID);
+    expect((await entStore.listByRealm(REALM)).some(({ collectionId }) => collectionId === "foreign_auth"))
+      .toBe(false);
+
+    const posts = (await entStore.listByRealm(REALM)).find(({ collectionId }) => collectionId === "posts")!;
+    await entStore.remove({ realmId: REALM, collectionId: "posts", expectedRevision: posts.revision });
+    await entStore.reconcileRealmFromPolicy(REALM, DEFAULT_WORKSPACE_ID);
+    await entStore.reconcileRealmFromPolicy(REALM, DEFAULT_WORKSPACE_ID);
+    expect((await entStore.listByRealm(REALM)).some(({ collectionId }) => collectionId === "posts"))
+      .toBe(false);
   });
 });

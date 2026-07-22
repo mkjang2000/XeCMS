@@ -113,6 +113,32 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const state = await this.mutatePolicyInTransaction(client, input);
+      await client.query("COMMIT");
+      return state;
+    } catch (error: unknown) {
+      await client.query("ROLLBACK");
+      throw mapAuthorizationDatabaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Applies one policy mutation inside a transaction owned by a higher-level
+   * durable coordinator. This keeps projections such as an active Admin App
+   * and its authorization Resource on the same PostgreSQL commit boundary.
+   */
+  public async mutatePolicyInTransaction<TMutation extends AuthorizationPolicyMutation>(
+    client: PoolClient,
+    input: {
+      readonly realmId: string;
+      readonly expectedRevision: number;
+      readonly mutation: TMutation;
+      readonly audit: AuthorizationAuditDraft;
+    },
+  ): Promise<AuthorizationPolicyState> {
+    try {
       if (input.mutation.type === "binding.replace-primary-owner") {
         // Lock eligibility rows before the policy state. Identity disable and
         // Membership suspension take those rows first as well; a consistent
@@ -157,14 +183,9 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
          WHERE realm_id = $1`,
         [input.realmId, revision, input.audit.occurredAt],
       );
-      const state = await this.requireLoadedPolicy(client, input.realmId);
-      await client.query("COMMIT");
-      return state;
+      return this.requireLoadedPolicy(client, input.realmId);
     } catch (error: unknown) {
-      await client.query("ROLLBACK");
       throw mapAuthorizationDatabaseError(error);
-    } finally {
-      client.release();
     }
   }
 

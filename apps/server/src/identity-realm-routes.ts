@@ -34,6 +34,8 @@ import type {
   DocumentQueryRequest,
   DocumentQueryResultDto,
   DocumentRecordDto,
+  DocumentRevisionDetailDto,
+  DocumentRevisionListDto,
   RealmFullAccessBindingDto,
   RealmFullAccessListDto,
   CollectionActionDto,
@@ -67,6 +69,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { parseDocumentQueryRequest } from "./document-query-request.js";
 
 export const CONTENT_REALM_SESSION_COOKIE = "xecms_content_session";
+
+/** Realm-specific cookie used by the canonical /api/admin-apps/runtime route. */
+export function contentRealmRuntimeCookieName(realmKey: string): string {
+  return `${CONTENT_REALM_SESSION_COOKIE}_${realmKey}`;
+}
 
 type AuthenticatedContentContext = Omit<
   AuthenticatedContentRealmSession,
@@ -391,6 +398,33 @@ export interface ContentRealmDocumentRouteAdapter {
     readonly collectionId: string;
     readonly documentId: string;
     readonly request: UpdateDocumentRequest;
+  }): Promise<DocumentRecordDto>;
+  deleteDocument(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+    readonly expectedVersion: number;
+  }): Promise<void>;
+  publishDocument(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+    readonly expectedVersion: number;
+  }): Promise<DocumentRecordDto>;
+  unpublishDocument(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+    readonly expectedVersion: number;
+  }): Promise<DocumentRecordDto>;
+  restoreDeletedDocument(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+    readonly expectedVersion: number;
+  }): Promise<DocumentRecordDto>;
+  listRevisions(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+  }): Promise<DocumentRevisionListDto>;
+  getRevision(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+    readonly revisionId: string;
+  }): Promise<DocumentRevisionDetailDto>;
+  restoreRevision(input: {
+    readonly actor: ActorContext; readonly collectionId: string; readonly documentId: string;
+    readonly revisionId: string; readonly expectedVersion: number;
   }): Promise<DocumentRecordDto>;
 }
 
@@ -1207,6 +1241,95 @@ export function registerIdentityRealmRoutes(options: RegisterIdentityRealmRoutes
       });
     },
   );
+
+  const contentMutationContext = async (request: FastifyRequest) => {
+    const params = recordValue(request.params, "route parameters");
+    const realmKey = requiredString(params, "realmKey");
+    const collectionId = requiredString(params, "collectionId");
+    const documentId = requiredString(params, "documentId");
+    const authenticated = await requireContentSession(
+      request, realmKey, true, contentAuthentication, security, cookieName,
+    );
+    return {
+      actor: await contentActorContext(authenticated.session, realmKey, actors),
+      collectionId,
+      documentId,
+    };
+  };
+
+  for (const operation of ["publish", "unpublish", "restore"] as const) {
+    app.post(
+      `/api/content-realms/:realmKey/collections/:collectionId/documents/:documentId/${operation}`,
+      async (request, reply): Promise<DocumentRecordDto> => {
+        const context = await contentMutationContext(request);
+        const expectedVersion = expectedVersionBody(request.body);
+        const result = operation === "publish"
+          ? await documents.publishDocument({ ...context, expectedVersion })
+          : operation === "unpublish"
+            ? await documents.unpublishDocument({ ...context, expectedVersion })
+            : await documents.restoreDeletedDocument({ ...context, expectedVersion });
+        noStore(reply);
+        return result;
+      },
+    );
+  }
+
+  app.delete(
+    "/api/content-realms/:realmKey/collections/:collectionId/documents/:documentId",
+    async (request, reply): Promise<void> => {
+      const context = await contentMutationContext(request);
+      await documents.deleteDocument({ ...context, expectedVersion: expectedVersionBody(request.body) });
+      noStore(reply);
+      reply.code(204).send();
+    },
+  );
+
+  app.get(
+    "/api/content-realms/:realmKey/collections/:collectionId/documents/:documentId/revisions",
+    async (request, reply): Promise<DocumentRevisionListDto> => {
+      const { realmKey, collectionId, documentId } = pathParams(
+        request.params, ["realmKey", "collectionId", "documentId"],
+      );
+      const authenticated = await requireContentSession(
+        request, realmKey, false, contentAuthentication, security, cookieName,
+      );
+      noStore(reply);
+      return documents.listRevisions({
+        actor: await contentActorContext(authenticated.session, realmKey, actors),
+        collectionId, documentId,
+      });
+    },
+  );
+
+  app.get(
+    "/api/content-realms/:realmKey/collections/:collectionId/documents/:documentId/revisions/:revisionId",
+    async (request, reply): Promise<DocumentRevisionDetailDto> => {
+      const { realmKey, collectionId, documentId, revisionId } = pathParams(
+        request.params, ["realmKey", "collectionId", "documentId", "revisionId"],
+      );
+      const authenticated = await requireContentSession(
+        request, realmKey, false, contentAuthentication, security, cookieName,
+      );
+      noStore(reply);
+      return documents.getRevision({
+        actor: await contentActorContext(authenticated.session, realmKey, actors),
+        collectionId, documentId, revisionId,
+      });
+    },
+  );
+
+  app.post(
+    "/api/content-realms/:realmKey/collections/:collectionId/documents/:documentId/revisions/:revisionId/restore",
+    async (request, reply): Promise<DocumentRecordDto> => {
+      const revisionId = requiredString(recordValue(request.params, "route parameters"), "revisionId");
+      const context = await contentMutationContext(request);
+      const result = await documents.restoreRevision({
+        ...context, revisionId, expectedVersion: expectedVersionBody(request.body),
+      });
+      noStore(reply);
+      return result;
+    },
+  );
 }
 
 async function requireContentSession(
@@ -1892,6 +2015,13 @@ function setContentSessionCookie(
     sameSite: "lax",
     expires: new Date(session.expiresAt),
   });
+  reply.setCookie(contentRealmRuntimeCookieName(realmKey), session.sessionToken, {
+    path: "/api/admin-apps/runtime",
+    httpOnly: true,
+    secure: options.secureCookies,
+    sameSite: "lax",
+    expires: new Date(session.expiresAt),
+  });
 }
 
 function clearContentSessionCookie(
@@ -1906,6 +2036,12 @@ function clearContentSessionCookie(
     secure: options.secureCookies,
     sameSite: "lax",
   });
+  reply.clearCookie(contentRealmRuntimeCookieName(realmKey), {
+    path: "/api/admin-apps/runtime",
+    httpOnly: true,
+    secure: options.secureCookies,
+    sameSite: "lax",
+  });
 }
 
 function contentRealmCookiePath(realmKey: string): string {
@@ -1914,6 +2050,19 @@ function contentRealmCookiePath(realmKey: string): string {
 
 function noStore(reply: FastifyReply): void {
   reply.header("cache-control", "no-store");
+}
+
+function expectedVersionBody(input: unknown): number {
+  const body = recordValue(input, "document version request");
+  const value = body["expectedVersion"];
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new ApplicationError(
+      "DOCUMENT_VERSION_INVALID",
+      400,
+      "expectedVersion must be a positive integer.",
+    );
+  }
+  return Number(value);
 }
 
 function trustedReauthenticationTimestamp(value: {

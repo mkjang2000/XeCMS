@@ -480,6 +480,7 @@ function assertProvisioningPolicy(
     && ownerRole.permissions.includes("authorization.manage")
     && ownerRole.permissions.includes("schema.apply")
     && ownerRole.permissions.includes("role.assign")
+    && ownerRole.permissions.includes("admin-app.access")
     && ownerLevel?.realmId === realmId
     && ownerLevel.protected === true
     && ownerLevel.rank === 100

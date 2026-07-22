@@ -251,25 +251,55 @@ export class PostgresRealmCollectionEntitlementStore implements RealmCollectionE
     );
   }
 
-  public async reconcileRealmFromPolicy(realmId: string, workspaceId: string): Promise<void> {
+  public async reconcileRealmFromPolicy(
+    realmId: string,
+    workspaceId: string,
+    newlyAddedCollectionIds: readonly string[] = [],
+  ): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // Ensure the realm is enforced (create as enforced if missing).
-      await client.query(
-        `INSERT INTO ${this.q("_xecms_realm_entitlement_enforcement")} (realm_id, workspace_id, state, version)
-         VALUES ($1, $2, 'enforced', 1)
-         ON CONFLICT (realm_id) DO UPDATE SET
-           state = 'enforced',
-           version = ${this.q("_xecms_realm_entitlement_enforcement")}.version + 1,
-           updated_at = now()`,
-        [realmId, workspaceId],
+      const enforcement = await client.query<{ readonly state: "disabled" | "enforced" }>(
+        `SELECT state FROM ${this.q("_xecms_realm_entitlement_enforcement")}
+          WHERE realm_id = $1 FOR UPDATE`,
+        [realmId],
       );
-      // Derive full-allow entitlements for every collection reachable by a
-      // content.* binding (respecting scope propagation), preserving existing
-      // customised entitlements (ON CONFLICT DO NOTHING). Same logic as the 0025
-      // preservation migration, scoped to a single realm.
-      await client.query(
+      const previousState = enforcement.rows[0]?.state;
+      const shouldSeed = previousState === undefined || previousState === "disabled";
+
+      // Auth Collections are never ordinary ceilings: the Realm's own profile
+      // Collection is structurally guaranteed and every foreign one is denied.
+      // Clean historical rows on every projection pass so they cannot survive
+      // or be recreated by policy-derived access.
+      const removedAuth = await client.query(
+        `DELETE FROM ${this.q("_xecms_realm_collection_entitlements")} entitlement
+          USING ${this.q("_xecms_auth_collection_configs")} config
+          WHERE entitlement.realm_id = $1
+            AND entitlement.collection_id = config.collection_id`,
+        [realmId],
+      );
+
+      if (previousState === undefined) {
+        await client.query(
+          `INSERT INTO ${this.q("_xecms_realm_entitlement_enforcement")}
+             (realm_id, workspace_id, state, version)
+           VALUES ($1, $2, 'enforced', 1)`,
+          [realmId, workspaceId],
+        );
+      } else if (previousState === "disabled" || (removedAuth.rowCount ?? 0) > 0) {
+        await client.query(
+          `UPDATE ${this.q("_xecms_realm_entitlement_enforcement")}
+              SET state = 'enforced', version = version + 1, updated_at = now()
+            WHERE realm_id = $1`,
+          [realmId],
+        );
+      }
+
+      // Policy-derived full access exists to preserve access when a Realm first
+      // enters enforcement and when a Schema apply introduces a genuinely new
+      // Collection. Every other absence is an intentional CMS denial and must
+      // survive startup, repeated projection and role changes.
+      if (shouldSeed || newlyAddedCollectionIds.length > 0) await client.query(
         `INSERT INTO ${this.q("_xecms_realm_collection_entitlements")}
            (workspace_id, realm_id, collection_id, actions, revision, updated_at, updated_by)
          SELECT
@@ -300,9 +330,18 @@ export class PostgresRealmCollectionEntitlementStore implements RealmCollectionE
            END AS action
          ) AS action_map ON action_map.action IS NOT NULL
          WHERE col.realm_id = $1 AND col.resource_type = 'collection' AND col.retired_at IS NULL
+           AND ($3::text[] IS NULL OR substring(
+             col.id FROM (position('resource:collection:' IN col.id) + length('resource:collection:'))
+           ) = ANY($3::text[]))
+           AND NOT EXISTS (
+             SELECT 1 FROM ${this.q("_xecms_auth_collection_configs")} config
+              WHERE config.collection_id = substring(
+                col.id FROM (position('resource:collection:' IN col.id) + length('resource:collection:'))
+              )
+           )
          GROUP BY col.realm_id, col.id
          ON CONFLICT (realm_id, collection_id) DO NOTHING`,
-        [realmId, workspaceId],
+        [realmId, workspaceId, shouldSeed ? null : [...newlyAddedCollectionIds]],
       );
       await client.query("COMMIT");
     } catch (error: unknown) {

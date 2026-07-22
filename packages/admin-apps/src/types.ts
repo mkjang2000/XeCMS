@@ -175,6 +175,8 @@ export interface CollectionListPageDefinition {
   readonly type: "collection-list";
   readonly collectionId: string;
   readonly title?: string;
+  /** Selects the active workspace or the recoverable trash workspace. */
+  readonly state?: "active" | "deleted";
   readonly columns: readonly AdminAppColumnDefinition[];
   readonly fixedFilter?: AdminAppFilterExpression;
   readonly availableFilters?: readonly AdminAppFilterDefinition[];

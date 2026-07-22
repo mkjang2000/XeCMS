@@ -109,6 +109,47 @@ describe("CatalogAdminAppDependencyResolver", () => {
     ]));
   });
 
+  it("keeps Auth Collections inside the App's target Realm", async () => {
+    const rawSchema = structuredClone(schema) as unknown as {
+      collections: Array<Record<string, unknown>>;
+    };
+    rawSchema.collections[0]!["auth"] = {
+      enabled: true,
+      realmKey: "customers",
+      identifierFieldIds: ["fld_order_number"],
+      acceptSystemIdentities: true,
+      provisioning: "explicit",
+      defaultRoleIds: [],
+    };
+    const authFields = rawSchema.collections[0]!["fields"] as Array<Record<string, unknown>>;
+    authFields[0]!["unique"] = true;
+    const schemaWithAuth = decodeSchema(rawSchema);
+    const rawManifest = structuredClone(minimalBackofficeManifest) as unknown as Record<string, unknown>;
+    rawManifest["audience"] = { type: "content-realm", realmId: "rlm_shop" };
+    const contentManifest = decodeAdminAppManifest(rawManifest);
+    const resolveForRealmKey = (realmKey: string) => new CatalogAdminAppDependencyResolver(catalog({
+      getActiveSchema: async () => ({ revisionId: "sch_auth", hash: "auth-hash", schema: schemaWithAuth }),
+      getRealm: async (_workspaceId, realmId) => ({
+        id: realmId, workspaceId: "wrk_default", key: realmKey, kind: "content",
+        status: "active", revision: 1,
+      }),
+    })).resolve({ workspaceId: "wrk_default", manifest: contentManifest });
+
+    const foreignRealm = await resolveForRealmKey("shop");
+    expect(foreignRealm.blockers).toContainEqual(expect.objectContaining({
+      code: "AUTH_COLLECTION_REALM_MISMATCH",
+      details: expect.objectContaining({ collectionId: "col_orders", collectionRealmKey: "customers" }),
+    }));
+
+    const owningRealm = await resolveForRealmKey("customers");
+    expect(owningRealm.blockers.map(({ code }) => code)).not.toContain("AUTH_COLLECTION_REALM_MISMATCH");
+
+    const systemRealm = await new CatalogAdminAppDependencyResolver(catalog({
+      getActiveSchema: async () => ({ revisionId: "sch_auth", hash: "auth-hash", schema: schemaWithAuth }),
+    })).resolve({ workspaceId: "wrk_default", manifest: minimalBackofficeManifest });
+    expect(systemRealm.blockers.map(({ code }) => code)).toContain("AUTH_COLLECTION_REALM_MISMATCH");
+  });
+
   it("requires namespaced extensions to exist in an installed, enabled and loaded trusted Plugin", async () => {
     const raw = structuredClone(minimalBackofficeManifest) as unknown as Record<string, unknown>;
     const pages = raw["pages"] as Array<Record<string, unknown>>;

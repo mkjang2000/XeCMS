@@ -89,6 +89,12 @@ export function createAdminRouter(api, queryClient) {
             errorElement: _jsx(RouteErrorPage, {}),
         },
         {
+            path: "/apps/:appKey/*",
+            lazy: async () => ({ Component: (await import("./pages/admin-runtime-page.js")).AdminRuntimePage }),
+            hydrateFallbackElement: _jsx(RouteLoadingPage, {}),
+            errorElement: _jsx(RouteErrorPage, {}),
+        },
+        {
             path: "/admin",
             loader: requireSession,
             element: _jsx(AppShell, {}),
@@ -147,6 +153,18 @@ export function createAdminRouter(api, queryClient) {
                 {
                     path: "media",
                     lazy: async () => ({ Component: (await import("./pages/media-page.js")).MediaPage }),
+                },
+                {
+                    path: "apps",
+                    lazy: async () => ({ Component: (await import("./pages/admin-app-pages.js")).AdminAppListPage }),
+                },
+                {
+                    path: "apps/new",
+                    lazy: async () => ({ Component: (await import("./pages/admin-app-pages.js")).AdminAppCreatePage }),
+                },
+                {
+                    path: "apps/:appId",
+                    lazy: async () => ({ Component: (await import("./pages/admin-app-pages.js")).AdminAppBuilderPage }),
                 },
                 {
                     path: "jobs",

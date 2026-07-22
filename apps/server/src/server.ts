@@ -9,6 +9,7 @@ import fastifyStatic from "@fastify/static";
 import {
   ApplicationError,
   AdminAppApplicationService,
+  AdminAppRuntimeApplicationService,
   CatalogAdminAppDependencyResolver,
   AuthorizationApplicationService,
   AuthApplicationService,
@@ -127,6 +128,7 @@ import { loadServerConfig, type ServerConfig } from "./config.js";
 import { registerAuthorizationRoutes } from "./authorization-routes.js";
 import {
   registerIdentityRealmRoutes,
+  contentRealmRuntimeCookieName,
   type CrossRealmManagedTarget,
 } from "./identity-realm-routes.js";
 import { registerIdentityAdministrationRoutes } from "./identity-administration-routes.js";
@@ -135,6 +137,7 @@ import { registerSiteRoutes } from "./site-routes.js";
 import { registerOperationsRoutes } from "./operations-routes.js";
 import { registerPluginRoutes } from "./plugin-routes.js";
 import { registerAdminAppRoutes } from "./admin-app-routes.js";
+import { registerAdminAppRuntimeRoutes } from "./admin-app-runtime-routes.js";
 import { LoginRateLimiter } from "./rate-limit.js";
 import { createApplicationRuntime, createSecurityRuntime } from "./security.js";
 import { parseDocumentQueryRequest } from "./document-query-request.js";
@@ -234,9 +237,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   const entitlementStore = new PostgresRealmCollectionEntitlementStore(database.pool, database.schema);
   const delegationStore = new PostgresRealmManagementDelegationStore(database.pool, database.schema);
   const crossRealmManagementService = new CrossRealmManagementService(delegationStore);
-  const adminApps = new AdminAppApplicationService(
-    new PostgresAdminAppStore(database.pool, database.schema),
-    new CatalogAdminAppDependencyResolver({
+  const adminAppStore = new PostgresAdminAppStore(database.pool, database.schema);
+  const adminAppDependencyResolver = new CatalogAdminAppDependencyResolver({
       getActiveSchema: async (workspaceId) => {
         if (workspaceId !== DEFAULT_WORKSPACE_ID) return null;
         const active = await database.getActiveSchema();
@@ -274,7 +276,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           extensionIds: pluginExtensionIds(module),
         };
       },
-    }),
+    });
+  const adminApps = new AdminAppApplicationService(
+    adminAppStore,
+    adminAppDependencyResolver,
     {
       now: () => new Date().toISOString(),
       newAppId: () => `aap_${randomUUID()}`,
@@ -307,6 +312,11 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     newAuditId: () => `audit_${randomUUID()}`,
     newId: (prefix) => `${prefix}_${randomUUID()}`,
   }, entitlementStore);
+  const adminAppRuntime = new AdminAppRuntimeApplicationService(
+    adminAppStore,
+    adminAppDependencyResolver,
+    () => new Date().toISOString(),
+  );
   const realmAuthorization = new ContentRealmAuthorizationProvisioner(authorization);
   const hierarchyStore = new PostgresContentHierarchyStore(database.pool, database.schema);
   const ensureAuthorizationPolicy = async (owner: {
@@ -635,6 +645,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
   };
   const syncConfiguredContentRealmResources = async (
     collections: readonly CollectionDefinition[],
+    newlyAddedCollectionIds: readonly string[] = [],
   ): Promise<void> => {
     const projectedCollections = collections.map(({ id, name }) => ({ id: String(id), name }));
     for (const realmKey of new Set(
@@ -651,7 +662,11 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       await realmAuthorization.syncCollectionResources({ realm, collections: projectedCollections });
       // Newly projected collections must gain access-preserving ceilings so the
       // realm's existing owner/admin bindings keep reaching them under enforcement.
-      await entitlementStore.reconcileRealmFromPolicy(realm.id, realm.workspaceId);
+      await entitlementStore.reconcileRealmFromPolicy(
+        realm.id,
+        realm.workspaceId,
+        newlyAddedCollectionIds,
+      );
     }
   };
   const applySchemaWithProjection = async (
@@ -669,6 +684,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     if (pendingDraft === null) {
       throw new ApplicationError("SCHEMA_DRAFT_NOT_FOUND", 404, "No schema draft exists.");
     }
+    const previousCollectionIds = new Set(
+      ((await database.getActiveSchema())?.schema.collections ?? []).map(({ id }) => String(id)),
+    );
+    const newlyAddedCollectionIds = pendingDraft.schema.collections
+      .map(({ id }) => String(id))
+      .filter((id) => !previousCollectionIds.has(id));
     await prepareContentRealmsForSchemaApply(pendingDraft.schema.collections);
     const quarantined = await authorization.quarantineAllContentResources(policyActor);
     let applied;
@@ -691,7 +712,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
         applied.revision.schema.collections,
         "schema.apply",
       );
-      await syncConfiguredContentRealmResources(applied.revision.schema.collections);
+      await syncConfiguredContentRealmResources(
+        applied.revision.schema.collections,
+        newlyAddedCollectionIds,
+      );
       // Drop entitlement ceilings for any collection retired by this apply.
       await entitlementStore.pruneRetiredCollectionEntitlements(
         actor.workspaceId,
@@ -1198,6 +1222,98 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
       });
     },
   });
+  registerAdminAppRuntimeRoutes({
+    app,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    runtime: adminAppRuntime,
+    authorization,
+    authenticate: async (request, audience) => {
+      if (audience.type === "system") {
+        if (request.cookies[SESSION_COOKIE] === undefined) {
+          throw new ApplicationError(
+            "ADMIN_APP_RUNTIME_SESSION_REQUIRED",
+            401,
+            "A System Realm session is required for this Admin App.",
+            { details: { audience: { type: "system" } } },
+          );
+        }
+        const authenticated = await requireSession(request, auth, config, false);
+        const identity = authenticated.session.identity;
+        const policyActor = authorizationActor(identity.id);
+        return {
+          audienceHint: { type: "system" },
+          actor: {
+            subjectId: identity.id,
+            identityId: identity.id,
+            workspaceId: identity.workspaceId,
+            realmId: SYSTEM_AUTHORIZATION_REALM_ID,
+            capabilities: authenticated.session.capabilities,
+            authorization: authorizationGateway(authorization, policyActor),
+            authentication: "session",
+          },
+          user: {
+            identityId: identity.id,
+            subjectId: identity.id,
+            displayName: identity.username,
+            realmId: SYSTEM_AUTHORIZATION_REALM_ID,
+          },
+        };
+      }
+      const realm = await identityRealmStore.getRealmById(audience.realmId);
+      if (
+        realm === null || realm.workspaceId !== DEFAULT_WORKSPACE_ID
+        || realm.kind !== "content" || realm.status !== "active"
+      ) {
+        throw new ApplicationError(
+          "ADMIN_APP_AUDIENCE_UNAVAILABLE",
+          503,
+          "The Admin App audience Realm is unavailable.",
+        );
+      }
+      const sessionToken = request.cookies[contentRealmRuntimeCookieName(realm.key)];
+      if (sessionToken === undefined) {
+        throw new ApplicationError(
+          "ADMIN_APP_RUNTIME_SESSION_REQUIRED",
+          401,
+          "An authenticated Content Realm session is required.",
+          { details: { audience: { type: "content-realm", realmId: realm.id, realmKey: realm.key, name: realm.name } } },
+        );
+      }
+      const session = await contentRealmAuthentication.authenticate({
+        realmKey: realm.key,
+        sessionToken,
+      });
+      const policyActor = { realmId: realm.id, subjectId: session.membership.subjectId };
+      return {
+        audienceHint: {
+          type: "content-realm",
+          realmId: realm.id,
+          realmKey: realm.key,
+          name: realm.name,
+        },
+        actor: {
+          subjectId: session.membership.subjectId,
+          identityId: session.identity.id,
+          workspaceId: realm.workspaceId,
+          realmId: realm.id,
+          capabilities: [],
+          authorization: authorizationGateway(authorization, policyActor),
+          authentication: "session",
+        },
+        user: {
+          identityId: session.identity.id,
+          subjectId: session.membership.subjectId,
+          displayName: session.identity.primaryIdentifier,
+          realmId: realm.id,
+          realmKey: realm.key,
+        },
+      };
+    },
+    getActiveSchema: async () => {
+      const active = await database.getActiveSchema();
+      return active === null ? null : { revisionId: active.revisionId, schema: active.schema };
+    },
+  });
   registerOperationsRoutes({
     app, audit: unifiedAudit, retention, authorization,
     requireActor: async (request, csrf) =>
@@ -1645,6 +1761,14 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
             id: String(collection.id),
             name: collection.name,
             ...(collection.label === undefined ? {} : { label: collection.label }),
+            kind: collection.kind ?? "collection",
+            ...(collection.hierarchy === undefined ? {} : {
+              hierarchy: {
+                enabled: collection.hierarchy.enabled,
+                ordering: collection.hierarchy.ordering ?? "manual",
+                permissionInheritance: collection.hierarchy.permissionInheritance === true,
+              },
+            }),
             fields: collection.fields.map((field) => ({
               id: String(field.id),
               name: field.name,
@@ -1665,16 +1789,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           state: "active",
         }),
       queryDocuments: async ({ actor, collectionId, request }) => {
-        if (request.state !== undefined && request.state !== "active") {
-          throw new ApplicationError(
-            "CONTENT_REALM_DOCUMENT_QUERY_STATE_INVALID",
-            400,
-            "Content Realm document queries only support active documents.",
-          );
-        }
         const result = await documents.query(actor, collectionId, {
           ...request,
-          state: "active",
+          state: request.state ?? "active",
         });
         return {
           items: result.items.map(documentDto),
@@ -1703,6 +1820,20 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           data: request.data,
           expectedVersion: request.expectedVersion,
         }),
+      deleteDocument: ({ actor, collectionId, documentId, expectedVersion }) =>
+        documents.delete(actor, collectionId, documentId, expectedVersion),
+      publishDocument: ({ actor, collectionId, documentId, expectedVersion }) =>
+        documents.publish(actor, collectionId, documentId, expectedVersion),
+      unpublishDocument: ({ actor, collectionId, documentId, expectedVersion }) =>
+        documents.unpublish(actor, collectionId, documentId, expectedVersion),
+      restoreDeletedDocument: ({ actor, collectionId, documentId, expectedVersion }) =>
+        documents.restoreDeleted(actor, collectionId, documentId, expectedVersion),
+      listRevisions: ({ actor, collectionId, documentId }) =>
+        documents.listRevisions(actor, collectionId, documentId),
+      getRevision: ({ actor, collectionId, documentId, revisionId }) =>
+        documents.getRevision(actor, collectionId, documentId, revisionId),
+      restoreRevision: ({ actor, collectionId, documentId, revisionId, expectedVersion }) =>
+        documents.restoreRevision(actor, collectionId, documentId, revisionId, expectedVersion),
     },
     security: {
       assertContentOrigin: (request) => assertAllowedContentOrigin(request, config),
@@ -2873,6 +3004,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     app.get("/", async (_request, reply) => reply.redirect("/admin/"));
     app.get("/admin", async (_request, reply) => reply.redirect("/admin/"));
     app.get("/admin/*", async (_request, reply) => reply.sendFile("index.html"));
+    app.get("/apps/:appKey", async (_request, reply) => reply.sendFile("index.html"));
+    app.get("/apps/:appKey/*", async (_request, reply) => reply.sendFile("index.html"));
     app.get("/community/:realmKey", async (_request, reply) => reply.sendFile("index.html"));
   }
 
@@ -3241,6 +3374,15 @@ function collectionList(
         id: collection.id,
         name: collection.name,
         ...(collection.label === undefined ? {} : { label: collection.label }),
+        ...(collection.auth === undefined ? {} : { authRealmKey: collection.auth.realmKey }),
+        kind: collection.kind ?? "collection",
+        ...(collection.hierarchy === undefined ? {} : {
+          hierarchy: {
+            enabled: collection.hierarchy.enabled,
+            ordering: collection.hierarchy.ordering ?? "manual",
+            permissionInheritance: collection.hierarchy.permissionInheritance === true,
+          },
+        }),
         fields: collection.fields.map((field) => ({
           id: field.id,
           name: field.name,

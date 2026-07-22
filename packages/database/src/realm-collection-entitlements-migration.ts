@@ -122,6 +122,12 @@ export async function applyRealmCollectionEntitlementsMigration(
       END AS action
     ) AS action_map ON action_map.action IS NOT NULL
     WHERE col.resource_type = 'collection' AND col.retired_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM ${q("_xecms_auth_collection_configs")} config
+         WHERE config.collection_id = substring(
+           col.id FROM (position('resource:collection:' IN col.id) + length('resource:collection:'))
+         )
+      )
     GROUP BY realm.workspace_id, col.realm_id, collection_id
     ON CONFLICT (realm_id, collection_id) DO NOTHING;
   `);

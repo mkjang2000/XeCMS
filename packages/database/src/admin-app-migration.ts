@@ -166,7 +166,8 @@ export async function applyAdminAppStoreMigration(
       SELECT 'rlm_system', role.id, permission.permission_key
         FROM ${q("_xecms_auth_roles")} role
         CROSS JOIN (VALUES ('admin-app.read'), ('admin-app.create'), ('admin-app.update'),
-          ('admin-app.apply'), ('admin-app.delete'), ('admin-app.export')) permission(permission_key)
+          ('admin-app.apply'), ('admin-app.delete'), ('admin-app.export'),
+          ('admin-app.access')) permission(permission_key)
        WHERE role.realm_id = 'rlm_system'
          AND role.id IN ('authorization:rlm_system:role:owner',
                          'authorization:rlm_system:role:content-administrator')

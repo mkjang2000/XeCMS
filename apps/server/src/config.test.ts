@@ -45,7 +45,7 @@ describe("loadServerConfig", () => {
     })).toThrow("DISABLE_ADMIN_ORIGINS");
   });
 
-  it("keeps Content origins separate from Admin Studio origins", () => {
+  it("allows the development Admin origin to host Content Realm Admin Apps", () => {
     const config = loadServerConfig({
       NODE_ENV: "development",
       XECMS_ADMIN_ORIGINS: "http://localhost:5173",
@@ -55,7 +55,17 @@ describe("loadServerConfig", () => {
     expect(config.contentOrigins).toEqual([
       "http://localhost:4173",
       "https://community.example",
+      "http://localhost:5173",
     ]);
+
+    const production = loadServerConfig({
+      NODE_ENV: "production",
+      DATABASE_URL: "postgresql://unused",
+      XECMS_SESSION_SECRET: "0123456789abcdef0123456789abcdef",
+      XECMS_ADMIN_ORIGINS: "https://admin.example",
+      XECMS_CONTENT_ORIGINS: "https://community.example",
+    });
+    expect(production.contentOrigins).toEqual(["https://community.example"]);
   });
 
   it("configures the durable Worker and disables it by default in tests", () => {

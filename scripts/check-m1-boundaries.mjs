@@ -44,9 +44,15 @@ const rules = [
     allowedXeCms: new Set(),
   },
   {
+    directory: "packages/admin-runtime",
+    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/contracts", "@xecms/ui"]),
+  },
+  {
     directory: "apps/admin",
     allowedXeCms: new Set([
       "@xecms/admin",
+      "@xecms/admin-apps",
+      "@xecms/admin-runtime",
       "@xecms/client",
       "@xecms/schema",
       "@xecms/ui",

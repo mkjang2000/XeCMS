@@ -36,6 +36,8 @@
     "test:e2e:m4b": "node scripts/run-m4b-e2e.mjs",
     "test:e2e:m4c4": "node scripts/run-m4c4-e2e.mjs",
     "test:e2e:m4c5": "node scripts/run-m4c5-e2e.mjs",
+    "test:e2e:admin-apps": "XECMS_M4C5_JOURNEYS=admin_apps node scripts/run-m4c5-e2e.mjs",
+    "verify:admin-apps": "pnpm check && pnpm test:e2e:admin-apps",
     "xecms": "node packages/cli/dist/bin.js",
     "doctor": "node packages/cli/dist/bin.js doctor",
     "verify:m1": "pnpm clean && pnpm check:dev-sources && pnpm verify:m0:after-clean && pnpm build:admin && pnpm test:e2e",

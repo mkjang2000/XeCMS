@@ -6,6 +6,7 @@ import {
   decodeAdminAppManifest,
   diffAdminAppManifests,
   extractAdminAppDependencies,
+  generateAdminAppManifest,
   hashAdminAppManifest,
   minimalBackofficeManifest,
   normalizeAdminAppManifest,
@@ -30,6 +31,50 @@ describe("Admin App Manifest V1 canonical contract", () => {
     expect(parsed).toEqual(normalized);
     expect(serializeAdminAppManifest(parsed)).toBe(serialized);
     expect(await hashAdminAppManifest(parsed)).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("generates a valid editable list/form/detail baseline from Schema summaries", () => {
+    const generated = generateAdminAppManifest({
+      name: "Editorial Operations",
+      key: "editorial-operations",
+      audience: { type: "system" },
+      collections: [{
+        id: "col_articles",
+        name: "articles",
+        label: "Articles",
+        fields: [
+          { id: "fld_title", name: "title", label: "Title", type: "text" },
+          { id: "fld_body", name: "body", label: "Body", type: "textarea" },
+        ],
+      }],
+    });
+
+    expect(() => decodeAdminAppManifest(generated)).not.toThrow();
+    expect(generated.pages.map(({ type }) => type)).toEqual([
+      "collection-list", "document-form", "document-form", "document-detail", "collection-list",
+    ]);
+    expect(generated.pages.at(-1)).toMatchObject({ state: "deleted" });
+    expect(extractAdminAppDependencies(generated).collectionIds).toEqual(["col_articles"]);
+  });
+
+  it("generates create-or-edit UI for singleton collections", () => {
+    const generated = generateAdminAppManifest({
+      name: "Settings",
+      key: "settings-app",
+      audience: { type: "system" },
+      collections: [{
+        id: "col_settings",
+        name: "settings",
+        kind: "singleton",
+        fields: [{ id: "fld_title", name: "title", type: "text" }],
+      }],
+    });
+
+    expect(() => decodeAdminAppManifest(generated)).not.toThrow();
+    expect(generated.pages).toEqual([expect.objectContaining({
+      id: "settings-singleton",
+      type: "singleton",
+    })]);
   });
 
   it("produces identical canonical JSON and hash regardless of property insertion order", async () => {

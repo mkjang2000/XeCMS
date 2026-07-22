@@ -2,9 +2,11 @@ import { fileURLToPath, URL } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
-  base: "/admin/",
+  // Production is mounted below /admin/, while the development server must
+  // also serve the separate /apps/:appKey and /community/:realmKey shells.
+  base: command === "serve" ? "/" : "/admin/",
   resolve: {
     alias: [
       {
@@ -18,6 +20,14 @@ export default defineConfig({
       {
         find: /^@xecms\/admin$/,
         replacement: fileURLToPath(new URL("../../packages/admin/src/index.ts", import.meta.url)),
+      },
+      {
+        find: /^@xecms\/admin-runtime$/,
+        replacement: fileURLToPath(new URL("../../packages/admin-runtime/src/index.tsx", import.meta.url)),
+      },
+      {
+        find: /^@xecms\/admin-apps$/,
+        replacement: fileURLToPath(new URL("../../packages/admin-apps/src/index.ts", import.meta.url)),
       },
       {
         find: /^@xecms\/client$/,
@@ -48,4 +58,4 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
   },
-});
+}));

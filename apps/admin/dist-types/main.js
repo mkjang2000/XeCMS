@@ -8,7 +8,8 @@ import "@xecms/ui/theme.css";
 import { createAdminApi } from "./client-adapter.js";
 import { DisplayModeProvider } from "./display-mode.js";
 import { createAdminRouter } from "./router.js";
-const api = createAdminApi();
+import { xecmsClient } from "./xecms-client.js";
+const api = createAdminApi(xecmsClient);
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {

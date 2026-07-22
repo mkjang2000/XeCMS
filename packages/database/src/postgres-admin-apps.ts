@@ -8,6 +8,7 @@ import {
 } from "@xecms/admin-apps";
 import {
   ApplicationError,
+  adminAppAuthorizationResourceId,
   type AdminAppActivationResult,
   type AdminAppDependencyKind,
   type AdminAppDependencyRecord,
@@ -15,16 +16,21 @@ import {
   type AdminAppRecord,
   type AdminAppRevisionRecord,
   type AdminAppStore,
+  type AuthorizationAuditDraft,
+  type AuthorizationResourceRecord,
 } from "@xecms/application";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
 import { qualifiedName, validateDatabaseSchema } from "./identifiers.js";
+import { PostgresAuthorizationStore } from "./postgres-authorization.js";
 
 export class PostgresAdminAppStore implements AdminAppStore {
   private readonly schema: string;
+  private readonly authorization: PostgresAuthorizationStore;
 
   public constructor(private readonly pool: Pool, schema: string) {
     this.schema = validateDatabaseSchema(schema);
+    this.authorization = new PostgresAuthorizationStore(pool, this.schema);
   }
 
   public async listApps(
@@ -44,6 +50,14 @@ export class PostgresAdminAppStore implements AdminAppStore {
     const result = await this.pool.query<AdminAppRow>(
       `SELECT * FROM ${this.q("_xecms_admin_apps")} WHERE workspace_id = $1 AND id = $2`,
       [workspaceId, appId],
+    );
+    return result.rows[0] === undefined ? null : mapApp(result.rows[0]);
+  }
+
+  public async getAppByKey(workspaceId: string, appKey: string): Promise<AdminAppRecord | null> {
+    const result = await this.pool.query<AdminAppRow>(
+      `SELECT * FROM ${this.q("_xecms_admin_apps")} WHERE workspace_id = $1 AND app_key = $2`,
+      [workspaceId, appKey],
     );
     return result.rows[0] === undefined ? null : mapApp(result.rows[0]);
   }
@@ -295,6 +309,12 @@ export class PostgresAdminAppStore implements AdminAppStore {
             JSON.stringify(dependency.metadata ?? {})],
         );
       }
+      await this.syncAuthorizationResource(client, app, draft.manifest, {
+        actorIdentityId: input.actorIdentityId,
+        actorSubjectId: input.actorSubjectId,
+        now: input.now,
+        nextRouteVersion: input.expectedRouteVersion + 1,
+      });
       const audience = audienceColumns(draft.manifest.audience);
       await client.query(
         `UPDATE ${this.q("_xecms_admin_apps")}
@@ -359,6 +379,12 @@ export class PostgresAdminAppStore implements AdminAppStore {
         );
       }
       await this.assertRouteAvailable(client, input.workspaceId, revision.manifest.key, input.appId);
+      await this.syncAuthorizationResource(client, app, revision.manifest, {
+        actorIdentityId: input.actorIdentityId,
+        actorSubjectId: input.actorSubjectId,
+        now: input.now,
+        nextRouteVersion: input.expectedRouteVersion + 1,
+      });
       const audience = audienceColumns(revision.manifest.audience);
       await client.query(
         `UPDATE ${this.q("_xecms_admin_apps")}
@@ -458,6 +484,115 @@ export class PostgresAdminAppStore implements AdminAppStore {
       this.getRevision(workspaceId, appId, revisionId),
     ]);
     return { app: required(app), revision: required(revision) };
+  }
+
+  /**
+   * Keeps the active App pointer and its authorization target on one commit.
+   * Policy rows are locked in Realm-ID order before the Resource, matching the
+   * normal authorization mutation lock order and avoiding cross-Realm moves
+   * that can deadlock each other.
+   */
+  private async syncAuthorizationResource(
+    client: PoolClient,
+    app: AdminAppRow,
+    manifest: AdminAppManifestV1,
+    input: AdminAppResourceAuthor & { readonly nextRouteVersion: number },
+  ): Promise<void> {
+    const resourceId = adminAppAuthorizationResourceId(app.id);
+    const targetRealmId = manifest.audience.type === "system"
+      ? "rlm_system"
+      : manifest.audience.realmId;
+    const observed = await client.query<AdminAppResourceRow>(
+      `SELECT id, realm_id, name, resource_type, parent_id, protected, retired_at
+         FROM ${this.q("_xecms_auth_resources")} WHERE id = $1`,
+      [resourceId],
+    );
+    const realmIds = [...new Set([
+      targetRealmId,
+      ...(observed.rows[0] === undefined ? [] : [observed.rows[0].realm_id]),
+    ])].sort();
+    const policies = await client.query<AdminAppPolicyRow>(
+      `SELECT state.realm_id, state.current_revision, state.root_resource_id
+         FROM ${this.q("_xecms_auth_policy_state")} state
+         JOIN ${this.q("_xecms_realms")} realm
+           ON realm.id = state.realm_id AND realm.workspace_id = $2
+        WHERE state.realm_id = ANY($1::text[])
+        ORDER BY state.realm_id
+        FOR UPDATE OF state`,
+      [realmIds, app.workspace_id],
+    );
+    const policyByRealm = new Map(policies.rows.map((policy) => [policy.realm_id, policy]));
+    for (const realmId of realmIds) {
+      const policy = policyByRealm.get(realmId);
+      if (policy === undefined || Number(policy.current_revision) < 1 || policy.root_resource_id === null) {
+        throw new ApplicationError(
+          "ADMIN_APP_AUDIENCE_POLICY_UNAVAILABLE",
+          409,
+          `The Admin App audience Realm '${realmId}' has no active authorization policy.`,
+        );
+      }
+    }
+
+    const locked = await client.query<AdminAppResourceRow>(
+      `SELECT id, realm_id, name, resource_type, parent_id, protected, retired_at
+         FROM ${this.q("_xecms_auth_resources")} WHERE id = $1 FOR UPDATE`,
+      [resourceId],
+    );
+    let before = locked.rows[0];
+    if (before !== undefined && !policyByRealm.has(before.realm_id)) {
+      throw new ApplicationError(
+        "ADMIN_APP_RESOURCE_CONCURRENT_CHANGE",
+        409,
+        "The Admin App authorization Resource moved concurrently; retry Apply.",
+      );
+    }
+    if (before !== undefined && (
+      before.resource_type !== "admin-app"
+      || before.protected !== true
+      || before.retired_at !== null
+    )) {
+      throw new ApplicationError(
+        "ADMIN_APP_RESOURCE_ID_CONFLICT",
+        409,
+        `Authorization Resource '${resourceId}' is not owned by the Admin App projection.`,
+      );
+    }
+
+    if (before !== undefined && before.realm_id !== targetRealmId) {
+      const previous = resourceRecord(before);
+      const policy = required(policyByRealm.get(before.realm_id));
+      await this.authorization.mutatePolicyInTransaction(client, {
+        realmId: before.realm_id,
+        expectedRevision: Number(policy.current_revision),
+        mutation: { type: "resource.delete", id: resourceId },
+        audit: resourceAudit(app.id, input, before.realm_id, "remove", previous, null),
+      });
+      before = undefined;
+    }
+
+    const targetPolicy = required(policyByRealm.get(targetRealmId));
+    const desired: AuthorizationResourceRecord = {
+      id: resourceId,
+      realmId: targetRealmId,
+      name: manifest.name,
+      type: "admin-app",
+      parentId: required(targetPolicy.root_resource_id),
+      protected: true,
+    };
+    if (before !== undefined && resourcesEqual(resourceRecord(before), desired)) return;
+    await this.authorization.mutatePolicyInTransaction(client, {
+      realmId: targetRealmId,
+      expectedRevision: Number(targetPolicy.current_revision),
+      mutation: { type: "resource.upsert", value: desired },
+      audit: resourceAudit(
+        app.id,
+        input,
+        targetRealmId,
+        "sync",
+        before === undefined ? null : resourceRecord(before),
+        desired,
+      ),
+    });
   }
 
   private async lockWorkspace(client: PoolClient, workspaceId: string): Promise<void> {
@@ -592,6 +727,28 @@ interface AdminAppRow extends QueryResultRow {
   readonly archived_by_subject_id: string | null;
 }
 
+interface AdminAppResourceAuthor {
+  readonly actorIdentityId: string;
+  readonly actorSubjectId: string;
+  readonly now: string;
+}
+
+interface AdminAppPolicyRow extends QueryResultRow {
+  readonly realm_id: string;
+  readonly current_revision: string | number;
+  readonly root_resource_id: string | null;
+}
+
+interface AdminAppResourceRow extends QueryResultRow {
+  readonly id: string;
+  readonly realm_id: string;
+  readonly name: string;
+  readonly resource_type: string;
+  readonly parent_id: string | null;
+  readonly protected: boolean;
+  readonly retired_at: Date | string | null;
+}
+
 interface AdminAppDraftRow extends QueryResultRow {
   readonly app_id: string;
   readonly workspace_id: string;
@@ -699,6 +856,60 @@ function mapDependency(row: AdminAppDependencyRow): AdminAppDependencyRecord {
     id: row.dependency_id,
     ...(row.fingerprint === null ? {} : { fingerprint: row.fingerprint }),
     ...(isEmptyRecord(row.metadata) ? {} : { metadata: jsonRecord(row.metadata) }),
+  };
+}
+
+function resourceRecord(row: AdminAppResourceRow): AuthorizationResourceRecord {
+  return {
+    id: row.id,
+    realmId: row.realm_id,
+    name: row.name,
+    type: row.resource_type,
+    ...(row.parent_id === null ? {} : { parentId: row.parent_id }),
+    ...(row.protected ? { protected: true } : {}),
+  };
+}
+
+function resourcesEqual(
+  left: AuthorizationResourceRecord,
+  right: AuthorizationResourceRecord,
+): boolean {
+  return left.id === right.id
+    && left.realmId === right.realmId
+    && left.name === right.name
+    && left.type === right.type
+    && left.parentId === right.parentId
+    && left.protected === right.protected;
+}
+
+function resourceAudit(
+  appId: string,
+  input: AdminAppResourceAuthor & { readonly nextRouteVersion: number },
+  realmId: string,
+  operation: "sync" | "remove",
+  before: AuthorizationResourceRecord | null,
+  after: AuthorizationResourceRecord | null,
+): AuthorizationAuditDraft {
+  const digest = createHash("sha256")
+    .update(appId)
+    .update("\0")
+    .update(String(input.nextRouteVersion))
+    .update("\0")
+    .update(realmId)
+    .update("\0")
+    .update(operation)
+    .digest("hex")
+    .slice(0, 32);
+  return {
+    id: `audit_admin_app_resource_${digest}`,
+    actorIdentityId: input.actorIdentityId,
+    action: `admin-app.resource.${operation}`,
+    targetType: "resource",
+    targetId: adminAppAuthorizationResourceId(appId),
+    before,
+    after,
+    decision: null,
+    occurredAt: input.now,
   };
 }
 

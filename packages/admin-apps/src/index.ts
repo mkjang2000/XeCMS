@@ -3,6 +3,7 @@ export * from "./dependencies.js";
 export * from "./diff.js";
 export * from "./errors.js";
 export * from "./fixture.js";
+export * from "./generate.js";
 export * from "./normalize.js";
 export * from "./types.js";
 export * from "./validate.js";

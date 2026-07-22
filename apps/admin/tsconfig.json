@@ -15,7 +15,8 @@
     { "path": "../../packages/ui" },
     { "path": "../../packages/admin" },
     { "path": "../../packages/client" },
-    { "path": "../../packages/schema" }
+    { "path": "../../packages/schema" },
+    { "path": "../../packages/admin-runtime" }
   ],
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"]
 }

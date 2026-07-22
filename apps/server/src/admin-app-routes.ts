@@ -12,6 +12,7 @@ import type {
   AdminAppActivationDto,
   AdminAppDraftDto,
   AdminAppDraftEnvelopeDto,
+  AdminAppHealthDto,
   AdminAppDto,
   AdminAppListDto,
   AdminAppManifestArtifactDto,
@@ -91,6 +92,11 @@ export function registerAdminAppRoutes(options: Options): void {
   options.app.get("/api/admin-apps/:appId", async (request): Promise<AdminAppDto> => {
     const value = await actor(request, false);
     return appDto(await options.adminApps.get(value, path(request.params, "appId")));
+  });
+
+  options.app.get("/api/admin-apps/:appId/health", async (request): Promise<AdminAppHealthDto> => {
+    const value = await actor(request, false);
+    return options.adminApps.health(value, path(request.params, "appId"));
   });
 
   options.app.get("/api/admin-apps/:appId/draft", async (request): Promise<AdminAppDraftDto | null> => {

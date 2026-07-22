@@ -141,6 +141,10 @@ const browserJourneys = [
     specs: ["tests/e2e/m4c5-productization.spec.ts"],
     environment: { XECMS_E2E_DISPLAY_MODE: "" },
   },
+  {
+    name: "admin_apps",
+    specs: ["tests/e2e/admin-apps.spec.ts"],
+  },
 ];
 
 let databaseStarted = false;

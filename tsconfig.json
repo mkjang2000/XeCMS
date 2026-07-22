@@ -11,6 +11,7 @@
     { "path": "./packages/ui" },
     { "path": "./packages/admin" },
     { "path": "./packages/admin-apps" },
+    { "path": "./packages/admin-runtime" },
     { "path": "./packages/plugin-sdk" },
     { "path": "./packages/cli" },
     { "path": "./apps/server" },

@@ -53,6 +53,14 @@ import {
   REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
   applyRealmManagementDelegationsMigration,
 } from "./realm-management-delegations-migration.js";
+import {
+  ADMIN_APP_ACCESS_RECONCILIATION_MIGRATION_ID,
+  applyAdminAppAccessReconciliationMigration,
+} from "./admin-app-access-migration.js";
+import {
+  REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID,
+  applyRealmAuthEntitlementCleanupMigration,
+} from "./realm-auth-entitlement-cleanup-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -73,6 +81,8 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   REALM_FULL_ACCESS_LIFECYCLE_MIGRATION_ID,
   REALM_COLLECTION_ENTITLEMENTS_MIGRATION_ID,
   REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
+  ADMIN_APP_ACCESS_RECONCILIATION_MIGRATION_ID,
+  REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID,
 ] as const);
 
 /** Connection faults that mean "the server is not accepting clients yet". */
@@ -414,6 +424,26 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyRealmManagementDelegationsMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
+      ]);
+    }
+    const adminAppAccessReconciliation = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [ADMIN_APP_ACCESS_RECONCILIATION_MIGRATION_ID],
+    );
+    if (adminAppAccessReconciliation.rowCount === 0) {
+      await applyAdminAppAccessReconciliationMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        ADMIN_APP_ACCESS_RECONCILIATION_MIGRATION_ID,
+      ]);
+    }
+    const realmAuthEntitlementCleanup = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID],
+    );
+    if (realmAuthEntitlementCleanup.rowCount === 0) {
+      await applyRealmAuthEntitlementCleanupMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");
