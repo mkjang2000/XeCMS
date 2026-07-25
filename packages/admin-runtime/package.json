@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./geometry": {
+      "types": "./dist/composed-geometry.d.ts",
+      "default": "./dist/composed-geometry.js"
     }
   },
   "files": ["dist"],

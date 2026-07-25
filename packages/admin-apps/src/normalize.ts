@@ -23,6 +23,17 @@ export async function hashAdminAppManifest(manifest: AdminAppManifestV1): Promis
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** Shape-agnostic canonicalization: recursively sorts object keys, drops
+ * undefined, and normalizes -0. Reused by V1 and V2 manifests alike. */
+export function canonicalManifestValue<T>(value: T): T {
+  return canonicalValue(value) as T;
+}
+
+/** Shape-agnostic canonical JSON serialization for any manifest version. */
+export function serializeManifestValue(value: unknown): string {
+  return JSON.stringify(canonicalValue(value), null, 2);
+}
+
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (value !== null && typeof value === "object") {

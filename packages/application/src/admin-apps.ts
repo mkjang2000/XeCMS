@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
 
 import {
-  decodeAdminAppManifest,
-  diffAdminAppManifests,
+  decodeAdminAppManifestAny,
+  diffManifestValues,
   extractAdminAppDependencies,
-  serializeAdminAppManifest,
+  extractAdminAppDependenciesV2,
+  serializeManifestValue,
   type AdminAppAudience,
+  type AdminAppManifest,
   type AdminAppManifestDiff,
-  type AdminAppManifestV1,
+  type AdminPageDefinitionV2,
 } from "@xecms/admin-apps";
 
 import { ApplicationError, assertCapability, actorRealmId, type ActorContext } from "./errors.js";
+import type { AuthorizationResourceRecord } from "./authorization.js";
 
 export type AdminAppStatus = "active" | "archived";
 
@@ -20,6 +23,111 @@ export function adminAppAuthorizationResourceId(appId: string): string {
     throw new ApplicationError("ADMIN_APP_ID_INVALID", 422, "Admin App ID cannot be empty.");
   }
   return `resource:admin-app:${appId}`;
+}
+
+export function adminAppPageAuthorizationResourceId(appId: string, pageId: string): string {
+  const root = adminAppAuthorizationResourceId(appId);
+  if (pageId.trim().length === 0) {
+    throw new ApplicationError("ADMIN_APP_PAGE_ID_INVALID", 422, "Admin App Page ID cannot be empty.");
+  }
+  return `${root}:page:${pageId}`;
+}
+
+export function adminAppActionAuthorizationResourceId(
+  appId: string,
+  pageId: string,
+  actionId: string,
+): string {
+  const page = adminAppPageAuthorizationResourceId(appId, pageId);
+  if (actionId.trim().length === 0) {
+    throw new ApplicationError("ADMIN_APP_ACTION_ID_INVALID", 422, "Admin App Action ID cannot be empty.");
+  }
+  const digest = createHash("sha256").update(actionId).digest("hex").slice(0, 32);
+  return `${page}:action:${digest}`;
+}
+
+/** Stable Realm projection used by Apply and Rollback. */
+export function adminAppAuthorizationResources(
+  appId: string,
+  realmId: string,
+  manifest: AdminAppManifest,
+  rootResourceId: string,
+): readonly AuthorizationResourceRecord[] {
+  const root: AuthorizationResourceRecord = {
+    id: adminAppAuthorizationResourceId(appId),
+    realmId,
+    name: manifest.name,
+    type: "admin-app",
+    parentId: rootResourceId,
+    protected: true,
+  };
+  const resources: AuthorizationResourceRecord[] = [root];
+  for (const page of manifest.pages) {
+    const pageResource: AuthorizationResourceRecord = {
+      id: adminAppPageAuthorizationResourceId(appId, page.id),
+      realmId,
+      name: page.type === "document-form" ? page.id : (page.title ?? page.id),
+      type: "admin-app-page",
+      parentId: root.id,
+      protected: true,
+    };
+    resources.push(pageResource);
+    const seen = new Set<string>();
+    for (const action of adminAppPageActions(page)) {
+      if (seen.has(action.id)) continue;
+      seen.add(action.id);
+      resources.push({
+        id: adminAppActionAuthorizationResourceId(appId, page.id, action.id),
+        realmId,
+        name: action.label ?? action.id,
+        type: "admin-app-action",
+        parentId: pageResource.id,
+        protected: true,
+      });
+    }
+  }
+  return resources;
+}
+
+function adminAppPageActions(
+  page: AdminPageDefinitionV2,
+): readonly { readonly id: string; readonly label?: string }[] {
+  // Composed Pages carry their Actions on component/page events (CPB-7). Each
+  // distinct actionId becomes an admin-app-action resource so the
+  // admin-app.action.execute gate has a resource to bind against.
+  if (page.type === "composed-page") return composedPageActions(page);
+  if (page.type === "collection-list") {
+    return [...(page.rowActions ?? []), ...(page.bulkActions ?? [])];
+  }
+  if (page.type === "document-form" || page.type === "document-detail" || page.type === "singleton") {
+    return page.actions ?? [];
+  }
+  if (page.type === "dashboard") {
+    return page.widgets.flatMap(({ action }) => action === undefined ? [] : [action]);
+  }
+  return [];
+}
+
+/** Distinct action.execute actionIds referenced by a Composed Page's events. */
+function composedPageActions(
+  page: Extract<AdminPageDefinitionV2, { type: "composed-page" }>,
+): readonly { readonly id: string; readonly label?: string }[] {
+  const seen = new Set<string>();
+  const events = [
+    ...(page.events ?? []),
+    ...page.components.flatMap((component) => component.events ?? []),
+  ];
+  const actions: { readonly id: string }[] = [];
+  for (const event of events) {
+    for (const effect of event.effects) {
+      if (effect.kind !== "action.execute") continue;
+      const actionId = effect.args?.["actionId"];
+      if (typeof actionId !== "string" || seen.has(actionId)) continue;
+      seen.add(actionId);
+      actions.push({ id: actionId });
+    }
+  }
+  return actions;
 }
 
 export interface AdminAppRecord {
@@ -49,7 +157,7 @@ export interface AdminAppDraftRecord {
   readonly baseRevisionId: string | null;
   readonly draftVersion: number;
   readonly desiredKey: string;
-  readonly manifest: AdminAppManifestV1;
+  readonly manifest: AdminAppManifest;
   readonly manifestHash: string;
   readonly createdAt: string;
   readonly createdByIdentityId: string;
@@ -73,7 +181,8 @@ export type AdminAppDependencyKind =
   | "widget"
   | "renderer"
   | "plugin"
-  | "extension";
+  | "extension"
+  | "mask-policy";
 
 export interface AdminAppDependencyRecord {
   readonly kind: AdminAppDependencyKind;
@@ -88,7 +197,7 @@ export interface AdminAppRevisionRecord {
   readonly workspaceId: string;
   readonly sequence: number;
   readonly parentRevisionId: string | null;
-  readonly manifest: AdminAppManifestV1;
+  readonly manifest: AdminAppManifest;
   readonly manifestHash: string;
   readonly dependencies: readonly AdminAppDependencyRecord[];
   readonly createdAt: string;
@@ -126,7 +235,7 @@ export interface AdminAppStore {
   createAppDraft(input: AdminAppAuthorInput & {
     readonly id: string;
     readonly workspaceId: string;
-    readonly manifest: AdminAppManifestV1;
+    readonly manifest: AdminAppManifest;
   }): Promise<{ readonly app: AdminAppRecord; readonly draft: AdminAppDraftRecord }>;
   createDraft(input: AdminAppAuthorInput & {
     readonly appId: string;
@@ -139,7 +248,7 @@ export interface AdminAppStore {
     readonly workspaceId: string;
     readonly expectedDraftVersion: number;
     readonly expectedBaseRevisionId: string | null;
-    readonly manifest: AdminAppManifestV1;
+    readonly manifest: AdminAppManifest;
   }): Promise<AdminAppDraftRecord>;
   discardDraft(input: AdminAppAuthorInput & {
     readonly appId: string;
@@ -279,7 +388,7 @@ export interface AdminAppDependencyResolution {
 export interface AdminAppDependencyResolver {
   resolve(input: {
     readonly workspaceId: string;
-    readonly manifest: AdminAppManifestV1;
+    readonly manifest: AdminAppManifest;
   }): Promise<AdminAppDependencyResolution>;
 }
 
@@ -300,7 +409,7 @@ export interface AdminAppManifestArtifact {
   readonly formatVersion: 1;
   readonly appId: string;
   readonly revisionId: string | null;
-  readonly manifest: AdminAppManifestV1;
+  readonly manifest: AdminAppManifest;
   readonly serialized: string;
   readonly hash: string;
 }
@@ -314,13 +423,28 @@ export interface AdminAppRuntime {
 export class StructuralAdminAppDependencyResolver implements AdminAppDependencyResolver {
   public resolve(input: {
     readonly workspaceId: string;
-    readonly manifest: AdminAppManifestV1;
+    readonly manifest: AdminAppManifest;
   }): Promise<AdminAppDependencyResolution> {
-    const extracted = extractAdminAppDependencies(input.manifest);
     const dependencies: AdminAppDependencyRecord[] = [];
     const add = (kind: AdminAppDependencyKind, values: readonly string[]): void => {
       values.forEach((id) => dependencies.push({ kind, id }));
     };
+    if (input.manifest.formatVersion === 2) {
+      const extracted = extractAdminAppDependenciesV2(input.manifest);
+      add("realm", extracted.audienceRealmIds);
+      add("collection", extracted.collectionIds);
+      add("field", extracted.fieldIds);
+      add("action", extracted.actionIds);
+      add("mask-policy", extracted.maskPolicyIds);
+      add("resource", extracted.resourceIds);
+      extracted.permissionReferences.forEach(({ action, resourceId }) => dependencies.push({
+        kind: "permission",
+        id: `${action}@${encodeURIComponent(resourceId)}`,
+        metadata: { action, resourceId },
+      }));
+      return Promise.resolve({ dependencies, blockers: [] });
+    }
+    const extracted = extractAdminAppDependencies(input.manifest);
     add("realm", extracted.audienceRealmIds);
     add("collection", extracted.collectionIds);
     add("field", extracted.fieldIds);
@@ -422,14 +546,14 @@ export class AdminAppApplicationService {
   }
 
   public async validate(actor: ActorContext, input: { readonly manifest: unknown }): Promise<{
-    readonly manifest: AdminAppManifestV1;
+    readonly manifest: AdminAppManifest;
     readonly serialized: string;
     readonly hash: string;
     readonly resolution: AdminAppDependencyResolution;
   }> {
     await this.allow(actor, "read");
     const manifest = decodeManifest(input.manifest);
-    const serialized = serializeAdminAppManifest(manifest);
+    const serialized = serializeManifestValue(manifest);
     return {
       manifest,
       serialized,
@@ -500,7 +624,7 @@ export class AdminAppApplicationService {
       routeVersion: app.routeVersion,
       draftVersion: draft.draftVersion,
       manifestHash: draft.manifestHash,
-      diff: active === null ? null : diffAdminAppManifests(active.manifest, draft.manifest),
+      diff: active === null ? null : diffManifestValues(active.manifest, draft.manifest),
       dependencies: resolution.dependencies,
       blockers: resolution.blockers,
     };
@@ -595,13 +719,13 @@ export class AdminAppApplicationService {
     await this.allow(actor, "export");
     const app = await this.requireApp(actor.workspaceId, input.appId);
     const revisionId = input.revisionId ?? app.activeRevisionId;
-    let manifest: AdminAppManifestV1;
+    let manifest: AdminAppManifest;
     if (revisionId === null) {
       manifest = (await this.requireDraft(actor.workspaceId, app.id)).manifest;
     } else {
       manifest = (await this.requireRevision(actor.workspaceId, app.id, revisionId)).manifest;
     }
-    const serialized = serializeAdminAppManifest(manifest);
+    const serialized = serializeManifestValue(manifest);
     return {
       format: "xecms.admin-app-export",
       formatVersion: 1,
@@ -659,7 +783,7 @@ export class AdminAppApplicationService {
 
   private async assertRealmBoundary(
     workspaceId: string,
-    manifest: AdminAppManifestV1,
+    manifest: AdminAppManifest,
   ): Promise<void> {
     const resolution = await this.dependencies.resolve({ workspaceId, manifest });
     const blockers = resolution.blockers.filter(
@@ -721,9 +845,9 @@ export class AdminAppApplicationService {
   }
 }
 
-function decodeManifest(input: unknown): AdminAppManifestV1 {
+function decodeManifest(input: unknown): AdminAppManifest {
   try {
-    return decodeAdminAppManifest(input);
+    return decodeAdminAppManifestAny(input);
   } catch (error: unknown) {
     if (error instanceof Error && "issues" in error &&
         Array.isArray((error as { readonly issues?: unknown }).issues)) {

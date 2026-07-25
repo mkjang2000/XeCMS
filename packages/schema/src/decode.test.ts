@@ -55,6 +55,26 @@ describe("decodeSchema", () => {
     );
   });
 
+  it("strictly preserves a sensitive Field default Mask Policy", () => {
+    const input = rawSchema();
+    firstField(input)["sensitivity"] = {
+      classification: "sensitive",
+      defaultMaskPolicyId: "core.mask.email",
+    };
+
+    expect(decodeSchema(input).collections[0]!.fields[0]).toMatchObject({
+      sensitivity: {
+        classification: "sensitive",
+        defaultMaskPolicyId: "core.mask.email",
+      },
+    });
+
+    (firstField(input)["sensitivity"] as Record<string, unknown>)["unexpected"] = true;
+    expectDecodeIssue(input, "UNKNOWN_PROPERTY", [
+      "collections", 0, "fields", 0, "sensitivity", "unexpected",
+    ]);
+  });
+
   it("rejects unknown properties at the manifest and field boundaries", () => {
     const root = { ...rawSchema(), surprise: true };
     expectDecodeIssue(root, "UNKNOWN_PROPERTY", ["surprise"]);

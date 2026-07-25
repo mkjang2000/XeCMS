@@ -3,11 +3,14 @@ import {
   BUILTIN_RENDERER_IDS,
   BUILTIN_WIDGET_IDS,
   extractAdminAppDependencies,
+  extractAdminAppDependenciesV2,
   type AdminAppFieldReference,
   type AdminAppFilterExpression,
+  type AdminAppManifest,
   type AdminAppManifestV1,
   type AdminPageDefinition,
   type FormLayoutNode,
+  type PermissionReference,
 } from "@xecms/admin-apps";
 import type { FieldDefinition, SchemaIrV1 } from "@xecms/schema";
 
@@ -75,12 +78,12 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
 
   public async resolve(input: {
     readonly workspaceId: string;
-    readonly manifest: AdminAppManifestV1;
+    readonly manifest: AdminAppManifest;
   }): Promise<AdminAppDependencyResolution> {
     const structural = await this.structural.resolve(input);
     const records = new Map(structural.dependencies.map((dependency) => [key(dependency), dependency]));
     const blockers: AdminAppPreviewBlocker[] = [...structural.blockers];
-    const extracted = extractAdminAppDependencies(input.manifest);
+    const extracted = normalizedExtract(input.manifest);
     const targetRealmId = input.manifest.audience.type === "system"
       ? "rlm_system"
       : input.manifest.audience.realmId;
@@ -106,13 +109,13 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
   }
 
   private resolveSchema(
-    manifest: AdminAppManifestV1,
+    manifest: AdminAppManifest,
     schema: AdminAppSchemaDependencySnapshot | null,
     realm: AdminAppRealmDependencySnapshot | null,
     records: Map<string, AdminAppDependencyRecord>,
     blockers: AdminAppPreviewBlocker[],
   ): void {
-    const extracted = extractAdminAppDependencies(manifest);
+    const extracted = normalizedExtract(manifest);
     const hasReferences = extracted.collectionIds.length > 0 || extracted.fieldIds.length > 0 ||
       extracted.relationIds.length > 0;
     if (schema === null) {
@@ -174,7 +177,10 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
       }
     }
 
-    for (const usage of collectSchemaUsages(manifest)) {
+    // Field↔Collection ownership is validated per page shape. Composed Page
+    // (V2) Data Source ownership validation lands with CPB-4 semantics.
+    const usages = manifest.formatVersion === 2 ? [] : collectSchemaUsages(manifest);
+    for (const usage of usages) {
       if (usage.kind === "field") {
         const field = index.fields.get(usage.id);
         if (field !== undefined && (field.ownerKind !== "collection" || field.ownerId !== usage.collectionId)) {
@@ -198,7 +204,7 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
   }
 
   private resolveRealm(
-    manifest: AdminAppManifestV1,
+    manifest: AdminAppManifest,
     realmId: string,
     realm: AdminAppRealmDependencySnapshot | null,
     records: Map<string, AdminAppDependencyRecord>,
@@ -389,6 +395,41 @@ interface SchemaUsage {
   readonly id: string;
   readonly collectionId: string;
   readonly pageId: string;
+}
+
+interface NormalizedDependencies {
+  readonly audienceRealmIds: readonly string[];
+  readonly collectionIds: readonly string[];
+  readonly fieldIds: readonly string[];
+  readonly relationIds: readonly string[];
+  readonly actionIds: readonly string[];
+  readonly widgetIds: readonly string[];
+  readonly rendererIds: readonly string[];
+  readonly extensionIds: readonly string[];
+  readonly pluginIds: readonly string[];
+  readonly permissionReferences: readonly PermissionReference[];
+  readonly resourceIds: readonly string[];
+}
+
+/** Version-agnostic dependency view. V2-absent kinds default to empty. */
+function normalizedExtract(manifest: AdminAppManifest): NormalizedDependencies {
+  if (manifest.formatVersion === 2) {
+    const extracted = extractAdminAppDependenciesV2(manifest);
+    return {
+      audienceRealmIds: extracted.audienceRealmIds,
+      collectionIds: extracted.collectionIds,
+      fieldIds: extracted.fieldIds,
+      relationIds: [],
+      actionIds: extracted.actionIds,
+      widgetIds: [],
+      rendererIds: [],
+      extensionIds: extracted.extensionIds,
+      pluginIds: extracted.pluginIds,
+      permissionReferences: extracted.permissionReferences,
+      resourceIds: extracted.resourceIds,
+    };
+  }
+  return extractAdminAppDependencies(manifest);
 }
 
 function collectSchemaUsages(manifest: AdminAppManifestV1): readonly SchemaUsage[] {

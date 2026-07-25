@@ -50,6 +50,9 @@ interface UnknownRecord extends Readonly<Record<string, unknown>> {
   readonly unique?: unknown;
   readonly localized?: unknown;
   readonly readOnly?: unknown;
+  readonly sensitivity?: unknown;
+  readonly classification?: unknown;
+  readonly defaultMaskPolicyId?: unknown;
 }
 
 const BASE_FIELD_KEYS = [
@@ -61,6 +64,7 @@ const BASE_FIELD_KEYS = [
   "unique",
   "localized",
   "readOnly",
+  "sensitivity",
 ] as const;
 
 /**
@@ -450,7 +454,26 @@ function decodeFieldBase(value: UnknownRecord, path: DecodePath) {
     ...(has(value, "readOnly")
       ? { readOnly: boolean(value.readOnly, [...path, "readOnly"]) }
       : {}),
+    ...(has(value, "sensitivity")
+      ? { sensitivity: decodeFieldSensitivity(value.sensitivity, [...path, "sensitivity"]) }
+      : {}),
   };
+}
+
+function decodeFieldSensitivity(input: unknown, path: DecodePath) {
+  const value = record(input, path);
+  knownKeys(value, ["classification", "defaultMaskPolicyId"], path);
+  return {
+    classification: literal(
+      required(value, "classification", path),
+      "sensitive",
+      [...path, "classification"],
+    ),
+    defaultMaskPolicyId: string(
+      required(value, "defaultMaskPolicyId", path),
+      [...path, "defaultMaskPolicyId"],
+    ),
+  } as const;
 }
 
 function decodeSelectOption(input: unknown, path: DecodePath): SelectOption {

@@ -1,4 +1,5 @@
 import {
+  archiveDocument,
   asCollectionId,
   asDocumentId,
   asRevisionId,
@@ -8,7 +9,9 @@ import {
   asWorkspaceId,
   createDocument,
   createDraft,
+  publishDocument,
   restoreRevision,
+  softDeleteDocument,
   type JsonObject,
 } from "@xecms/core";
 import { describe, expect, it } from "vitest";
@@ -76,5 +79,54 @@ describe("document event audit payload", () => {
     expect(serialized).not.toContain("private");
     expect(serialized).not.toContain("draft-content-that-must-not-survive");
     expect(serialized).not.toContain("restore-content-that-must-not-survive");
+  });
+
+  it("keeps Schema-sensitive Field content out of lifecycle event audit payloads", () => {
+    // CPB-0M masking invariant: no Document audit payload — content or lifecycle —
+    // may retain a Field value. Sensitive originals are masked at the read
+    // boundary and must never surface through published/archived/deleted audit.
+    const created = createDocument<JsonObject>({
+      documentId: asDocumentId("doc_sensitive"),
+      workspaceId: asWorkspaceId("wrk_default"),
+      collectionId: asCollectionId("col_people"),
+      revisionId: asRevisionId("rev_sensitive_1"),
+      schemaRevisionId: asSchemaRevisionId("sch_sensitive_1"),
+      data: { email: "alice-secret@example.com", name: "Alice Secret" },
+      actorId: asSubjectId("subject_owner"),
+      now: asUtcInstant("2026-07-15T00:00:00.000Z"),
+    });
+    const drafted = createDraft(created.state, {
+      revisionId: asRevisionId("rev_sensitive_2"),
+      schemaRevisionId: asSchemaRevisionId("sch_sensitive_1"),
+      data: { email: "alice-secret@example.com", name: "Alice Secret" },
+      actorId: asSubjectId("subject_owner"),
+      now: asUtcInstant("2026-07-15T00:01:00.000Z"),
+      expectedVersion: 1,
+    });
+    const published = publishDocument(drafted.state, {
+      actorId: asSubjectId("subject_owner"),
+      now: asUtcInstant("2026-07-15T00:02:00.000Z"),
+      expectedVersion: 2,
+    });
+    const archived = archiveDocument(published.state, {
+      actorId: asSubjectId("subject_owner"),
+      now: asUtcInstant("2026-07-15T00:03:00.000Z"),
+      expectedVersion: 3,
+    });
+    const deleted = softDeleteDocument(published.state, {
+      actorId: asSubjectId("subject_owner"),
+      now: asUtcInstant("2026-07-15T00:04:00.000Z"),
+      expectedVersion: 3,
+    });
+
+    const serialized = JSON.stringify([
+      published.events[0]!,
+      archived.events[0]!,
+      deleted.events[0]!,
+    ].map(documentEventAuditPayload));
+
+    expect(serialized).not.toContain("alice-secret@example.com");
+    expect(serialized).not.toContain("Alice Secret");
+    expect(serialized).not.toContain('"data"');
   });
 });

@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Component, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   generateAdminAppManifest,
+  upgradeManifestToV2,
   type AdminAppManifestDiffEntry,
   type AdminAppManifestV1,
+  type AdminAppManifestV2,
+  type ComposedPageDefinition,
   type AdminNavigationItem,
   type AdminPageDefinition,
 } from "@xecms/admin-apps";
@@ -57,6 +60,7 @@ export function AdminAppCreatePage() {
   const [name, setName] = useState("Operations");
   const [key, setKey] = useState("operations");
   const [audience, setAudience] = useState("system");
+  const [appKind, setAppKind] = useState<"generated" | "composed">("generated");
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,12 +84,17 @@ export function AdminAppCreatePage() {
   const create = async (event: FormEvent) => {
     event.preventDefault(); setPending(true); setError(null);
     try {
-      const manifest = generateAdminAppManifest({
-        name,
-        key,
-        audience: audience === "system" ? { type: "system" } : { type: "content-realm", realmId: audience },
-        collections: eligibleCollections.filter(({ id }) => selected.includes(id)),
-      });
+      const audienceValue = audience === "system"
+        ? { type: "system" as const }
+        : { type: "content-realm" as const, realmId: audience };
+      const manifest = appKind === "composed"
+        ? buildComposedManifest({ name, key, audience: audienceValue })
+        : generateAdminAppManifest({
+            name,
+            key,
+            audience: audienceValue,
+            collections: eligibleCollections.filter(({ id }) => selected.includes(id)),
+          });
       const created = await client.adminApps.create({ manifest });
       navigate(`/admin/apps/${created.app.id}`);
     } catch (caught) { setError(message(caught)); } finally { setPending(false); }
@@ -102,12 +111,16 @@ export function AdminAppCreatePage() {
         <option value="system">System Realm</option>
         {realms.map((realm) => <option key={realm.realmId} value={realm.realmId}>{realm.name} ({realm.realmKey})</option>)}
       </select><small>App과 인증 세션, 권한은 선택한 Realm에 귀속됩니다. 다른 Realm의 Auth Collection은 포함할 수 없습니다.</small></label>
-      <fieldset className={styles.collectionPicker}><legend>포함할 Collection</legend>
+      <fieldset className={styles.collectionPicker}><legend>App 유형</legend>
+        <label><input type="radio" name="app-kind" checked={appKind === "generated"} onChange={() => setAppKind("generated")} /><span><strong>Generated (V1)</strong><small>Schema 기반 목록·생성·편집·상세 화면을 자동 구성</small></span></label>
+        <label><input type="radio" name="app-kind" checked={appKind === "composed"} onChange={() => setAppKind("composed")} /><span><strong>Composed (V2)</strong><small>빈 화면에서 드래그로 직접 구성하는 Composed Page</small></span></label>
+      </fieldset>
+      {appKind === "composed" ? null : <fieldset className={styles.collectionPicker}><legend>포함할 Collection</legend>
         {eligibleCollections.length === 0 ? <p>이 Realm에서 사용할 수 있는 Collection이 없어 빈 대시보드 App으로 시작합니다.</p> : eligibleCollections.map((collection) => <label key={collection.id}>
           <input type="checkbox" checked={selected.includes(collection.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, collection.id] : current.filter((id) => id !== collection.id))} />
           <span><strong>{collection.label ?? collection.name}</strong><small>{collection.fields.length} fields · {collection.id}{collection.authRealmKey ? ` · Auth: ${collection.authRealmKey}` : ""}</small></span>
         </label>)}
-      </fieldset>
+      </fieldset>}
       <div className={styles.actions}><Button variant="secondary" onPress={() => navigate("/admin/apps")}>취소</Button><Button type="submit" isDisabled={pending}>{pending ? "생성 중…" : "Draft 생성"}</Button></div>
     </form>
   </section>;
@@ -130,6 +143,8 @@ export function AdminAppBuilderPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const manifest = useMemo(() => parseManifest(source), [source]);
+  const composed = useMemo(() => parseManifestV2(source), [source]);
+  const [composedView, setComposedView] = useState<"canvas" | "json">("canvas");
   const dirty = draft !== null && source !== JSON.stringify(draft.manifest, null, 2);
   const eligibleCollections = useMemo(
     () => manifest === null ? [] : collectionsForAudience(collections, realms, manifest.audience),
@@ -216,7 +231,40 @@ export function AdminAppBuilderPage() {
       <div className={styles.modeTabs}>{(["basic", "standard", "advanced"] as const).map((value) => <button key={value} type="button" data-active={mode === value} onClick={() => setMode(value)}>{value === "basic" ? "Basic" : value === "standard" ? "Standard" : "Advanced"}</button>)}</div>
       <span className={styles.badges}><span className={styles.health} data-state={health?.state ?? "checking"}>{healthLabel(health)}</span><span className={styles.status} data-state={app.status}>{app.status === "active" ? "활성" : "보관됨"}</span></span>
     </div>
-    {draft === null ? <div className={styles.empty}><h2>적용된 Revision</h2><p>새 Draft를 만들어 편집을 시작하세요.</p><Button onPress={() => void ensureDraft()}>새 Draft</Button></div> : manifest === null ? <Callout tone="error">Manifest JSON 형식이 올바르지 않습니다.</Callout> : <>
+    {draft === null ? <div className={styles.empty}><h2>적용된 Revision</h2><p>새 Draft를 만들어 편집을 시작하세요.</p><Button onPress={() => void ensureDraft()}>새 Draft</Button></div> : manifest === null ? <Callout tone="error">Manifest JSON 형식이 올바르지 않습니다.</Callout> : composed !== null ? <>
+      <div className={styles.builderToolbar}>
+        <div className={styles.modeTabs}>
+          <button type="button" data-active={composedView === "canvas"} onClick={() => setComposedView("canvas")}>화면</button>
+          <button type="button" data-active={composedView === "json"} onClick={() => setComposedView("json")}>JSON</button>
+        </div>
+      </div>
+      {composedView === "canvas" ? (
+        <div className={styles.builderCard}>
+          <div className={styles.composedPageBar}>
+            <div><strong>Composed 화면</strong><span className={styles.help}>{composed.pages.filter((page) => page.type === "composed-page").length}개 화면. 실제 App 비율의 전용 편집기에서 드래그로 구성합니다.</span></div>
+            <Button onPress={() => void run(async () => { if (dirty) await save(); navigate(`/admin-apps/${appId}/screens`); })} isDisabled={pending}>화면 편집 열기 ↗</Button>
+          </div>
+          <div className={styles.pageSummary}>{composed.pages.filter((page) => page.type === "composed-page").map((page) => <article key={page.id}><span>{page.screenNo}</span><strong>{page.title}</strong><code>{(page as ComposedPageDefinition).components.length} components</code></article>)}</div>
+        </div>
+      ) : (
+        <div className={styles.builderCard}><label className={styles.field}><span>Manifest source (V2)</span><textarea className={styles.source} rows={26} value={source} onChange={(event) => setSource(event.target.value)} spellCheck={false} /></label></div>
+      )}
+      <div className={styles.actions}><Button variant="secondary" onPress={() => void run(async () => { await save(); })} isDisabled={pending}>Draft 저장</Button><Button onPress={() => void previewDraft()} isDisabled={pending}>검증 및 Preview</Button></div>
+    </> : <>
+      <div className={styles.upgradeBanner}>
+        <div><strong>Composed Page로 확장</strong><span>이 App을 V2로 업그레이드하면 기존 화면을 유지한 채 드래그 캔버스로 새 화면을 구성할 수 있습니다. (Draft에만 적용되며 적용된 Revision은 보존됩니다.)</span></div>
+        <Button
+          size="small"
+          variant="secondary"
+          isDisabled={pending}
+          onPress={() => {
+            if (manifest === null) return;
+            if (!window.confirm("이 Draft를 Composed Page 지원 V2로 업그레이드할까요? 기존 화면은 유지됩니다.")) return;
+            setSource(JSON.stringify(upgradeManifestToV2(manifest), null, 2));
+            setComposedView("canvas");
+          }}
+        >V2로 업그레이드</Button>
+      </div>
       {mode === "basic" ? <div className={styles.builderCard}>
         <div className={styles.twoColumns}><TextField label="App 이름" value={manifest.name} onChange={(name) => patchManifest((current) => ({ ...current, name }))} /><TextField label="URL key" value={manifest.key} onChange={(key) => patchManifest((current) => ({ ...current, key }))} /></div>
         <label className={styles.field}><span>시작 화면</span><select value={manifest.startPageId} onChange={(event) => patchManifest((current) => ({ ...current, startPageId: event.target.value }))}>{manifest.pages.map((page) => <option key={page.id} value={page.id}>{pageLabel(page)}</option>)}</select></label>
@@ -487,7 +535,54 @@ function healthLabel(health: AdminAppHealthDto | null | undefined): string {
   return health.state === "healthy" ? "정상" : "확인 필요";
 }
 function TextField({ label, value, onChange, type = "text", required = false, pattern }: { readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly type?: string; readonly required?: boolean; readonly pattern?: string }) { return <label className={styles.field}><span>{label}</span><input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} pattern={pattern} /></label>; }
+
 function parseManifest(source: string): AdminAppManifestV1 | null { try { const value = JSON.parse(source) as unknown; return typeof value === "object" && value !== null ? value as AdminAppManifestV1 : null; } catch { return null; } }
+/** A minimal, valid V2 manifest with one empty Composed Page to start editing. */
+export function buildComposedManifest(input: {
+  readonly name: string;
+  readonly key: string;
+  readonly audience: AdminAppManifestV2["audience"];
+}): AdminAppManifestV2 {
+  return {
+    format: "xecms.admin-app",
+    formatVersion: 2,
+    id: input.key,
+    name: input.name,
+    key: input.key,
+    audience: input.audience,
+    presentation: { layoutProfile: "16:9", menuPosition: "left", canvasAlignment: "top-center" },
+    navigation: [{ id: "nav-screen-1", label: "화면 1", pageId: "pg-screen-1" }],
+    pages: [{
+      id: "pg-screen-1",
+      type: "composed-page",
+      screenNo: "SCR-001",
+      title: "화면 1",
+      menuLabel: "화면 1",
+      layout: { columns: 48, rowHeight: 8 },
+      state: [],
+      dataSources: [],
+      components: [],
+      connections: [],
+    }],
+    startPageId: "pg-screen-1",
+  };
+}
+
+/**
+ * Only treats a source as an editable V2 manifest once it is structurally
+ * complete enough for the canvas editor. Mid-typing states (e.g. formatVersion
+ * flipped to 2 before presentation/pages exist) fall back to the JSON editor
+ * instead of crashing the editor.
+ */
+export function parseManifestV2(source: string): AdminAppManifestV2 | null {
+  try {
+    const value = JSON.parse(source) as Record<string, unknown>;
+    if (value === null || typeof value !== "object" || value["formatVersion"] !== 2) return null;
+    if (!Array.isArray(value["pages"]) || !Array.isArray(value["navigation"])) return null;
+    if (value["presentation"] === null || typeof value["presentation"] !== "object") return null;
+    return value as unknown as AdminAppManifestV2;
+  } catch { return null; }
+}
 function pageLabel(page: AdminAppManifestV1["pages"][number]): string { return "title" in page && page.title ? page.title : page.id; }
 function message(error: unknown): string { return error instanceof XeCmsApiError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : "요청을 처리할 수 없습니다."; }
 function download(fileName: string, value: string): void { const url = URL.createObjectURL(new Blob([value], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = fileName; link.click(); URL.revokeObjectURL(url); }

@@ -116,6 +116,13 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
       errorElement: <RouteErrorPage />,
     },
     {
+      path: "/admin-apps/:appId/screens",
+      loader: requireSession,
+      lazy: async () => ({ Component: (await import("./pages/composed-screen-editor-page.js")).ComposedScreenEditorPage }),
+      hydrateFallbackElement: <RouteLoadingPage />,
+      errorElement: <RouteErrorPage />,
+    },
+    {
       path: "/admin",
       loader: requireSession,
       element: <AppShell />,

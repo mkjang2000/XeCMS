@@ -1,5 +1,5 @@
 import type { SchemaChange, SchemaIrV1 } from "@xecms/schema";
-import type { AdminAppManifestDiff, AdminAppManifestV1 } from "@xecms/admin-apps";
+import type { AdminAppManifest, AdminAppManifestDiff } from "@xecms/admin-apps";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
@@ -152,7 +152,7 @@ export interface AdminAppDto {
 }
 export interface AdminAppDraftDto {
   readonly appId:string; readonly workspaceId:string; readonly baseRevisionId:string|null;
-  readonly draftVersion:number; readonly desiredKey:string; readonly manifest:AdminAppManifestV1;
+  readonly draftVersion:number; readonly desiredKey:string; readonly manifest:AdminAppManifest;
   readonly manifestHash:string; readonly createdAt:string; readonly createdByIdentityId:string;
   readonly createdBySubjectId:string; readonly updatedAt:string;
   readonly updatedByIdentityId:string; readonly updatedBySubjectId:string;
@@ -163,7 +163,7 @@ export interface AdminAppDependencyDto {
 }
 export interface AdminAppRevisionDto {
   readonly id:string; readonly appId:string; readonly workspaceId:string; readonly sequence:number;
-  readonly parentRevisionId:string|null; readonly manifest:AdminAppManifestV1;
+  readonly parentRevisionId:string|null; readonly manifest:AdminAppManifest;
   readonly manifestHash:string; readonly dependencies:readonly AdminAppDependencyDto[];
   readonly createdAt:string; readonly createdByIdentityId:string; readonly createdBySubjectId:string;
 }
@@ -187,7 +187,7 @@ export interface AdminAppHealthDto {
 export interface AdminAppActivationDto { readonly app:AdminAppDto; readonly revision:AdminAppRevisionDto; }
 export interface AdminAppManifestArtifactDto { readonly format:"xecms.admin-app-export";
   readonly formatVersion:1; readonly appId:string; readonly revisionId:string|null;
-  readonly manifest:AdminAppManifestV1; readonly serialized:string; readonly hash:string; }
+  readonly manifest:AdminAppManifest; readonly serialized:string; readonly hash:string; }
 export interface CreateAdminAppRequest { readonly manifest:unknown; }
 export interface CreateAdminAppDraftRequest { readonly expectedRouteVersion:number; }
 export interface SaveAdminAppDraftRequest { readonly expectedDraftVersion:number;
@@ -208,6 +208,7 @@ export interface ImportAdminAppRequest { readonly appId?:string; readonly expect
 export interface AdminAppRuntimeAccessProfileDto {
   readonly appAllowed:boolean;
   readonly pages:Readonly<Record<string,boolean>>;
+  readonly pageUnmasked:Readonly<Record<string,boolean>>;
   readonly actions:Readonly<Record<string,boolean>>;
   readonly permissions:Readonly<Record<string,boolean>>;
   readonly readableFields:Readonly<Record<string,readonly string[]|null>>;
@@ -233,11 +234,36 @@ export interface AdminAppRuntimeDependencyHealthDto {
 export interface AdminAppRuntimeDto {
   readonly app:AdminAppDto;
   readonly revisionId:string;
-  readonly manifest:AdminAppManifestV1;
+  readonly manifest:AdminAppManifest;
   readonly schema:AdminAppRuntimeSchemaDto;
   readonly user:AdminAppRuntimeUserDto;
   readonly access:AdminAppRuntimeAccessProfileDto;
   readonly dependencyHealth:AdminAppRuntimeDependencyHealthDto;
+}
+
+export interface ComposedQueryRequest {
+  /** Page State values bound to the Data Source parameters (parameterId -> value). */
+  readonly parameters?: Readonly<Record<string, JsonValue>>;
+  readonly cursor?: string;
+}
+export interface ComposedQueryRowDto {
+  readonly id: string;
+  /** Masked, access-filtered Field values (fieldName -> value). */
+  readonly data: Readonly<Record<string, unknown>>;
+}
+export interface ComposedQueryResultDto {
+  readonly items: readonly ComposedQueryRowDto[];
+  readonly hasNextPage: boolean;
+  readonly nextCursor?: string;
+}
+export interface ComposedDocumentRequest {
+  readonly documentId: string;
+  readonly collectionId: string;
+}
+export interface ComposedDocumentDto {
+  readonly id: string;
+  /** Masked, access-filtered Field values (fieldName -> value). */
+  readonly data: Readonly<Record<string, unknown>>;
 }
 
 export interface UserDto {
@@ -286,6 +312,10 @@ export interface AuthenticatedSessionDto extends SessionDto {
 
 export interface BootstrapStatusDto {
   readonly required: boolean;
+  readonly sensitivity?: {
+    readonly classification: "sensitive";
+    readonly defaultMaskPolicyId: string;
+  };
   readonly templateRequired: boolean;
 }
 
@@ -409,6 +439,10 @@ export interface FieldSummaryDto {
   readonly targetCollectionId?: string;
   readonly relationCardinality?: "one" | "many";
   readonly acceptedMimeTypes?: readonly string[];
+  readonly sensitivity?: {
+    readonly classification: "sensitive";
+    readonly defaultMaskPolicyId: string;
+  };
 }
 
 export interface CollectionSummaryDto {

@@ -22,6 +22,12 @@
 .empty h2, .builderCard h2, .previewPanel h2 { margin: 0; color: var(--xe-color-text-strong); }
 .empty p, .help { margin: 0; color: var(--xe-color-text-muted); }
 .twoColumns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.threeColumns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.upgradeBanner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.85rem 1rem; border: 1px dashed var(--xe-color-primary-strong, #2563eb); border-radius: 8px; background: var(--xe-color-surface, #fff); }
+.upgradeBanner strong { display: block; }
+.upgradeBanner span { color: var(--xe-color-text-muted); font-size: 0.85rem; }
+.composedPageBar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+.composedPageBar select { padding: 0.35rem 0.6rem; border: 1px solid var(--xe-color-border, #ddd); border-radius: 4px; }
 .field { display: grid; gap: .4rem; }
 .field > span { color: var(--xe-color-text-strong); font-size: .82rem; font-weight: 660; }
 .field input, .field select, .field textarea { width: 100%; padding: .68rem .75rem; color: var(--xe-color-text); border: 1px solid var(--xe-color-border-strong); border-radius: var(--xe-radius-sm); background: white; }

@@ -1,5 +1,9 @@
 import type {
   AdminAppRuntimeDto,
+  ComposedDocumentDto,
+  ComposedDocumentRequest,
+  ComposedQueryRequest,
+  ComposedQueryResultDto,
   ContentSessionDto,
   DocumentQueryRequest,
   DocumentQueryResultDto,
@@ -30,6 +34,18 @@ export class AdminRuntimeApiError extends Error {
 
 export interface AdminRuntimeDataClient {
   query(collectionId: string, input: DocumentQueryRequest): Promise<DocumentQueryResultDto>;
+  queryComposed(
+    pageId: string,
+    dataSourceId: string,
+    input: ComposedQueryRequest,
+    signal?: AbortSignal,
+  ): Promise<ComposedQueryResultDto>;
+  getComposedDocument(
+    pageId: string,
+    componentId: string,
+    input: ComposedDocumentRequest,
+    signal?: AbortSignal,
+  ): Promise<ComposedDocumentDto | null>;
   get(collectionId: string, documentId: string): Promise<DocumentRecordDto>;
   create(
     collectionId: string,
@@ -84,6 +100,14 @@ export function createAdminRuntimeDataClient(runtime: AdminAppRuntimeDto): Admin
     query: (collectionId, input) => request(
       `${prefix}/collections/${encodeURIComponent(collectionId)}/documents/query`,
       { method: "POST", body: JSON.stringify(input) },
+    ),
+    queryComposed: (pageId, dataSourceId, input, signal) => request(
+      `${runtimePrefix}/pages/${encodeURIComponent(pageId)}/data-sources/${encodeURIComponent(dataSourceId)}/query`,
+      { method: "POST", body: JSON.stringify(input), ...(signal === undefined ? {} : { signal }) },
+    ),
+    getComposedDocument: (pageId, componentId, input, signal) => request(
+      `${runtimePrefix}/pages/${encodeURIComponent(pageId)}/components/${encodeURIComponent(componentId)}/document`,
+      { method: "POST", body: JSON.stringify(input), ...(signal === undefined ? {} : { signal }) },
     ),
     get: (collectionId, documentId) => request(
       `${prefix}/collections/${encodeURIComponent(collectionId)}/documents/${encodeURIComponent(documentId)}`,

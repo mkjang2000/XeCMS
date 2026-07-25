@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 
 import {
-  decodeAdminAppManifest,
-  serializeAdminAppManifest,
+  decodeAdminAppManifestAny,
+  serializeManifestValue,
   type AdminAppAudience,
-  type AdminAppManifestV1,
+  type AdminAppManifest,
 } from "@xecms/admin-apps";
 import {
   ApplicationError,
+  adminAppAuthorizationResources,
   adminAppAuthorizationResourceId,
   type AdminAppActivationResult,
   type AdminAppDependencyKind,
@@ -140,7 +141,7 @@ export class PostgresAdminAppStore implements AdminAppStore {
            updated_at, updated_by_identity_id, updated_by_subject_id)
          VALUES ($1, $2, $3, 1, $4, $5::jsonb, $6, $7, $8, $9, $7, $8, $9)`,
         [input.appId, input.workspaceId, revision.id, revision.manifest.key,
-          serializeAdminAppManifest(revision.manifest), revision.manifestHash, input.now,
+          serializeManifestValue(revision.manifest), revision.manifestHash, input.now,
           input.actorIdentityId, input.actorSubjectId],
       );
       await client.query("COMMIT");
@@ -297,7 +298,7 @@ export class PostgresAdminAppStore implements AdminAppStore {
            manifest_hash, created_at, created_by_identity_id, created_by_subject_id)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)`,
         [input.revisionId, input.appId, input.workspaceId, sequence, app.active_revision_id,
-          serializeAdminAppManifest(draft.manifest), draft.manifestHash, input.now,
+          serializeManifestValue(draft.manifest), draft.manifestHash, input.now,
           input.actorIdentityId, input.actorSubjectId],
       );
       for (const dependency of dependencies) {
@@ -495,7 +496,7 @@ export class PostgresAdminAppStore implements AdminAppStore {
   private async syncAuthorizationResource(
     client: PoolClient,
     app: AdminAppRow,
-    manifest: AdminAppManifestV1,
+    manifest: AdminAppManifest,
     input: AdminAppResourceAuthor & { readonly nextRouteVersion: number },
   ): Promise<void> {
     const resourceId = adminAppAuthorizationResourceId(app.id);
@@ -533,23 +534,23 @@ export class PostgresAdminAppStore implements AdminAppStore {
       }
     }
 
-    const locked = await client.query<AdminAppResourceRow>(
+    const lockedRoot = await client.query<AdminAppResourceRow>(
       `SELECT id, realm_id, name, resource_type, parent_id, protected, retired_at
          FROM ${this.q("_xecms_auth_resources")} WHERE id = $1 FOR UPDATE`,
       [resourceId],
     );
-    let before = locked.rows[0];
-    if (before !== undefined && !policyByRealm.has(before.realm_id)) {
+    const beforeRoot = lockedRoot.rows[0];
+    if (beforeRoot !== undefined && !policyByRealm.has(beforeRoot.realm_id)) {
       throw new ApplicationError(
         "ADMIN_APP_RESOURCE_CONCURRENT_CHANGE",
         409,
         "The Admin App authorization Resource moved concurrently; retry Apply.",
       );
     }
-    if (before !== undefined && (
-      before.resource_type !== "admin-app"
-      || before.protected !== true
-      || before.retired_at !== null
+    if (beforeRoot !== undefined && (
+      beforeRoot.resource_type !== "admin-app"
+      || beforeRoot.protected !== true
+      || beforeRoot.retired_at !== null
     )) {
       throw new ApplicationError(
         "ADMIN_APP_RESOURCE_ID_CONFLICT",
@@ -558,41 +559,134 @@ export class PostgresAdminAppStore implements AdminAppStore {
       );
     }
 
-    if (before !== undefined && before.realm_id !== targetRealmId) {
-      const previous = resourceRecord(before);
-      const policy = required(policyByRealm.get(before.realm_id));
+    if (beforeRoot !== undefined && beforeRoot.realm_id !== targetRealmId) {
+      const previousRows = await this.lockAdminAppResourceTree(client, resourceId, beforeRoot.realm_id);
+      this.assertAdminAppResourceTree(app.id, previousRows);
+      const previous = previousRows.map(resourceRecord);
+      const policy = required(policyByRealm.get(beforeRoot.realm_id));
       await this.authorization.mutatePolicyInTransaction(client, {
-        realmId: before.realm_id,
+        realmId: beforeRoot.realm_id,
         expectedRevision: Number(policy.current_revision),
-        mutation: { type: "resource.delete", id: resourceId },
-        audit: resourceAudit(app.id, input, before.realm_id, "remove", previous, null),
+        mutation: {
+          type: "resource.reconcile",
+          upserts: [],
+          deleteIds: previousRows.map(({ id }) => id),
+        },
+        audit: resourceAudit(app.id, input, beforeRoot.realm_id, "remove", previous, null),
       });
-      before = undefined;
     }
 
     const targetPolicy = required(policyByRealm.get(targetRealmId));
-    const desired: AuthorizationResourceRecord = {
-      id: resourceId,
-      realmId: targetRealmId,
-      name: manifest.name,
-      type: "admin-app",
-      parentId: required(targetPolicy.root_resource_id),
-      protected: true,
-    };
-    if (before !== undefined && resourcesEqual(resourceRecord(before), desired)) return;
+    const desired = adminAppAuthorizationResources(
+      app.id,
+      targetRealmId,
+      manifest,
+      required(targetPolicy.root_resource_id),
+    );
+    const desiredIds = desired.map(({ id }) => id);
+    const lockedDesired = await client.query<AdminAppResourceRow>(
+      `SELECT id, realm_id, name, resource_type, parent_id, protected, retired_at
+         FROM ${this.q("_xecms_auth_resources")}
+        WHERE id = ANY($1::text[])
+        ORDER BY id
+        FOR UPDATE`,
+      [desiredIds],
+    );
+    const desiredById = new Map(desired.map((resource) => [resource.id, resource]));
+    for (const row of lockedDesired.rows) {
+      const expected = required(desiredById.get(row.id));
+      if (
+        row.realm_id !== targetRealmId
+        || row.resource_type !== expected.type
+        || row.parent_id !== (expected.parentId ?? null)
+        || row.protected !== true
+        || row.retired_at !== null
+      ) {
+        throw new ApplicationError(
+          "ADMIN_APP_RESOURCE_ID_CONFLICT",
+          409,
+          `Authorization Resource '${row.id}' is not owned by the Admin App projection.`,
+        );
+      }
+    }
+    const beforeById = new Map(lockedDesired.rows.map((row) => [row.id, resourceRecord(row)]));
+    const upserts = desired.filter((resource) => {
+      const before = beforeById.get(resource.id);
+      return before === undefined || !resourcesEqual(before, resource);
+    });
+    if (upserts.length === 0) return;
     await this.authorization.mutatePolicyInTransaction(client, {
       realmId: targetRealmId,
       expectedRevision: Number(targetPolicy.current_revision),
-      mutation: { type: "resource.upsert", value: desired },
+      mutation: { type: "resource.reconcile", upserts, deleteIds: [] },
       audit: resourceAudit(
         app.id,
         input,
         targetRealmId,
         "sync",
-        before === undefined ? null : resourceRecord(before),
+        lockedDesired.rows.map(resourceRecord),
         desired,
       ),
     });
+  }
+
+  private async lockAdminAppResourceTree(
+    client: PoolClient,
+    rootId: string,
+    realmId: string,
+  ): Promise<readonly AdminAppResourceRow[]> {
+    const result = await client.query<AdminAppResourceRow>(
+      `WITH RECURSIVE tree AS (
+         SELECT id, realm_id, name, resource_type, parent_id, protected, retired_at, 0 AS depth
+           FROM ${this.q("_xecms_auth_resources")}
+          WHERE id = $1 AND realm_id = $2
+         UNION ALL
+         SELECT child.id, child.realm_id, child.name, child.resource_type, child.parent_id,
+                child.protected, child.retired_at, tree.depth + 1
+           FROM ${this.q("_xecms_auth_resources")} child
+           JOIN tree ON child.parent_id = tree.id AND child.realm_id = tree.realm_id
+       )
+       SELECT id, realm_id, name, resource_type, parent_id, protected, retired_at
+         FROM tree ORDER BY depth DESC, id FOR UPDATE`,
+      [rootId, realmId],
+    );
+    return result.rows;
+  }
+
+  private assertAdminAppResourceTree(
+    appId: string,
+    rows: readonly AdminAppResourceRow[],
+  ): void {
+    const rootId = adminAppAuthorizationResourceId(appId);
+    const root = rows.find((row) => row.id === rootId);
+    const pages = new Set(
+      rows.filter((row) => row.resource_type === "admin-app-page").map(({ id }) => id),
+    );
+    if (
+      root === undefined
+      || root.resource_type !== "admin-app"
+      || rows.some((row) => (
+        row.protected !== true
+        || row.retired_at !== null
+        || (row.id !== rootId && row.resource_type === "admin-app-page" && (
+          !row.id.startsWith(`${rootId}:page:`) || row.parent_id !== rootId
+        ))
+        || (row.id !== rootId && row.resource_type === "admin-app-action" && (
+          row.parent_id === null
+          || !pages.has(row.parent_id)
+          || !row.id.startsWith(`${row.parent_id}:action:`)
+        ))
+        || (row.id !== rootId
+          && row.resource_type !== "admin-app-page"
+          && row.resource_type !== "admin-app-action")
+      ))
+    ) {
+      throw new ApplicationError(
+        "ADMIN_APP_RESOURCE_ID_CONFLICT",
+        409,
+        `Authorization Resource '${rootId}' has an invalid projected subtree.`,
+      );
+    }
   }
 
   private async lockWorkspace(client: PoolClient, workspaceId: string): Promise<void> {
@@ -887,8 +981,8 @@ function resourceAudit(
   input: AdminAppResourceAuthor & { readonly nextRouteVersion: number },
   realmId: string,
   operation: "sync" | "remove",
-  before: AuthorizationResourceRecord | null,
-  after: AuthorizationResourceRecord | null,
+  before: unknown | null,
+  after: unknown | null,
 ): AuthorizationAuditDraft {
   const digest = createHash("sha256")
     .update(appId)
@@ -902,32 +996,43 @@ function resourceAudit(
     .slice(0, 32);
   return {
     id: `audit_admin_app_resource_${digest}`,
+    // Forward BOTH actors: the audit CHECK requires at least one, and a
+    // content-realm App is applied by a Realm Subject (identity may be absent).
     actorIdentityId: input.actorIdentityId,
+    actorSubjectId: input.actorSubjectId,
     action: `admin-app.resource.${operation}`,
     targetType: "resource",
     targetId: adminAppAuthorizationResourceId(appId),
-    before,
-    after,
+    // audit_log.before_state/after_state require a JSON object (or null); the
+    // resource projection is an array, so wrap it under `resources`.
+    before: wrapResourceState(before),
+    after: wrapResourceState(after),
     decision: null,
     occurredAt: input.now,
   };
 }
 
-function canonicalManifest(manifest: AdminAppManifestV1): {
-  readonly manifest: AdminAppManifestV1;
+/** Wraps an array resource-projection into `{ resources: [...] }` (object CHECK). */
+function wrapResourceState(value: unknown | null): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null;
+  return Array.isArray(value) ? { resources: value } : (value as Record<string, unknown>);
+}
+
+function canonicalManifest(manifest: AdminAppManifest): {
+  readonly manifest: AdminAppManifest;
   readonly serialized: string;
   readonly hash: string;
 } {
-  const decoded = decodeAdminAppManifest(manifest);
-  const serialized = serializeAdminAppManifest(decoded);
+  const decoded = decodeAdminAppManifestAny(manifest);
+  const serialized = serializeManifestValue(decoded);
   return { manifest: decoded, serialized, hash: sha256(serialized) };
 }
 
 function storedManifest(input: unknown, expectedHash: string): {
-  readonly manifest: AdminAppManifestV1;
+  readonly manifest: AdminAppManifest;
   readonly hash: string;
 } {
-  const canonical = canonicalManifest(decodeAdminAppManifest(input));
+  const canonical = canonicalManifest(decodeAdminAppManifestAny(input));
   if (canonical.hash !== expectedHash) {
     integrity("Stored Admin App Manifest hash does not match its canonical contents.");
   }
@@ -966,7 +1071,7 @@ function normalizeDependencies(
   }).sort((left, right) => compareText(left.kind, right.kind) || compareText(left.id, right.id));
 }
 
-function assertManifestId(app: AdminAppRow, manifest: AdminAppManifestV1): void {
+function assertManifestId(app: AdminAppRow, manifest: AdminAppManifest): void {
   if (app.manifest_id !== manifest.id) {
     throw new ApplicationError(
       "ADMIN_APP_MANIFEST_ID_IMMUTABLE",

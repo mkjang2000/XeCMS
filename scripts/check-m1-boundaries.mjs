@@ -85,9 +85,14 @@ for (const rule of rules) {
     ].map((match) => match[2]);
 
     for (const specifier of imports) {
+      // Compare by package name so subpath exports (e.g. "@xecms/admin-runtime/geometry")
+      // resolve to the same boundary rule as the package root.
+      const packageName = specifier?.startsWith("@xecms/")
+        ? specifier.split("/").slice(0, 2).join("/")
+        : specifier;
       if (
-        specifier?.startsWith("@xecms/") &&
-        !rule.allowedXeCms.has(specifier)
+        packageName?.startsWith("@xecms/") &&
+        !rule.allowedXeCms.has(packageName)
       ) {
         violations.push(
           `${relative(root.pathname, file.pathname)} imports '${specifier}', which crosses its M1 package boundary.`,

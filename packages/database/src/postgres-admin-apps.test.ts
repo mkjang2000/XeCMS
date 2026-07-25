@@ -7,7 +7,9 @@ import {
 } from "@xecms/admin-apps";
 import {
   SYSTEM_WORKSPACE_RESOURCE_ID,
+  adminAppActionAuthorizationResourceId,
   adminAppAuthorizationResourceId,
+  adminAppPageAuthorizationResourceId,
   createInitialAuthorizationPolicy,
   realmAuthorizationRootResourceId,
 } from "@xecms/application";
@@ -19,6 +21,11 @@ import {
   ADMIN_APP_ACCESS_RECONCILIATION_MIGRATION_ID,
   applyAdminAppAccessReconciliationMigration,
 } from "./admin-app-access-migration.js";
+import {
+  ADMIN_APP_PAGE_ACCESS_MIGRATION_ID,
+  ADMIN_APP_RUNTIME_PERMISSIONS,
+  applyAdminAppPageAccessMigration,
+} from "./admin-app-page-access-migration.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { DEFAULT_WORKSPACE_ID, migrateCore } from "./migrate.js";
 import { PostgresAdminAppStore } from "./postgres-admin-apps.js";
@@ -176,13 +183,73 @@ describe.runIf(RUN)("CAA-2A Admin App PostgreSQL Store", () => {
     );
     expect(permissions.rows.map(({ permission_key }) => permission_key)).toEqual([
       "admin-app.access",
+      "admin-app.action.execute",
       "admin-app.apply",
       "admin-app.create",
       "admin-app.delete",
       "admin-app.export",
+      "admin-app.page.read",
+      "admin-app.page.unmask",
       "admin-app.read",
       "admin-app.update",
     ]);
+  });
+
+  it("installs Page/Action gates and reconciles existing privileged Realm roles", async () => {
+    const migration = await pool.query(
+      `SELECT id FROM ${q("_xecms_core_migrations")} WHERE id = $1`,
+      [ADMIN_APP_PAGE_ACCESS_MIGRATION_ID],
+    );
+    expect(migration.rowCount).toBe(1);
+
+    const compatibleV1Role = "authorization:rlm_system:role:viewer";
+    await pool.query(
+      `INSERT INTO ${q("_xecms_auth_role_permissions")} (realm_id, role_id, permission_key)
+       VALUES ('rlm_system', $1, 'admin-app.access') ON CONFLICT DO NOTHING`,
+      [compatibleV1Role],
+    );
+    await pool.query(
+      `INSERT INTO ${q("_xecms_auth_role_delegations")} (realm_id, role_id, permission_key)
+       VALUES ('rlm_system', $1, 'admin-app.access') ON CONFLICT DO NOTHING`,
+      [compatibleV1Role],
+    );
+    const targetRoles = [
+      "authorization:rlm_system:role:owner",
+      "authorization:rlm_system:role:content-administrator",
+      `authorization:${contentRealmId}:role:owner`,
+      `authorization:${contentRealmId}:role:content-administrator`,
+      compatibleV1Role,
+    ];
+    await pool.query(
+      `DELETE FROM ${q("_xecms_auth_role_delegations")}
+        WHERE role_id = ANY($1::text[]) AND permission_key = ANY($2::text[])`,
+      [targetRoles, [...ADMIN_APP_RUNTIME_PERMISSIONS]],
+    );
+    await pool.query(
+      `DELETE FROM ${q("_xecms_auth_role_permissions")}
+        WHERE role_id = ANY($1::text[]) AND permission_key = ANY($2::text[])`,
+      [targetRoles, [...ADMIN_APP_RUNTIME_PERMISSIONS]],
+    );
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await applyAdminAppPageAccessMigration(client, schema);
+      await applyAdminAppPageAccessMigration(client, schema);
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+
+    for (const table of ["_xecms_auth_role_permissions", "_xecms_auth_role_delegations"]) {
+      const rows = await pool.query<{ role_id: string; permission_key: string }>(
+        `SELECT role_id, permission_key FROM ${q(table)}
+          WHERE role_id = ANY($1::text[]) AND permission_key = ANY($2::text[])
+          ORDER BY role_id, permission_key`,
+        [targetRoles, [...ADMIN_APP_RUNTIME_PERMISSIONS]],
+      );
+      expect(rows.rows).toHaveLength(targetRoles.length * ADMIN_APP_RUNTIME_PERMISSIONS.length);
+    }
   });
 
   it("backfills admin-app.access for existing Owner and Content Administrator roles", async () => {
@@ -352,6 +419,24 @@ describe.runIf(RUN)("CAA-2A Admin App PostgreSQL Store", () => {
       parent_id: SYSTEM_WORKSPACE_RESOURCE_ID,
       protected: true,
     });
+    const projectedResources = await adminAppResourceTree(pool, q, app.id);
+    expect(projectedResources).toHaveLength(14);
+    expect(projectedResources.filter(({ resource_type }) => resource_type === "admin-app-page"))
+      .toHaveLength(5);
+    expect(projectedResources.filter(({ resource_type }) => resource_type === "admin-app-action"))
+      .toHaveLength(8);
+    expect(projectedResources).toContainEqual(expect.objectContaining({
+      id: adminAppPageAuthorizationResourceId(app.id, "order-list"),
+      realm_id: "rlm_system",
+      resource_type: "admin-app-page",
+      parent_id: adminAppAuthorizationResourceId(app.id),
+    }));
+    expect(projectedResources).toContainEqual(expect.objectContaining({
+      id: adminAppActionAuthorizationResourceId(app.id, "order-list", "core.action.update"),
+      realm_id: "rlm_system",
+      resource_type: "admin-app-action",
+      parent_id: adminAppPageAuthorizationResourceId(app.id, "order-list"),
+    }));
     expect(await store.getDraft(DEFAULT_WORKSPACE_ID, app.id)).toBeNull();
 
     await expect(pool.query(
@@ -447,6 +532,7 @@ describe.runIf(RUN)("CAA-2A Admin App PostgreSQL Store", () => {
       parent_id: realmAuthorizationRootResourceId(contentRealmId),
       name: "Realm Console",
     });
+    expect(await adminAppResourceTree(pool, q, created.app.id)).toHaveLength(14);
 
     const draft = await store.createDraft({
       appId: created.app.id,
@@ -477,6 +563,9 @@ describe.runIf(RUN)("CAA-2A Admin App PostgreSQL Store", () => {
       parent_id: SYSTEM_WORKSPACE_RESOURCE_ID,
       name: "System Console",
     });
+    const systemTree = await adminAppResourceTree(pool, q, created.app.id);
+    expect(systemTree).toHaveLength(14);
+    expect(systemTree.every(({ realm_id }) => realm_id === "rlm_system")).toBe(true);
 
     const rolledBack = await store.activateRevision({
       appId: created.app.id,
@@ -492,6 +581,18 @@ describe.runIf(RUN)("CAA-2A Admin App PostgreSQL Store", () => {
       parent_id: realmAuthorizationRootResourceId(contentRealmId),
       name: "Realm Console",
     });
+    const rolledBackTree = await adminAppResourceTree(pool, q, created.app.id);
+    expect(rolledBackTree).toHaveLength(14);
+    expect(rolledBackTree.every(({ realm_id }) => realm_id === contentRealmId)).toBe(true);
+    const archived = await store.setArchived({
+      appId: created.app.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      expectedRouteVersion: rolledBack.app.routeVersion,
+      archived: true,
+      ...author,
+    });
+    expect(archived.status).toBe("archived");
+    expect(await adminAppResourceTree(pool, q, created.app.id)).toEqual(rolledBackTree);
     const audit = await pool.query<{ realm_id: string; action: string }>(
       `SELECT realm_id, action FROM ${q("_xecms_auth_audit_log")}
         WHERE target_id = $1 ORDER BY occurred_at, id`,
@@ -576,6 +677,36 @@ async function resourceRealm(
     [resourceId],
   );
   return result.rows[0];
+}
+
+async function adminAppResourceTree(
+  pool: Pool,
+  q: (name: string) => string,
+  appId: string,
+): Promise<readonly {
+  readonly id: string;
+  readonly realm_id: string;
+  readonly resource_type: string;
+  readonly parent_id: string | null;
+}[]> {
+  const result = await pool.query<{
+    id: string;
+    realm_id: string;
+    resource_type: string;
+    parent_id: string | null;
+  }>(
+    `WITH RECURSIVE tree AS (
+       SELECT id, realm_id, resource_type, parent_id
+         FROM ${q("_xecms_auth_resources")} WHERE id = $1
+       UNION ALL
+       SELECT child.id, child.realm_id, child.resource_type, child.parent_id
+         FROM ${q("_xecms_auth_resources")} child
+         JOIN tree ON child.realm_id = tree.realm_id AND child.parent_id = tree.id
+     )
+     SELECT id, realm_id, resource_type, parent_id FROM tree ORDER BY id`,
+    [adminAppAuthorizationResourceId(appId)],
+  );
+  return result.rows;
 }
 
 function required<T>(value: T | null | undefined): T {

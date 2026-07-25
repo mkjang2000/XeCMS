@@ -7,6 +7,9 @@ import {
   AdminAppApplicationService,
   AdminAppRuntimeApplicationService,
   StructuralAdminAppDependencyResolver,
+  adminAppActionAuthorizationResourceId,
+  adminAppAuthorizationResources,
+  adminAppPageAuthorizationResourceId,
   type AdminAppDependencyResolver,
   type AdminAppDependencyResolution,
   type AdminAppDraftRecord,
@@ -52,6 +55,38 @@ const draft: AdminAppDraftRecord = {
 };
 
 describe("AdminAppApplicationService", () => {
+  it("projects stable Page and Action authorization Resources", () => {
+    const resources = adminAppAuthorizationResources(
+      app.id,
+      "rlm_system",
+      minimalBackofficeManifest,
+      "resource:workspace",
+    );
+    expect(resources).toHaveLength(14);
+    expect(resources[0]).toMatchObject({
+      id: "resource:admin-app:aap_test",
+      type: "admin-app",
+      parentId: "resource:workspace",
+    });
+    expect(resources).toContainEqual(expect.objectContaining({
+      id: adminAppPageAuthorizationResourceId(app.id, "order-list"),
+      type: "admin-app-page",
+      parentId: "resource:admin-app:aap_test",
+    }));
+    const actionId = adminAppActionAuthorizationResourceId(app.id, "order-list", "core.action.update");
+    expect(resources).toContainEqual(expect.objectContaining({
+      id: actionId,
+      name: "core.action.update",
+      type: "admin-app-action",
+      parentId: adminAppPageAuthorizationResourceId(app.id, "order-list"),
+    }));
+    expect(actionId).toBe(adminAppActionAuthorizationResourceId(
+      app.id,
+      "order-list",
+      "core.action.update",
+    ));
+  });
+
   it("uses canonical management permissions and refuses Apply with dependency blockers", async () => {
     const requirePermission = permissionMock();
     const applyDraft = vi.fn();

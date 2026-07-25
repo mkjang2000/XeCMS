@@ -564,6 +564,9 @@ const PERMISSION_CATALOG_SOURCE = [
   ["admin-app.delete", "none", true],
   ["admin-app.export", "none", true],
   ["admin-app.access", "none", true],
+  ["admin-app.page.read", "none", true],
+  ["admin-app.page.unmask", "none", true],
+  ["admin-app.action.execute", "none", true],
 ] as const satisfies readonly (readonly [string, HierarchyGuard, boolean, boolean?])[];
 
 export const DEFAULT_PERMISSION_CATALOG: readonly AuthorizationPermissionRecord[] = Object.freeze(
@@ -723,6 +726,9 @@ export function createInitialAuthorizationPolicy(
     "admin-app.delete",
     "admin-app.export",
     "admin-app.access",
+    "admin-app.page.read",
+    "admin-app.page.unmask",
+    "admin-app.action.execute",
     ...ROLE_MANAGEMENT_PERMISSIONS,
     "authority-level.read",
     "identity.read",
@@ -737,6 +743,9 @@ export function createInitialAuthorizationPolicy(
     "schema.read",
     "admin-app.read",
     "admin-app.access",
+    "admin-app.page.read",
+    "admin-app.page.unmask",
+    "admin-app.action.execute",
     "role.read",
     "media.read",
     "media.upload",

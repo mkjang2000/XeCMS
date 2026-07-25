@@ -1,6 +1,6 @@
 import { Fragment as _Fragment, jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState } from "react";
-import { generateAdminAppManifest, } from "@xecms/admin-apps";
+import { Component, useEffect, useMemo, useState } from "react";
+import { generateAdminAppManifest, upgradeManifestToV2, } from "@xecms/admin-apps";
 import { XeCmsApiError, } from "@xecms/client";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button, Callout, LoadingIndicator } from "@xecms/ui";
@@ -29,6 +29,7 @@ export function AdminAppCreatePage() {
     const [name, setName] = useState("Operations");
     const [key, setKey] = useState("operations");
     const [audience, setAudience] = useState("system");
+    const [appKind, setAppKind] = useState("generated");
     const [selected, setSelected] = useState([]);
     const [pending, setPending] = useState(false);
     const [error, setError] = useState(null);
@@ -51,12 +52,17 @@ export function AdminAppCreatePage() {
         setPending(true);
         setError(null);
         try {
-            const manifest = generateAdminAppManifest({
-                name,
-                key,
-                audience: audience === "system" ? { type: "system" } : { type: "content-realm", realmId: audience },
-                collections: eligibleCollections.filter(({ id }) => selected.includes(id)),
-            });
+            const audienceValue = audience === "system"
+                ? { type: "system" }
+                : { type: "content-realm", realmId: audience };
+            const manifest = appKind === "composed"
+                ? buildComposedManifest({ name, key, audience: audienceValue })
+                : generateAdminAppManifest({
+                    name,
+                    key,
+                    audience: audienceValue,
+                    collections: eligibleCollections.filter(({ id }) => selected.includes(id)),
+                });
             const created = await client.adminApps.create({ manifest });
             navigate(`/admin/apps/${created.app.id}`);
         }
@@ -67,7 +73,7 @@ export function AdminAppCreatePage() {
             setPending(false);
         }
     };
-    return _jsxs("section", { className: styles.page, children: [_jsx(PageHeader, { title: "\uC0C8 \uC6B4\uC601 \uC571", description: "Schema\uB97C \uAE30\uBC18\uC73C\uB85C \uBAA9\uB85D\u00B7\uC0DD\uC131\u00B7\uD3B8\uC9D1\u00B7\uC0C1\uC138 \uD654\uBA74\uC744 \uC790\uB3D9 \uAD6C\uC131\uD569\uB2C8\uB2E4." }), error ? _jsx(Callout, { tone: "error", children: error }) : null, _jsxs("form", { className: styles.builderCard, onSubmit: (event) => void create(event), children: [_jsxs("div", { className: styles.twoColumns, children: [_jsx(TextField, { label: "App \uC774\uB984", value: name, onChange: setName, required: true }), _jsx(TextField, { label: "URL key", value: key, onChange: setKey, required: true, pattern: "[a-z0-9]+(?:-[a-z0-9]+)*" })] }), _jsxs("label", { className: styles.field, children: [_jsx("span", { children: "\uB300\uC0C1 Realm" }), _jsxs("select", { value: audience, onChange: (event) => changeRealm(event.target.value), children: [_jsx("option", { value: "system", children: "System Realm" }), realms.map((realm) => _jsxs("option", { value: realm.realmId, children: [realm.name, " (", realm.realmKey, ")"] }, realm.realmId))] }), _jsx("small", { children: "App\uACFC \uC778\uC99D \uC138\uC158, \uAD8C\uD55C\uC740 \uC120\uD0DD\uD55C Realm\uC5D0 \uADC0\uC18D\uB429\uB2C8\uB2E4. \uB2E4\uB978 Realm\uC758 Auth Collection\uC740 \uD3EC\uD568\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." })] }), _jsxs("fieldset", { className: styles.collectionPicker, children: [_jsx("legend", { children: "\uD3EC\uD568\uD560 Collection" }), eligibleCollections.length === 0 ? _jsx("p", { children: "\uC774 Realm\uC5D0\uC11C \uC0AC\uC6A9\uD560 \uC218 \uC788\uB294 Collection\uC774 \uC5C6\uC5B4 \uBE48 \uB300\uC2DC\uBCF4\uB4DC App\uC73C\uB85C \uC2DC\uC791\uD569\uB2C8\uB2E4." }) : eligibleCollections.map((collection) => _jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: selected.includes(collection.id), onChange: (event) => setSelected((current) => event.target.checked ? [...current, collection.id] : current.filter((id) => id !== collection.id)) }), _jsxs("span", { children: [_jsx("strong", { children: collection.label ?? collection.name }), _jsxs("small", { children: [collection.fields.length, " fields \u00B7 ", collection.id, collection.authRealmKey ? ` · Auth: ${collection.authRealmKey}` : ""] })] })] }, collection.id))] }), _jsxs("div", { className: styles.actions, children: [_jsx(Button, { variant: "secondary", onPress: () => navigate("/admin/apps"), children: "\uCDE8\uC18C" }), _jsx(Button, { type: "submit", isDisabled: pending, children: pending ? "생성 중…" : "Draft 생성" })] })] })] });
+    return _jsxs("section", { className: styles.page, children: [_jsx(PageHeader, { title: "\uC0C8 \uC6B4\uC601 \uC571", description: "Schema\uB97C \uAE30\uBC18\uC73C\uB85C \uBAA9\uB85D\u00B7\uC0DD\uC131\u00B7\uD3B8\uC9D1\u00B7\uC0C1\uC138 \uD654\uBA74\uC744 \uC790\uB3D9 \uAD6C\uC131\uD569\uB2C8\uB2E4." }), error ? _jsx(Callout, { tone: "error", children: error }) : null, _jsxs("form", { className: styles.builderCard, onSubmit: (event) => void create(event), children: [_jsxs("div", { className: styles.twoColumns, children: [_jsx(TextField, { label: "App \uC774\uB984", value: name, onChange: setName, required: true }), _jsx(TextField, { label: "URL key", value: key, onChange: setKey, required: true, pattern: "[a-z0-9]+(?:-[a-z0-9]+)*" })] }), _jsxs("label", { className: styles.field, children: [_jsx("span", { children: "\uB300\uC0C1 Realm" }), _jsxs("select", { value: audience, onChange: (event) => changeRealm(event.target.value), children: [_jsx("option", { value: "system", children: "System Realm" }), realms.map((realm) => _jsxs("option", { value: realm.realmId, children: [realm.name, " (", realm.realmKey, ")"] }, realm.realmId))] }), _jsx("small", { children: "App\uACFC \uC778\uC99D \uC138\uC158, \uAD8C\uD55C\uC740 \uC120\uD0DD\uD55C Realm\uC5D0 \uADC0\uC18D\uB429\uB2C8\uB2E4. \uB2E4\uB978 Realm\uC758 Auth Collection\uC740 \uD3EC\uD568\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." })] }), _jsxs("fieldset", { className: styles.collectionPicker, children: [_jsx("legend", { children: "App \uC720\uD615" }), _jsxs("label", { children: [_jsx("input", { type: "radio", name: "app-kind", checked: appKind === "generated", onChange: () => setAppKind("generated") }), _jsxs("span", { children: [_jsx("strong", { children: "Generated (V1)" }), _jsx("small", { children: "Schema \uAE30\uBC18 \uBAA9\uB85D\u00B7\uC0DD\uC131\u00B7\uD3B8\uC9D1\u00B7\uC0C1\uC138 \uD654\uBA74\uC744 \uC790\uB3D9 \uAD6C\uC131" })] })] }), _jsxs("label", { children: [_jsx("input", { type: "radio", name: "app-kind", checked: appKind === "composed", onChange: () => setAppKind("composed") }), _jsxs("span", { children: [_jsx("strong", { children: "Composed (V2)" }), _jsx("small", { children: "\uBE48 \uD654\uBA74\uC5D0\uC11C \uB4DC\uB798\uADF8\uB85C \uC9C1\uC811 \uAD6C\uC131\uD558\uB294 Composed Page" })] })] })] }), appKind === "composed" ? null : _jsxs("fieldset", { className: styles.collectionPicker, children: [_jsx("legend", { children: "\uD3EC\uD568\uD560 Collection" }), eligibleCollections.length === 0 ? _jsx("p", { children: "\uC774 Realm\uC5D0\uC11C \uC0AC\uC6A9\uD560 \uC218 \uC788\uB294 Collection\uC774 \uC5C6\uC5B4 \uBE48 \uB300\uC2DC\uBCF4\uB4DC App\uC73C\uB85C \uC2DC\uC791\uD569\uB2C8\uB2E4." }) : eligibleCollections.map((collection) => _jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: selected.includes(collection.id), onChange: (event) => setSelected((current) => event.target.checked ? [...current, collection.id] : current.filter((id) => id !== collection.id)) }), _jsxs("span", { children: [_jsx("strong", { children: collection.label ?? collection.name }), _jsxs("small", { children: [collection.fields.length, " fields \u00B7 ", collection.id, collection.authRealmKey ? ` · Auth: ${collection.authRealmKey}` : ""] })] })] }, collection.id))] }), _jsxs("div", { className: styles.actions, children: [_jsx(Button, { variant: "secondary", onPress: () => navigate("/admin/apps"), children: "\uCDE8\uC18C" }), _jsx(Button, { type: "submit", isDisabled: pending, children: pending ? "생성 중…" : "Draft 생성" })] })] })] });
 }
 export function AdminAppBuilderPage() {
     const { appId = "" } = useParams();
@@ -86,6 +92,8 @@ export function AdminAppBuilderPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const manifest = useMemo(() => parseManifest(source), [source]);
+    const composed = useMemo(() => parseManifestV2(source), [source]);
+    const [composedView, setComposedView] = useState("canvas");
     const dirty = draft !== null && source !== JSON.stringify(draft.manifest, null, 2);
     const eligibleCollections = useMemo(() => manifest === null ? [] : collectionsForAudience(collections, realms, manifest.audience), [collections, manifest, realms]);
     const reload = async () => {
@@ -178,7 +186,15 @@ export function AdminAppBuilderPage() {
         return _jsx(LoadingIndicator, { label: "App Builder\uB97C \uBD88\uB7EC\uC624\uB294 \uC911" });
     if (app === null)
         return _jsx(Callout, { tone: "error", children: error ?? "App을 찾을 수 없습니다." });
-    return _jsxs("section", { className: styles.page, children: [_jsx(UnsavedChangesGuard, { when: dirty }), _jsx(PageHeader, { title: app.name, description: `/apps/${app.key} · ${app.audience.type === "system" ? "System Realm" : app.audience.realmId}`, action: app.activeRevisionId === null ? null : _jsx("a", { className: styles.previewLink, href: `/apps/${app.key}`, target: "_blank", rel: "noreferrer", children: "\uC2E4\uD589 App \uC5F4\uAE30 \u2197" }) }), error ? _jsx(Callout, { tone: "error", children: error }) : null, health?.state === "degraded" ? _jsxs("section", { className: styles.healthPanel, children: [_jsxs("header", { children: [_jsxs("div", { children: [_jsx("span", { children: "DEPENDENCY HEALTH" }), _jsx("h2", { children: "\uD604\uC7AC \uD658\uACBD\uACFC \uC801\uC6A9\uB41C Revision\uC774 \uB2EC\uB77C\uC84C\uC2B5\uB2C8\uB2E4" })] }), _jsx("span", { className: styles.health, "data-state": "degraded", children: "\uD655\uC778 \uD544\uC694" })] }), _jsx("p", { children: "App\uC740 \uC81C\uD55C \uBAA8\uB4DC\uB85C \uC5F4\uB9AC\uBA70, \uC544\uB798 \uD56D\uBAA9\uC744 \uD655\uC778\uD55C \uB4A4 \uC0C8 Draft\uB97C Preview/Apply\uD558\uC138\uC694." }), _jsx("div", { children: health.blockers.map((blocker) => _jsxs("article", { children: [_jsx("strong", { children: blocker.code }), _jsx("span", { children: blocker.message })] }, `${blocker.code}:${blocker.message}`)) })] }) : null, _jsxs("div", { className: styles.builderToolbar, children: [_jsx("div", { className: styles.modeTabs, children: ["basic", "standard", "advanced"].map((value) => _jsx("button", { type: "button", "data-active": mode === value, onClick: () => setMode(value), children: value === "basic" ? "Basic" : value === "standard" ? "Standard" : "Advanced" }, value)) }), _jsxs("span", { className: styles.badges, children: [_jsx("span", { className: styles.health, "data-state": health?.state ?? "checking", children: healthLabel(health) }), _jsx("span", { className: styles.status, "data-state": app.status, children: app.status === "active" ? "활성" : "보관됨" })] })] }), draft === null ? _jsxs("div", { className: styles.empty, children: [_jsx("h2", { children: "\uC801\uC6A9\uB41C Revision" }), _jsx("p", { children: "\uC0C8 Draft\uB97C \uB9CC\uB4E4\uC5B4 \uD3B8\uC9D1\uC744 \uC2DC\uC791\uD558\uC138\uC694." }), _jsx(Button, { onPress: () => void ensureDraft(), children: "\uC0C8 Draft" })] }) : manifest === null ? _jsx(Callout, { tone: "error", children: "Manifest JSON \uD615\uC2DD\uC774 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }) : _jsxs(_Fragment, { children: [mode === "basic" ? _jsxs("div", { className: styles.builderCard, children: [_jsxs("div", { className: styles.twoColumns, children: [_jsx(TextField, { label: "App \uC774\uB984", value: manifest.name, onChange: (name) => patchManifest((current) => ({ ...current, name })) }), _jsx(TextField, { label: "URL key", value: manifest.key, onChange: (key) => patchManifest((current) => ({ ...current, key })) })] }), _jsxs("label", { className: styles.field, children: [_jsx("span", { children: "\uC2DC\uC791 \uD654\uBA74" }), _jsx("select", { value: manifest.startPageId, onChange: (event) => patchManifest((current) => ({ ...current, startPageId: event.target.value })), children: manifest.pages.map((page) => _jsx("option", { value: page.id, children: pageLabel(page) }, page.id)) })] }), _jsx("div", { className: styles.pageSummary, children: manifest.pages.map((page) => _jsxs("article", { children: [_jsx("span", { children: page.type }), _jsx("strong", { children: pageLabel(page) }), "collectionId" in page ? _jsx("code", { children: page.collectionId }) : null] }, page.id)) })] }) : null, mode === "standard" ? _jsxs(_Fragment, { children: [_jsx(PageCatalogEditor, { manifest: manifest, collections: eligibleCollections, onChange: (next) => setSource(JSON.stringify(next, null, 2)) }), _jsx(NavigationEditor, { manifest: manifest, onChange: (navigation) => patchManifest((current) => ({ ...current, navigation })) }), _jsx(PageStructureEditor, { manifest: manifest, onChange: (pages) => patchManifest((current) => ({ ...current, pages })) })] }) : null, mode === "advanced" ? _jsxs("div", { className: styles.builderCard, children: [_jsxs("label", { className: styles.field, children: [_jsx("span", { children: "Manifest source" }), _jsx("textarea", { className: styles.source, rows: 26, value: source, onChange: (event) => setSource(event.target.value), spellCheck: false })] }), _jsxs("div", { className: styles.actions, children: [_jsxs("label", { className: styles.fileButton, children: ["JSON \uD30C\uC77C \uC5F4\uAE30", _jsx("input", { type: "file", accept: "application/json,.json", onChange: (event) => {
+    return _jsxs("section", { className: styles.page, children: [_jsx(UnsavedChangesGuard, { when: dirty }), _jsx(PageHeader, { title: app.name, description: `/apps/${app.key} · ${app.audience.type === "system" ? "System Realm" : app.audience.realmId}`, action: app.activeRevisionId === null ? null : _jsx("a", { className: styles.previewLink, href: `/apps/${app.key}`, target: "_blank", rel: "noreferrer", children: "\uC2E4\uD589 App \uC5F4\uAE30 \u2197" }) }), error ? _jsx(Callout, { tone: "error", children: error }) : null, health?.state === "degraded" ? _jsxs("section", { className: styles.healthPanel, children: [_jsxs("header", { children: [_jsxs("div", { children: [_jsx("span", { children: "DEPENDENCY HEALTH" }), _jsx("h2", { children: "\uD604\uC7AC \uD658\uACBD\uACFC \uC801\uC6A9\uB41C Revision\uC774 \uB2EC\uB77C\uC84C\uC2B5\uB2C8\uB2E4" })] }), _jsx("span", { className: styles.health, "data-state": "degraded", children: "\uD655\uC778 \uD544\uC694" })] }), _jsx("p", { children: "App\uC740 \uC81C\uD55C \uBAA8\uB4DC\uB85C \uC5F4\uB9AC\uBA70, \uC544\uB798 \uD56D\uBAA9\uC744 \uD655\uC778\uD55C \uB4A4 \uC0C8 Draft\uB97C Preview/Apply\uD558\uC138\uC694." }), _jsx("div", { children: health.blockers.map((blocker) => _jsxs("article", { children: [_jsx("strong", { children: blocker.code }), _jsx("span", { children: blocker.message })] }, `${blocker.code}:${blocker.message}`)) })] }) : null, _jsxs("div", { className: styles.builderToolbar, children: [_jsx("div", { className: styles.modeTabs, children: ["basic", "standard", "advanced"].map((value) => _jsx("button", { type: "button", "data-active": mode === value, onClick: () => setMode(value), children: value === "basic" ? "Basic" : value === "standard" ? "Standard" : "Advanced" }, value)) }), _jsxs("span", { className: styles.badges, children: [_jsx("span", { className: styles.health, "data-state": health?.state ?? "checking", children: healthLabel(health) }), _jsx("span", { className: styles.status, "data-state": app.status, children: app.status === "active" ? "활성" : "보관됨" })] })] }), draft === null ? _jsxs("div", { className: styles.empty, children: [_jsx("h2", { children: "\uC801\uC6A9\uB41C Revision" }), _jsx("p", { children: "\uC0C8 Draft\uB97C \uB9CC\uB4E4\uC5B4 \uD3B8\uC9D1\uC744 \uC2DC\uC791\uD558\uC138\uC694." }), _jsx(Button, { onPress: () => void ensureDraft(), children: "\uC0C8 Draft" })] }) : manifest === null ? _jsx(Callout, { tone: "error", children: "Manifest JSON \uD615\uC2DD\uC774 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }) : composed !== null ? _jsxs(_Fragment, { children: [_jsx("div", { className: styles.builderToolbar, children: _jsxs("div", { className: styles.modeTabs, children: [_jsx("button", { type: "button", "data-active": composedView === "canvas", onClick: () => setComposedView("canvas"), children: "\uD654\uBA74" }), _jsx("button", { type: "button", "data-active": composedView === "json", onClick: () => setComposedView("json"), children: "JSON" })] }) }), composedView === "canvas" ? (_jsxs("div", { className: styles.builderCard, children: [_jsxs("div", { className: styles.composedPageBar, children: [_jsxs("div", { children: [_jsx("strong", { children: "Composed \uD654\uBA74" }), _jsxs("span", { className: styles.help, children: [composed.pages.filter((page) => page.type === "composed-page").length, "\uAC1C \uD654\uBA74. \uC2E4\uC81C App \uBE44\uC728\uC758 \uC804\uC6A9 \uD3B8\uC9D1\uAE30\uC5D0\uC11C \uB4DC\uB798\uADF8\uB85C \uAD6C\uC131\uD569\uB2C8\uB2E4."] })] }), _jsx(Button, { onPress: () => void run(async () => { if (dirty)
+                                            await save(); navigate(`/admin-apps/${appId}/screens`); }), isDisabled: pending, children: "\uD654\uBA74 \uD3B8\uC9D1 \uC5F4\uAE30 \u2197" })] }), _jsx("div", { className: styles.pageSummary, children: composed.pages.filter((page) => page.type === "composed-page").map((page) => _jsxs("article", { children: [_jsx("span", { children: page.screenNo }), _jsx("strong", { children: page.title }), _jsxs("code", { children: [page.components.length, " components"] })] }, page.id)) })] })) : (_jsx("div", { className: styles.builderCard, children: _jsxs("label", { className: styles.field, children: [_jsx("span", { children: "Manifest source (V2)" }), _jsx("textarea", { className: styles.source, rows: 26, value: source, onChange: (event) => setSource(event.target.value), spellCheck: false })] }) })), _jsxs("div", { className: styles.actions, children: [_jsx(Button, { variant: "secondary", onPress: () => void run(async () => { await save(); }), isDisabled: pending, children: "Draft \uC800\uC7A5" }), _jsx(Button, { onPress: () => void previewDraft(), isDisabled: pending, children: "\uAC80\uC99D \uBC0F Preview" })] })] }) : _jsxs(_Fragment, { children: [_jsxs("div", { className: styles.upgradeBanner, children: [_jsxs("div", { children: [_jsx("strong", { children: "Composed Page\uB85C \uD655\uC7A5" }), _jsx("span", { children: "\uC774 App\uC744 V2\uB85C \uC5C5\uADF8\uB808\uC774\uB4DC\uD558\uBA74 \uAE30\uC874 \uD654\uBA74\uC744 \uC720\uC9C0\uD55C \uCC44 \uB4DC\uB798\uADF8 \uCE94\uBC84\uC2A4\uB85C \uC0C8 \uD654\uBA74\uC744 \uAD6C\uC131\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. (Draft\uC5D0\uB9CC \uC801\uC6A9\uB418\uBA70 \uC801\uC6A9\uB41C Revision\uC740 \uBCF4\uC874\uB429\uB2C8\uB2E4.)" })] }), _jsx(Button, { size: "small", variant: "secondary", isDisabled: pending, onPress: () => {
+                                    if (manifest === null)
+                                        return;
+                                    if (!window.confirm("이 Draft를 Composed Page 지원 V2로 업그레이드할까요? 기존 화면은 유지됩니다."))
+                                        return;
+                                    setSource(JSON.stringify(upgradeManifestToV2(manifest), null, 2));
+                                    setComposedView("canvas");
+                                }, children: "V2\uB85C \uC5C5\uADF8\uB808\uC774\uB4DC" })] }), mode === "basic" ? _jsxs("div", { className: styles.builderCard, children: [_jsxs("div", { className: styles.twoColumns, children: [_jsx(TextField, { label: "App \uC774\uB984", value: manifest.name, onChange: (name) => patchManifest((current) => ({ ...current, name })) }), _jsx(TextField, { label: "URL key", value: manifest.key, onChange: (key) => patchManifest((current) => ({ ...current, key })) })] }), _jsxs("label", { className: styles.field, children: [_jsx("span", { children: "\uC2DC\uC791 \uD654\uBA74" }), _jsx("select", { value: manifest.startPageId, onChange: (event) => patchManifest((current) => ({ ...current, startPageId: event.target.value })), children: manifest.pages.map((page) => _jsx("option", { value: page.id, children: pageLabel(page) }, page.id)) })] }), _jsx("div", { className: styles.pageSummary, children: manifest.pages.map((page) => _jsxs("article", { children: [_jsx("span", { children: page.type }), _jsx("strong", { children: pageLabel(page) }), "collectionId" in page ? _jsx("code", { children: page.collectionId }) : null] }, page.id)) })] }) : null, mode === "standard" ? _jsxs(_Fragment, { children: [_jsx(PageCatalogEditor, { manifest: manifest, collections: eligibleCollections, onChange: (next) => setSource(JSON.stringify(next, null, 2)) }), _jsx(NavigationEditor, { manifest: manifest, onChange: (navigation) => patchManifest((current) => ({ ...current, navigation })) }), _jsx(PageStructureEditor, { manifest: manifest, onChange: (pages) => patchManifest((current) => ({ ...current, pages })) })] }) : null, mode === "advanced" ? _jsxs("div", { className: styles.builderCard, children: [_jsxs("label", { className: styles.field, children: [_jsx("span", { children: "Manifest source" }), _jsx("textarea", { className: styles.source, rows: 26, value: source, onChange: (event) => setSource(event.target.value), spellCheck: false })] }), _jsxs("div", { className: styles.actions, children: [_jsxs("label", { className: styles.fileButton, children: ["JSON \uD30C\uC77C \uC5F4\uAE30", _jsx("input", { type: "file", accept: "application/json,.json", onChange: (event) => {
                                                     const file = event.target.files?.[0];
                                                     if (file)
                                                         void file.text().then(setSource).catch((caught) => setError(message(caught)));
@@ -382,6 +398,53 @@ function parseManifest(source) { try {
 catch {
     return null;
 } }
+/** A minimal, valid V2 manifest with one empty Composed Page to start editing. */
+export function buildComposedManifest(input) {
+    return {
+        format: "xecms.admin-app",
+        formatVersion: 2,
+        id: input.key,
+        name: input.name,
+        key: input.key,
+        audience: input.audience,
+        presentation: { layoutProfile: "16:9", menuPosition: "left", canvasAlignment: "top-center" },
+        navigation: [{ id: "nav-screen-1", label: "화면 1", pageId: "pg-screen-1" }],
+        pages: [{
+                id: "pg-screen-1",
+                type: "composed-page",
+                screenNo: "SCR-001",
+                title: "화면 1",
+                menuLabel: "화면 1",
+                layout: { columns: 48, rowHeight: 8 },
+                state: [],
+                dataSources: [],
+                components: [],
+                connections: [],
+            }],
+        startPageId: "pg-screen-1",
+    };
+}
+/**
+ * Only treats a source as an editable V2 manifest once it is structurally
+ * complete enough for the canvas editor. Mid-typing states (e.g. formatVersion
+ * flipped to 2 before presentation/pages exist) fall back to the JSON editor
+ * instead of crashing the editor.
+ */
+export function parseManifestV2(source) {
+    try {
+        const value = JSON.parse(source);
+        if (value === null || typeof value !== "object" || value["formatVersion"] !== 2)
+            return null;
+        if (!Array.isArray(value["pages"]) || !Array.isArray(value["navigation"]))
+            return null;
+        if (value["presentation"] === null || typeof value["presentation"] !== "object")
+            return null;
+        return value;
+    }
+    catch {
+        return null;
+    }
+}
 function pageLabel(page) { return "title" in page && page.title ? page.title : page.id; }
 function message(error) { return error instanceof XeCmsApiError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : "요청을 처리할 수 없습니다."; }
 function download(fileName, value) { const url = URL.createObjectURL(new Blob([value], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = fileName; link.click(); URL.revokeObjectURL(url); }

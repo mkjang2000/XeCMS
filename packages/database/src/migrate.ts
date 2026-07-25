@@ -61,6 +61,14 @@ import {
   REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID,
   applyRealmAuthEntitlementCleanupMigration,
 } from "./realm-auth-entitlement-cleanup-migration.js";
+import {
+  ADMIN_APP_PAGE_ACCESS_MIGRATION_ID,
+  applyAdminAppPageAccessMigration,
+} from "./admin-app-page-access-migration.js";
+import {
+  ADMIN_APP_MASK_POLICY_DEPENDENCY_MIGRATION_ID,
+  applyAdminAppMaskPolicyDependencyMigration,
+} from "./admin-app-mask-policy-dependency-migration.js";
 
 export const DEFAULT_WORKSPACE_ID = "wrk_default";
 export const DEFAULT_WORKSPACE_NAME = "Default Workspace";
@@ -83,6 +91,8 @@ export const CORE_MIGRATION_IDS = Object.freeze([
   REALM_MANAGEMENT_DELEGATIONS_MIGRATION_ID,
   ADMIN_APP_ACCESS_RECONCILIATION_MIGRATION_ID,
   REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID,
+  ADMIN_APP_PAGE_ACCESS_MIGRATION_ID,
+  ADMIN_APP_MASK_POLICY_DEPENDENCY_MIGRATION_ID,
 ] as const);
 
 /** Connection faults that mean "the server is not accepting clients yet". */
@@ -444,6 +454,26 @@ export async function migrateCore(pool: Pool, rawSchema: string): Promise<void> 
       await applyRealmAuthEntitlementCleanupMigration(client, schema);
       await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
         REALM_AUTH_ENTITLEMENT_CLEANUP_MIGRATION_ID,
+      ]);
+    }
+    const adminAppPageAccess = await client.query<{ id: string }>(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [ADMIN_APP_PAGE_ACCESS_MIGRATION_ID],
+    );
+    if (adminAppPageAccess.rowCount === 0) {
+      await applyAdminAppPageAccessMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        ADMIN_APP_PAGE_ACCESS_MIGRATION_ID,
+      ]);
+    }
+    const adminAppMaskPolicyDependency = await client.query(
+      `SELECT id FROM ${migrations} WHERE id = $1`,
+      [ADMIN_APP_MASK_POLICY_DEPENDENCY_MIGRATION_ID],
+    );
+    if (adminAppMaskPolicyDependency.rowCount === 0) {
+      await applyAdminAppMaskPolicyDependencyMigration(client, schema);
+      await client.query(`INSERT INTO ${migrations} (id, applied_at) VALUES ($1, now())`, [
+        ADMIN_APP_MASK_POLICY_DEPENDENCY_MIGRATION_ID,
       ]);
     }
     await client.query("COMMIT");

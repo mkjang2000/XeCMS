@@ -1,4 +1,4 @@
-import { normalizeAdminAppManifest } from "./normalize.js";
+import { canonicalManifestValue, normalizeAdminAppManifest } from "./normalize.js";
 import type { AdminAppManifestV1 } from "./types.js";
 
 export type AdminAppManifestDiffKind = "added" | "removed" | "changed";
@@ -21,6 +21,16 @@ export function diffAdminAppManifests(
 ): AdminAppManifestDiff {
   const entries: AdminAppManifestDiffEntry[] = [];
   compare(normalizeAdminAppManifest(before), normalizeAdminAppManifest(after), [], entries);
+  return { changed: entries.length > 0, entries };
+}
+
+/**
+ * Version-agnostic structural diff over already-decoded manifests. Skips V1
+ * validation so it works for V1 and V2 alike; callers pass trusted decoded values.
+ */
+export function diffManifestValues(before: unknown, after: unknown): AdminAppManifestDiff {
+  const entries: AdminAppManifestDiffEntry[] = [];
+  compare(canonicalManifestValue(before), canonicalManifestValue(after), [], entries);
   return { changed: entries.length > 0, entries };
 }
 

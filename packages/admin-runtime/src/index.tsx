@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type {
-  AdminAppManifestV1,
   AdminNavigationItem,
   AdminPageDefinition,
+  AdminPageDefinitionV2,
+  ComposedPageDefinition,
   FormLayoutNode,
 } from "@xecms/admin-apps";
+
+import { ComposedPage } from "./composed-page.js";
+import type { PluginComponentRegistry } from "./composed-runtime.js";
+
+export * from "./composed-geometry.js";
 import type {
   AdminAppRuntimeDto,
   CollectionSummaryDto,
@@ -27,15 +33,22 @@ import {
 import styles from "./runtime.module.css";
 
 export * from "./api.js";
+export type { PluginComponentRegistry, PluginComponentRenderer } from "./composed-runtime.js";
+// Exposed for the Builder's in-editor preview: render real Component chrome from
+// a draft page with a mock client (no live runtime/data needed).
+export { ComposedRuntimeProvider } from "./composed-runtime.js";
+export { renderComposedComponent } from "./composed-components.js";
 
 export interface AdminRuntimeShellProps {
   readonly runtime: AdminAppRuntimeDto;
   readonly relativePath: string;
   readonly navigate: (relativePath: string, replace?: boolean) => void;
   readonly onSessionEnded: () => void;
+  /** Trusted Plugin Component renderers, keyed by namespaced kind (CPB-9). */
+  readonly plugins?: PluginComponentRegistry;
 }
 
-export function AdminRuntimeShell({ runtime, relativePath, navigate, onSessionEnded }: AdminRuntimeShellProps) {
+export function AdminRuntimeShell({ runtime, relativePath, navigate, onSessionEnded, plugins }: AdminRuntimeShellProps) {
   const client = useMemo(() => createAdminRuntimeDataClient(runtime), [runtime]);
   const [dirty, setDirty] = useState(false);
   const segments = relativePath.split("/").filter(Boolean);
@@ -111,6 +124,7 @@ export function AdminRuntimeShell({ runtime, relativePath, navigate, onSessionEn
             client={client}
             navigate={guardedNavigate}
             onDirtyChange={setDirty}
+            plugins={plugins}
           />
         )}
       </main>
@@ -118,14 +132,18 @@ export function AdminRuntimeShell({ runtime, relativePath, navigate, onSessionEn
   );
 }
 
-function RuntimePage({ runtime, page, documentId, client, navigate, onDirtyChange }: {
+function RuntimePage({ runtime, page, documentId, client, navigate, onDirtyChange, plugins }: {
   readonly runtime: AdminAppRuntimeDto;
-  readonly page: AdminPageDefinition;
+  readonly page: AdminPageDefinitionV2;
   readonly documentId?: string;
   readonly client: AdminRuntimeDataClient;
   readonly navigate: (path: string, bypassGuard?: boolean) => void;
   readonly onDirtyChange: (dirty: boolean) => void;
+  readonly plugins?: PluginComponentRegistry;
 }) {
+  if (page.type === "composed-page") {
+    return <ComposedPage runtime={runtime} page={page} client={client} navigate={(target) => navigate(target)} plugins={plugins} />;
+  }
   switch (page.type) {
     case "collection-list": return (
       <CollectionList runtime={runtime} page={page} client={client} navigate={navigate} />

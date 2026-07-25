@@ -9,6 +9,8 @@ export * from "./plugin-migration.js";
 export * from "./owner-delegation-migration.js";
 export * from "./admin-app-migration.js";
 export * from "./admin-app-access-migration.js";
+export * from "./admin-app-page-access-migration.js";
+export * from "./admin-app-mask-policy-dependency-migration.js";
 export * from "./realm-owner-migration.js";
 export * from "./authorization-control-plane-audit-migration.js";
 export * from "./realm-full-access-lifecycle-migration.js";

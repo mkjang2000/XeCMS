@@ -218,6 +218,12 @@ function normalizeFieldBase(field: BaseFieldDefinition): BaseFieldDefinition {
     ...(field.unique === true ? { unique: true } : {}),
     ...(field.localized === true ? { localized: true } : {}),
     ...(field.readOnly === true ? { readOnly: true } : {}),
+    ...(field.sensitivity === undefined ? {} : {
+      sensitivity: {
+        classification: field.sensitivity.classification,
+        defaultMaskPolicyId: field.sensitivity.defaultMaskPolicyId,
+      },
+    }),
   };
 }
 

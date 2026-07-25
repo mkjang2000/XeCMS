@@ -148,9 +148,20 @@ describe.runIf(RUN)("CAA-2B/2C/2D Admin App HTTP workflow, dependencies and Reso
         dependencyHealth: { healthy: true },
       });
       expect(runtime.json().access.pages).toMatchObject({
+        overview: true,
         "order-list": true,
         "order-create": true,
         "order-detail": true,
+      });
+      expect(runtime.json().access.pageUnmasked).toMatchObject({
+        overview: true,
+        "order-list": true,
+      });
+      expect(runtime.json().access.actions).toMatchObject({
+        "overview:core.action.create": true,
+        "order-list:core.action.update": true,
+        "order-list:core.action.archive": true,
+        "order-list:core.action.export": true,
       });
       const refreshedAccess = await mutate(
         server,
@@ -291,7 +302,424 @@ describe.runIf(RUN)("CAA-2B/2C/2D Admin App HTTP workflow, dependencies and Reso
       await database.close();
     }
   }, 45_000);
+
+  it("masks Schema-sensitive Document fields on the Admin App runtime tree", async () => {
+    const schema = `xecms_caa2m_${randomUUID().replaceAll("-", "_")}`;
+    const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 5 });
+    const config = loadServerConfig({
+      NODE_ENV: "development",
+      DATABASE_URL,
+      XECMS_DB_SCHEMA: schema,
+      XECMS_SESSION_SECRET: "caa2m-integration-session-secret-0123456789",
+      XECMS_ADMIN_ORIGINS: ORIGIN,
+      XECMS_ADMIN_DIST: "/not-used-in-http-test",
+    });
+    let server: XeCmsServer | undefined;
+    try {
+      server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
+      const owner = await login(server);
+      await applyMaskingSchema(server, owner);
+
+      const created = await mutate(server, owner, "POST", "/api/collections/col_people/documents", {
+        data: { fullName: "Alice Kim", email: "alice@example.com" },
+        hierarchy: { parentId: null, position: 0, expectedVersion: 0 },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+
+      const manifest = {
+        ...minimalBackofficeManifest,
+        id: "people-app",
+        key: "people",
+        name: "People",
+        navigation: [{ id: "people-nav", label: "People", pageId: "people-list" }],
+        startPageId: "people-list",
+        pages: [{
+          id: "people-list",
+          type: "collection-list",
+          collectionId: "col_people",
+          title: "People",
+          columns: [
+            { id: "name-col", field: { kind: "data", fieldId: "fld_full_name" }, label: "Name" },
+            { id: "email-col", field: { kind: "data", fieldId: "fld_email" }, label: "Email" },
+          ],
+          defaultSort: [{ field: { kind: "system", field: "updatedAt" }, direction: "desc" }],
+        }],
+      };
+      const appResponse = await mutate(server, owner, "POST", "/api/admin-apps", { manifest });
+      expect(appResponse.statusCode, appResponse.body).toBe(201);
+      const appId = appResponse.json().app.id as string;
+      const preview = await mutate(server, owner, "POST", `/api/admin-apps/${appId}/preview`, {
+        expectedActiveRevisionId: null,
+        expectedRouteVersion: 1,
+        expectedDraftVersion: 1,
+      });
+      const applied = await mutate(server, owner, "POST", `/api/admin-apps/${appId}/apply`, {
+        planId: preview.json().planId,
+        expectedActiveRevisionId: null,
+        expectedRouteVersion: 1,
+        expectedDraftVersion: 1,
+      });
+      expect(applied.statusCode, applied.body).toBe(200);
+
+      const tree = await get(server, owner, "/api/admin-apps/runtime/people/collections/col_people/tree");
+      expect(tree.statusCode, tree.body).toBe(200);
+      const node = tree.json().items[0];
+      // The sensitive email is masked at the response boundary; the plain field is untouched.
+      expect(node.document.data.fullName).toBe("Alice Kim");
+      expect(node.document.data.email).toBe("a****@e******.com");
+      // The original must never appear anywhere in the response body.
+      expect(tree.body).not.toContain("alice@example.com");
+    } finally {
+      await server?.close();
+      await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(() => undefined);
+      await database.close();
+    }
+  }, 45_000);
+
+  it("stores and serves a V2 Composed Page manifest end-to-end", async () => {
+    const schema = `xecms_caa2v2_${randomUUID().replaceAll("-", "_")}`;
+    const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 5 });
+    const config = loadServerConfig({
+      NODE_ENV: "development",
+      DATABASE_URL,
+      XECMS_DB_SCHEMA: schema,
+      XECMS_SESSION_SECRET: "caa2v2-integration-session-secret-0123456789",
+      XECMS_ADMIN_ORIGINS: ORIGIN,
+      XECMS_ADMIN_DIST: "/not-used-in-http-test",
+    });
+    let server: XeCmsServer | undefined;
+    try {
+      server = await buildServer({ database, config, logger: false });
+      await bootstrapTestOwner(server);
+      const owner = await login(server);
+      await applyMaskingSchema(server, owner);
+
+      const manifest = composedManifest();
+      // A structurally invalid V2 manifest (overlapping components) is rejected.
+      const badComponents = composedManifest();
+      const badPage = (badComponents["pages"] as { components: { placement: unknown }[] }[])[0]!;
+      badPage.components[1]!.placement = { x: 0, y: 0, width: 16, height: 5 };
+      const invalid = await mutate(server, owner, "POST", "/api/admin-apps", { manifest: badComponents });
+      expect(invalid.statusCode, invalid.body).toBe(422);
+
+      const created = await mutate(server, owner, "POST", "/api/admin-apps", { manifest });
+      expect(created.statusCode, created.body).toBe(201);
+      const appId = created.json().app.id as string;
+      expect(created.json().draft.manifest.formatVersion).toBe(2);
+
+      const preview = await mutate(server, owner, "POST", `/api/admin-apps/${appId}/preview`, {
+        expectedActiveRevisionId: null,
+        expectedRouteVersion: 1,
+        expectedDraftVersion: 1,
+      });
+      expect(preview.statusCode, preview.body).toBe(200);
+      const applied = await mutate(server, owner, "POST", `/api/admin-apps/${appId}/apply`, {
+        planId: preview.json().planId,
+        expectedActiveRevisionId: null,
+        expectedRouteVersion: 1,
+        expectedDraftVersion: 1,
+      });
+      expect(applied.statusCode, applied.body).toBe(200);
+
+      const runtime = await get(server, owner, "/api/admin-apps/runtime/opsv2");
+      expect(runtime.statusCode, runtime.body).toBe(200);
+      expect(runtime.json().manifest.formatVersion).toBe(2);
+      expect(runtime.json().manifest.pages[0].type).toBe("composed-page");
+      expect(runtime.json().manifest.pages[0].screenNo).toBe("PPL-001");
+      expect(runtime.json().access.pages["pg_people"]).toBe(true);
+
+      // CPB-4: create documents, then run the Composed Page Data Source query.
+      const people = [
+        { fullName: "Alice Kim", email: "alice@example.com", age: 30 },
+        { fullName: "Bob Lee", email: "bob@example.com", age: 40 },
+      ];
+      for (let index = 0; index < people.length; index += 1) {
+        const created = await mutate(server, owner, "POST", "/api/collections/col_people/documents", {
+          data: people[index], hierarchy: { parentId: null, position: index, expectedVersion: index },
+        });
+        expect(created.statusCode, created.body).toBe(201);
+      }
+
+      const queryUrl = "/api/admin-apps/runtime/opsv2/pages/pg_people/data-sources/query_people/query";
+      const filtered = await mutate(server, owner, "POST", queryUrl, { parameters: { param_name: "Alice" } });
+      expect(filtered.statusCode, filtered.body).toBe(200);
+      const rows = filtered.json().items as { id: string; data: Record<string, unknown> }[];
+      // The parameter filtered to Alice only, and the sensitive email is masked.
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.data["fullName"]).toBe("Alice Kim");
+      expect(rows[0]!.data["email"]).toBe("a****@e******.com");
+      expect(filtered.body).not.toContain("alice@example.com");
+
+      // An empty parameter matches all (contains "" ), still masked.
+      const all = await mutate(server, owner, "POST", queryUrl, { parameters: { param_name: "" } });
+      expect((all.json().items as unknown[]).length).toBe(2);
+      expect(all.body).not.toContain("bob@example.com");
+
+      // Unknown data source fails closed.
+      const missing = await mutate(server, owner, "POST",
+        "/api/admin-apps/runtime/opsv2/pages/pg_people/data-sources/nope/query", { parameters: {} });
+      expect(missing.statusCode).toBe(404);
+
+      // CPB-5: detail read for a selected document id, masked like the list.
+      const aliceId = rows[0]!.id as string;
+      const detailUrl = "/api/admin-apps/runtime/opsv2/pages/pg_people/components/cmp_detail/document";
+      const detail = await mutate(server, owner, "POST", detailUrl, { documentId: aliceId, collectionId: "col_people" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json().data["fullName"]).toBe("Alice Kim");
+      expect(detail.json().data["email"]).toBe("a****@e******.com");
+      expect(detail.body).not.toContain("alice@example.com");
+
+      // A non-detail component or unknown page/component fails closed (404).
+      const badComponent = await mutate(server, owner, "POST",
+        "/api/admin-apps/runtime/opsv2/pages/pg_people/components/cmp_search/document",
+        { documentId: aliceId, collectionId: "col_people" });
+      expect(badComponent.statusCode).toBe(404);
+
+      // CPB-6 adaptive: the "age" variant filters by number; only its parameter is sent.
+      const byAge = await mutate(server, owner, "POST", queryUrl, { parameters: { param_age: 40 } });
+      const ageRows = byAge.json().items as { data: Record<string, unknown> }[];
+      expect(ageRows).toHaveLength(1);
+      expect(ageRows[0]!.data["fullName"]).toBe("Bob Lee");
+
+      // Leak prevention: sending the previous variant's value alongside is fine —
+      // but sending ONLY param_age must not carry any name filter. And an
+      // undeclared parameter is ignored (no runtime-assembled query path).
+      const leak = await mutate(server, owner, "POST", queryUrl, {
+        parameters: { param_age: 40, param_name: "", fld_email: "x", injected: "y" },
+      });
+      const leakRows = leak.json().items as { data: Record<string, unknown> }[];
+      // Empty param_name → name condition dropped; only age=40 applies → Bob only.
+      expect(leakRows.map((r) => r.data["fullName"])).toEqual(["Bob Lee"]);
+
+      // Both parameters empty → both conditions dropped → no filter → all rows.
+      const noFilter = await mutate(server, owner, "POST", queryUrl, { parameters: { param_name: "", param_age: "" } });
+      expect((noFilter.json().items as unknown[]).length).toBe(2);
+
+      // CPB-7: the Composed Page's delete Action is gated by the server access
+      // profile. The owner holds content.delete on col_people, so the gate is
+      // open — this is the boolean the runtime uses to enable the button.
+      expect(runtime.json().access.actions["pg_people:core.action.delete"]).toBe(true);
+
+      // The Manifest cannot forge authorization: the delete effect is only a UI
+      // trigger, and the real mutation goes through the content API, which
+      // re-checks content.delete. Fail-closed proof: a delete with the wrong
+      // version is rejected at the content boundary (runtime cannot bypass it).
+      const bobId = (all.json().items as { id: string; data: Record<string, unknown> }[])
+        .find((row) => row.data["fullName"] === "Bob Lee")!.id;
+      const staleDelete = await mutate(server, owner, "DELETE",
+        `/api/collections/col_people/documents/${bobId}`, { expectedVersion: 999 });
+      expect(staleDelete.statusCode, staleDelete.body).not.toBe(204);
+      // The document still exists after the rejected delete.
+      const stillThere = await mutate(server, owner, "POST", queryUrl, { parameters: { param_age: 40 } });
+      expect((stillThere.json().items as unknown[]).length).toBe(1);
+
+      // The effect chain's real path: read the current version, then delete it.
+      const fresh = await get(server, owner, `/api/collections/col_people/documents/${bobId}`);
+      expect(fresh.statusCode, fresh.body).toBe(200);
+      const deleted = await mutate(server, owner, "DELETE",
+        `/api/collections/col_people/documents/${bobId}`, { expectedVersion: fresh.json().version });
+      expect(deleted.statusCode, deleted.body).toBe(204);
+      // The list Data Source re-run (the fx_refresh effect) now returns one fewer row.
+      const afterDelete = await mutate(server, owner, "POST", queryUrl, { parameters: { param_name: "" } });
+      expect((afterDelete.json().items as unknown[]).length).toBe(1);
+
+      // CPB-7 슬라이스 2: create/update Actions are gated the same way. The owner
+      // holds content.create/content.update on col_people, so both gates are open.
+      expect(runtime.json().access.actions["pg_people:core.action.create"]).toBe(true);
+      expect(runtime.json().access.actions["pg_people:core.action.update"]).toBe(true);
+
+      // The create Action's real path: the form data goes through the content
+      // API, which enforces content.create (and required fields).
+      const createdByAction = await mutate(server, owner, "POST", "/api/collections/col_people/documents", {
+        data: { fullName: "Cara Park", email: "cara@example.com" },
+      });
+      expect(createdByAction.statusCode, createdByAction.body).toBe(201);
+      const caraId = createdByAction.json().id as string;
+      // The list now includes the created document (masked email like the rest).
+      const afterCreate = await mutate(server, owner, "POST", queryUrl, { parameters: { param_name: "Cara" } });
+      const caraRows = afterCreate.json().items as { data: Record<string, unknown> }[];
+      expect(caraRows).toHaveLength(1);
+      expect(caraRows[0]!.data["fullName"]).toBe("Cara Park");
+      expect(afterCreate.body).not.toContain("cara@example.com");
+
+      // The update Action's real path: re-read version, then patch. A stale
+      // version fails closed at the content boundary (runtime cannot bypass it).
+      const caraFresh = await get(server, owner, `/api/collections/col_people/documents/${caraId}`);
+      const staleUpdate = await mutate(server, owner, "PATCH", `/api/collections/col_people/documents/${caraId}`, {
+        data: { fullName: "Cara Kim", email: "cara@example.com" }, expectedVersion: 999,
+      });
+      expect(staleUpdate.statusCode, staleUpdate.body).not.toBe(200);
+      const updated = await mutate(server, owner, "PATCH", `/api/collections/col_people/documents/${caraId}`, {
+        data: { fullName: "Cara Kim", email: "cara@example.com" }, expectedVersion: caraFresh.json().version,
+      });
+      expect(updated.statusCode, updated.body).toBe(200);
+      const afterUpdate = await mutate(server, owner, "POST", queryUrl, { parameters: { param_name: "Cara" } });
+      expect((afterUpdate.json().items as { data: Record<string, unknown> }[])[0]!.data["fullName"]).toBe("Cara Kim");
+    } finally {
+      await server?.close();
+      await database.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`).catch(() => undefined);
+      await database.close();
+    }
+  }, 45_000);
 });
+
+function composedManifest(): Record<string, unknown> {
+  return {
+    format: "xecms.admin-app",
+    formatVersion: 2,
+    id: "opsv2",
+    name: "Operations V2",
+    key: "opsv2",
+    audience: { type: "system" },
+    presentation: { layoutProfile: "16:9", menuPosition: "left", canvasAlignment: "top-center" },
+    navigation: [{ id: "nav_people", label: "People", pageId: "pg_people" }],
+    pages: [{
+      id: "pg_people",
+      type: "composed-page",
+      screenNo: "PPL-001",
+      title: "People",
+      menuLabel: "People",
+      layout: { columns: 48, rowHeight: 8 },
+      state: [
+        { id: "state_name", valueType: "string", initialValue: "" },
+        { id: "state_selected", valueType: "document-id", initialValue: null },
+      ],
+      dataSources: [{
+        id: "query_people",
+        type: "document-query",
+        collectionId: "col_people",
+        trigger: "manual",
+        fields: ["fld_full_name", "fld_email", "fld_age"],
+        parameters: [
+          { id: "param_name", valueType: "string" },
+          { id: "param_age", valueType: "number" },
+        ],
+        // Adaptive filter: name (text) OR age (number). Only the active variant's
+        // parameter is filled at runtime; the other condition is dropped.
+        filter: {
+          type: "group",
+          operator: "or",
+          filters: [
+            {
+              type: "condition",
+              field: { kind: "data", fieldId: "fld_full_name" },
+              operator: "contains",
+              value: { type: "parameter", parameterId: "param_name" },
+            },
+            {
+              type: "condition",
+              field: { kind: "data", fieldId: "fld_age" },
+              operator: "eq",
+              value: { type: "parameter", parameterId: "param_age" },
+            },
+          ],
+        },
+        limit: 20,
+      }],
+      components: [
+        {
+          id: "cmp_name",
+          kind: "core.input.text",
+          placement: { x: 0, y: 0, width: 16, height: 5 },
+          props: { label: "이름" },
+        },
+        {
+          id: "cmp_search",
+          kind: "core.button",
+          placement: { x: 17, y: 0, width: 5, height: 5 },
+          props: { label: "조회" },
+        },
+        {
+          id: "cmp_delete",
+          kind: "core.button",
+          placement: { x: 23, y: 0, width: 5, height: 5 },
+          props: { label: "삭제" },
+          // CPB-7: an onClick chain that deletes the selected document, then
+          // re-runs the list query. The delete Action is gated by the server
+          // access profile and re-checked by the content API.
+          events: [{
+            id: "evt_delete",
+            event: "onClick",
+            effects: [
+              {
+                id: "fx_delete",
+                kind: "action.execute",
+                args: { actionId: "core.action.delete", collectionId: "col_people", documentStateId: "state_selected" },
+              },
+              { id: "fx_refresh", kind: "data-source.execute", args: { dataSourceId: "query_people" } },
+            ],
+          }],
+        },
+        {
+          id: "cmp_detail",
+          kind: "core.output.detail",
+          placement: { x: 0, y: 7, width: 20, height: 20 },
+          props: {
+            collectionId: "col_people",
+            fields: [
+              { fieldId: "fld_full_name", protection: { mode: "normal" } },
+              { fieldId: "fld_email", protection: { mode: "mask-when-required", maskPolicyId: "core.mask.email" } },
+            ],
+          },
+        },
+        {
+          id: "cmp_form",
+          kind: "core.form",
+          placement: { x: 21, y: 7, width: 20, height: 20 },
+          props: {
+            collectionId: "col_people",
+            label: "사람 입력",
+            fields: [
+              { fieldId: "fld_full_name", inputKind: "text" },
+              { fieldId: "fld_email", inputKind: "text" },
+            ],
+          },
+        },
+        {
+          id: "cmp_create",
+          kind: "core.button",
+          placement: { x: 29, y: 0, width: 5, height: 5 },
+          props: { label: "생성" },
+          events: [{
+            id: "evt_create",
+            event: "onClick",
+            effects: [
+              { id: "fx_create", kind: "action.execute", args: { actionId: "core.action.create", collectionId: "col_people", formComponentId: "cmp_form" } },
+              { id: "fx_refresh2", kind: "data-source.execute", args: { dataSourceId: "query_people" } },
+            ],
+          }],
+        },
+        {
+          id: "cmp_update",
+          kind: "core.button",
+          placement: { x: 35, y: 0, width: 5, height: 5 },
+          props: { label: "수정" },
+          events: [{
+            id: "evt_update",
+            event: "onClick",
+            effects: [
+              { id: "fx_update", kind: "action.execute", args: { actionId: "core.action.update", collectionId: "col_people", formComponentId: "cmp_form", documentStateId: "state_selected" } },
+            ],
+          }],
+        },
+      ],
+      connections: [
+        {
+          id: "conn_name_state",
+          from: { nodeType: "component", nodeId: "cmp_name", portId: "value" },
+          to: { nodeType: "state", nodeId: "state_name", portId: "write" },
+        },
+        {
+          id: "conn_selected_detail",
+          from: { nodeType: "state", nodeId: "state_selected", portId: "value" },
+          to: { nodeType: "component", nodeId: "cmp_detail", portId: "documentId" },
+        },
+      ],
+    }],
+    startPageId: "pg_people",
+  };
+}
 
 async function login(server: XeCmsServer): Promise<Session> {
   const response = await server.app.inject({
@@ -344,6 +772,46 @@ async function applySchema(server: XeCmsServer, session: Session): Promise<void>
         name: "workspaceIdentity",
         label: "Workspace identity",
         fields: [{ id: "fld_workspace_title", name: "title", label: "Title", type: "text", required: true }],
+      }],
+    },
+  });
+  expect(imported.statusCode, imported.body).toBe(200);
+  const draftVersion = imported.json().draftVersion as string;
+  const preview = await mutate(server, session, "POST", "/api/schema/preview", { expectedDraftVersion: draftVersion });
+  expect(preview.statusCode, preview.body).toBe(200);
+  const applied = await mutate(server, session, "POST", "/api/schema/apply", {
+    planId: preview.json().planId,
+    expectedRevisionId: null,
+    expectedDraftVersion: draftVersion,
+    approveDestructive: false,
+  });
+  expect(applied.statusCode, applied.body).toBe(200);
+}
+
+async function applyMaskingSchema(server: XeCmsServer, session: Session): Promise<void> {
+  const imported = await mutate(server, session, "PUT", "/api/schema/manifest", {
+    baseRevisionId: null,
+    expectedDraftVersion: null,
+    schema: {
+      format: "xecms.schema",
+      formatVersion: 1,
+      collections: [{
+        id: "col_people",
+        name: "people",
+        label: "People",
+        hierarchy: { enabled: true },
+        fields: [
+          { id: "fld_full_name", name: "fullName", label: "Name", type: "text", required: true },
+          { id: "fld_age", name: "age", label: "Age", type: "number", required: false },
+          {
+            id: "fld_email",
+            name: "email",
+            label: "Email",
+            type: "text",
+            required: true,
+            sensitivity: { classification: "sensitive", defaultMaskPolicyId: "core.mask.email" },
+          },
+        ],
       }],
     },
   });

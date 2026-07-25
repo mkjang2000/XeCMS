@@ -25,8 +25,8 @@ import type {
 } from "./types.js";
 import { assertValidAdminAppManifest } from "./validate.js";
 
-type Path = readonly (string | number)[];
-type UnknownRecord = Readonly<Record<string, unknown>>;
+export type Path = readonly (string | number)[];
+export type UnknownRecord = Readonly<Record<string, unknown>>;
 
 export function decodeAdminAppManifest(input: unknown): AdminAppManifestV1 {
   assertJsonCompatible(input, [], new Set());
@@ -74,7 +74,7 @@ function decodeManifest(input: unknown, path: Path): AdminAppManifestV1 {
   };
 }
 
-function decodeAudience(input: unknown, path: Path): AdminAppManifestV1["audience"] {
+export function decodeAudience(input: unknown, path: Path): AdminAppManifestV1["audience"] {
   const value = object(input, path);
   if (value["type"] === "system") {
     exact(value, ["type"], path);
@@ -90,7 +90,7 @@ function decodeAudience(input: unknown, path: Path): AdminAppManifestV1["audienc
   fail("INVALID_LITERAL", "audience.type must be 'system' or 'content-realm'.", [...path, "type"]);
 }
 
-function decodeNavigation(input: unknown, path: Path): AdminNavigationItem {
+export function decodeNavigation(input: unknown, path: Path): AdminNavigationItem {
   const value = object(input, path);
   exact(value, ["id", "label", "icon", "pageId", "children", "visibility"], path);
   return {
@@ -138,7 +138,7 @@ function decodePermission(input: unknown, path: Path): PermissionReference {
   };
 }
 
-function decodePage(input: unknown, path: Path): AdminPageDefinition {
+export function decodePage(input: unknown, path: Path): AdminPageDefinition {
   const value = object(input, path);
   switch (value["type"]) {
     case "collection-list": return decodeCollectionListPage(value, path);
@@ -504,71 +504,71 @@ function optionalText(value: UnknownRecord, key: string, path: Path): Record<str
   return has(value, key) ? { [key]: text(value[key], [...path, key]) } : {};
 }
 
-function object(input: unknown, path: Path): UnknownRecord {
+export function object(input: unknown, path: Path): UnknownRecord {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     fail("INVALID_INPUT_TYPE", "Expected a JSON object.", path);
   }
   return input as UnknownRecord;
 }
 
-function list(input: unknown, path: Path): readonly unknown[] {
+export function list(input: unknown, path: Path): readonly unknown[] {
   if (!Array.isArray(input)) fail("INVALID_INPUT_TYPE", "Expected an array.", path);
   return input;
 }
 
-function stringList(input: unknown, path: Path): readonly string[] {
+export function stringList(input: unknown, path: Path): readonly string[] {
   return list(input, path).map((item, index) => text(item, [...path, index]));
 }
 
-function exact(value: UnknownRecord, keys: readonly string[], path: Path): void {
+export function exact(value: UnknownRecord, keys: readonly string[], path: Path): void {
   for (const key of Object.keys(value)) {
     if (!keys.includes(key)) fail("UNKNOWN_PROPERTY", `Unknown property '${key}'.`, [...path, key]);
   }
 }
 
-function required(value: UnknownRecord, key: string, path: Path): unknown {
+export function required(value: UnknownRecord, key: string, path: Path): unknown {
   if (!has(value, key)) fail("MISSING_PROPERTY", `Missing required property '${key}'.`, [...path, key]);
   return value[key];
 }
 
-function has(value: UnknownRecord, key: string): boolean {
+export function has(value: UnknownRecord, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function text(input: unknown, path: Path): string {
+export function text(input: unknown, path: Path): string {
   if (typeof input !== "string") fail("INVALID_INPUT_TYPE", "Expected a string.", path);
   return input;
 }
 
-function bool(input: unknown, path: Path): boolean {
+export function bool(input: unknown, path: Path): boolean {
   if (typeof input !== "boolean") fail("INVALID_INPUT_TYPE", "Expected a boolean.", path);
   return input;
 }
 
-function integer(input: unknown, path: Path): number {
+export function integer(input: unknown, path: Path): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input)) {
     fail("INVALID_INPUT_TYPE", "Expected a safe integer.", path);
   }
   return input;
 }
 
-function scalar(input: unknown, path: Path): AdminAppScalar {
+export function scalar(input: unknown, path: Path): AdminAppScalar {
   if (input === null || typeof input === "string" || typeof input === "boolean" ||
     (typeof input === "number" && Number.isFinite(input))) return input;
   fail("INVALID_INPUT_TYPE", "Expected a finite JSON scalar.", path);
 }
 
-function literal<const TValue extends string | number>(input: unknown, expected: TValue, path: Path): TValue {
+export function literal<const TValue extends string | number>(input: unknown, expected: TValue, path: Path): TValue {
   if (input !== expected) fail("INVALID_LITERAL", `Expected ${JSON.stringify(expected)}.`, path);
   return expected;
 }
 
-function choice<const TValue extends readonly (string | number)[]>(input: unknown, values: TValue, path: Path): TValue[number] {
+export function choice<const TValue extends readonly (string | number)[]>(input: unknown, values: TValue, path: Path): TValue[number] {
   if (!values.includes(input as never)) fail("INVALID_LITERAL", `Expected one of: ${values.join(", ")}.`, path);
   return input as TValue[number];
 }
 
-function assertJsonCompatible(input: unknown, path: Path, active: Set<object>): void {
+export function assertJsonCompatible(input: unknown, path: Path, active: Set<object>): void {
   if (input === null || typeof input === "string" || typeof input === "boolean") return;
   if (typeof input === "number") {
     if (!Number.isFinite(input)) fail("INVALID_JSON_VALUE", "JSON numbers must be finite.", path);
@@ -597,6 +597,6 @@ function assertJsonCompatible(input: unknown, path: Path, active: Set<object>): 
   active.delete(input);
 }
 
-function fail(code: string, message: string, path: Path): never {
+export function fail(code: string, message: string, path: Path): never {
   throw new AdminAppManifestDecodeError([{ code, message, path }]);
 }

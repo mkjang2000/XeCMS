@@ -10,6 +10,7 @@ import type {
 const NAME_PATTERN = /^[a-z][A-Za-z0-9]{0,63}$/;
 const REALM_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MIME_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(?:\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/;
+const REGISTRY_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/;
 const RESERVED_SCHEMA_NAMES = new Set(["constructor", "prototype"]);
 const RESERVED_FIELD_NAMES = new Set([
   "id",
@@ -374,6 +375,17 @@ function validateField(
   path: readonly (string | number)[],
   allowReferenceFields: boolean,
 ): void {
+  if (
+    field.sensitivity !== undefined
+    && !REGISTRY_ID_PATTERN.test(field.sensitivity.defaultMaskPolicyId)
+  ) {
+    addIssue(context, {
+      code: "INVALID_FIELD_SENSITIVITY",
+      message: "A sensitive Field requires a canonical defaultMaskPolicyId.",
+      path: [...path, "sensitivity", "defaultMaskPolicyId"],
+      objectId: field.id,
+    });
+  }
   if (field.localized === true) {
     addIssue(context, {
       code: "UNSUPPORTED_LOCALIZED",

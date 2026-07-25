@@ -78,6 +78,13 @@ export interface BaseFieldDefinition {
   readonly unique?: boolean;
   readonly localized?: boolean;
   readonly readOnly?: boolean;
+  /** Server-enforced default used when an App output does not request stronger protection. */
+  readonly sensitivity?: FieldSensitivityDefinition;
+}
+
+export interface FieldSensitivityDefinition {
+  readonly classification: "sensitive";
+  readonly defaultMaskPolicyId: string;
 }
 
 export interface TextFieldDefinition extends BaseFieldDefinition {

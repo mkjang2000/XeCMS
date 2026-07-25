@@ -42,6 +42,7 @@ import {
   SYSTEM_PUBLIC_SUBJECT_ID,
   SYSTEM_WORKSPACE_RESOURCE_ID,
   collectionResourceId,
+  createCoreMaskPolicyRegistry,
   realmAuthorizationRootResourceId,
   realmDocumentResourceId,
   type AuthorizationActor,
@@ -1231,6 +1232,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     workspaceId: DEFAULT_WORKSPACE_ID,
     runtime: adminAppRuntime,
     authorization,
+    maskPolicies: createCoreMaskPolicyRegistry(),
     authenticate: async (request, audience, requireCsrf) => {
       if (audience.type === "system") {
         if (request.cookies[SESSION_COOKIE] === undefined) {
@@ -1331,6 +1333,24 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
     },
     data: {
       tree: (actor, collectionId) => treeDto(actor, collectionId, { kind: "all" }),
+      query: async (actor, collectionId, input) => {
+        const page = await documents.query(actor, collectionId, input);
+        return {
+          items: page.items.map((document) => ({ id: document.id, data: document.data })),
+          hasNextPage: page.hasNextPage,
+          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        };
+      },
+      getDocument: async (actor, collectionId, documentId) => {
+        try {
+          const document = await documents.get(actor, collectionId, documentId);
+          return { id: document.id, data: document.data };
+        } catch (error: unknown) {
+          // A missing document yields an empty detail; access denials propagate.
+          if (error instanceof ApplicationError && error.code === "DOCUMENT_NOT_FOUND") return null;
+          throw error;
+        }
+      },
       previewMove: (actor, collectionId, documentId, body) =>
         database.withContentProjectionLock(async () =>
           (await calculateMovePreview(actor, collectionId, documentId, body)).dto),
@@ -1841,6 +1861,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
               ...(field.label === undefined ? {} : { label: field.label }),
               type: field.type,
               required: field.required === true,
+              ...(field.sensitivity === undefined ? {} : { sensitivity: field.sensitivity }),
             })),
             status: "applied" as const,
             hasPendingChanges: false,
@@ -3466,6 +3487,7 @@ function collectionList(
           ...(field.label === undefined ? {} : { label: field.label }),
           type: field.type,
           required: field.required === true,
+          ...(field.sensitivity === undefined ? {} : { sensitivity: field.sensitivity }),
         })),
         status: applied === undefined ? "draft" as const : "applied" as const,
         hasPendingChanges,

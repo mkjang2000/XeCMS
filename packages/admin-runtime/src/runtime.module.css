@@ -110,3 +110,142 @@
   .dashboardGrid { display: grid; grid-template-columns: 1fr; }
   .widget { grid-column: 1 !important; }
 }
+
+/* Composed Page (CPB-2 static grid runtime) */
+.composedViewport {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+}
+.composedViewport[data-alignment="top-left"] { justify-content: flex-start; }
+.composedCanvas {
+  display: grid;
+  grid-template-columns: repeat(48, 1fr);
+  grid-auto-rows: 8px;
+  gap: 0;
+  flex: none;
+}
+.composedCell {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px;
+  box-sizing: border-box;
+}
+.composedCell > * { width: 100%; }
+.composedField { display: flex; flex-direction: column; gap: 0.3rem; }
+.composedField > span { font-size: 0.85rem; color: var(--xe-color-text-muted); }
+.composedField input, .composedField textarea, .composedField select {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: var(--xe-control-height-sm, 2.25rem);
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--xe-color-border-strong, #d1d6e0);
+  border-radius: var(--xe-radius-xs, 6px);
+  background: var(--xe-color-surface, #fff);
+  color: var(--xe-color-text, #293245);
+  font: inherit;
+}
+.composedField textarea { min-height: 4.5rem; resize: vertical; }
+.composedField input:focus-visible, .composedField textarea:focus-visible, .composedField select:focus-visible {
+  outline: 2px solid var(--xe-color-focus-ring, rgb(88 101 232 / 16%));
+  border-color: var(--xe-color-primary, #5865e8);
+}
+.composedCards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; align-content: start; height: 100%; overflow: auto; box-sizing: border-box; }
+.composedCard { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.6rem 0.75rem; border: 1px solid var(--xe-color-border, #ccc); border-radius: var(--xe-radius-sm, 8px); background: var(--xe-color-surface, #fff); cursor: pointer; }
+.composedCardSelected { border-color: var(--xe-color-primary, #5865e8); box-shadow: 0 0 0 1px var(--xe-color-primary, #5865e8); }
+.composedCardRow { display: flex; flex-direction: column; }
+.composedCardLabel { font-size: 0.72rem; color: var(--xe-color-text-muted); }
+.composedFieldValue { display: flex; flex-direction: column; gap: 0.2rem; justify-content: center; height: 100%; padding: 0.75rem; box-sizing: border-box; border: 1px solid var(--xe-color-border, #ccc); border-radius: var(--xe-radius-sm, 8px); background: var(--xe-color-surface, #fff); }
+.composedFieldValueLabel { font-size: 0.8rem; color: var(--xe-color-text-muted); }
+.composedFieldValueText { font-size: 1.4rem; }
+.composedForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem;
+  border: 1px solid var(--xe-color-border, #ccc);
+  border-radius: var(--xe-radius-sm, 4px);
+  background: var(--xe-color-surface, #fff);
+  overflow: auto;
+}
+.composedFormTitle { font-weight: 600; }
+.composedButton {
+  width: 100%;
+  height: 100%;
+  min-height: var(--xe-control-height-sm, 2.25rem);
+  padding: 0 0.9rem;
+  border: 1px solid var(--xe-color-border-strong, #d1d6e0);
+  border-radius: var(--xe-radius-xs, 6px);
+  background: var(--xe-color-surface, #fff);
+  color: var(--xe-color-text, #293245);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.composedButton:hover:not(:disabled) { background: var(--xe-color-surface-muted, #f0f2f7); }
+.composedButton:disabled { opacity: 0.6; cursor: not-allowed; }
+.composedButtonPrimary {
+  background: var(--xe-color-primary, #5865e8);
+  color: #fff;
+  border-color: transparent;
+}
+.composedButtonPrimary:hover:not(:disabled) { background: var(--xe-color-primary-hover, #4854d4); }
+.composedTable {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--xe-color-border, #ddd);
+  border-radius: var(--xe-radius-sm, 4px);
+  overflow: hidden;
+}
+.composedTableHead {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem;
+  background: var(--xe-color-surface-muted, #f5f5f5);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.composedTableHead > span { flex: 1; }
+.composedDetail {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--xe-color-border, #ddd);
+  border-radius: var(--xe-radius-sm, 4px);
+  padding: 0.5rem;
+  margin: 0;
+}
+.composedDetail > div { display: flex; justify-content: space-between; padding: 0.25rem 0; }
+.composedDetail dt { color: var(--xe-color-text-muted); }
+.composedEmpty { padding: 1rem; color: var(--xe-color-text-muted); text-align: center; }
+.composedTitle { margin: 0; font-size: 1.1rem; }
+.composedDivider { width: 100%; border: none; border-top: 1px solid var(--xe-color-border, #ddd); }
+.composedDegraded {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+  height: 100%;
+  padding: 0.5rem;
+  border: 1px dashed var(--xe-color-border, #ccc);
+  border-radius: var(--xe-radius-sm, 4px);
+  color: var(--xe-color-text-muted);
+  font-size: 0.85rem;
+}
+.composedTableRow { display: flex; gap: 1rem; padding: 0.4rem 0.5rem; border-top: 1px solid var(--xe-color-border, #eee); font-size: 0.85rem; }
+.composedTableRow > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composedNextPage { margin: 0.5rem; padding: 0.35rem 0.75rem; align-self: flex-start; border: 1px solid var(--xe-color-border, #ccc); border-radius: 4px; background: var(--xe-color-surface, #fff); cursor: pointer; }
+.composedTableRow { cursor: pointer; }
+.composedTableRow:hover { background: var(--xe-color-surface-muted, #f5f5f5); }
+.composedTableRowSelected { background: var(--xe-color-primary-soft, #eef0ff); }
+.composedTableRow:focus-visible { outline: 2px solid var(--xe-color-primary, #5865e8); outline-offset: -2px; }
+.composedBadge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--xe-color-surface-muted, #eef); font-size: 0.75rem; }
+.composedLongText { display: block; white-space: pre-wrap; word-break: break-word; }
+.adaptiveHeader { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.adaptiveHeader select { font-size: 0.75rem; }

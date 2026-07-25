@@ -1,0 +1,715 @@
+import type {
+  ComponentDefinition,
+  ComposedPageDefinition,
+  ConnectionDefinition,
+  DataSourceDefinition,
+  GridPlacement,
+  PageStateDefinition,
+} from "@xecms/admin-apps";
+
+/**
+ * Form blocks are the editor's first-class editing unit for the "전산 사용자"
+ * (data-literate, non-coder). A block is a *logical bundle* of the low-level
+ * Manifest atoms (component(s) + state + data source + internal connections) that
+ * share one `blockId` prefix. The user places and connects whole blocks — the
+ * ports/state/parameters underneath are generated automatically. The Manifest and
+ * runtime contract are unchanged: a block is purely an editor projection over the
+ * same atoms a hand-built page would have.
+ *
+ * This layer promotes the CPB-8 preset pattern (id-prefixed atom bundles) into an
+ * add/parse/connect model the canvas edits directly.
+ */
+
+export type FormBlockKind =
+  | "search"
+  | "date-search"
+  | "select-search"
+  | "number-search"
+  | "multi-search"
+  | "list"
+  | "cards"
+  | "detail"
+  | "field"
+  | "input-form"
+  | "item-actions";
+
+export interface FormBlockField {
+  readonly fieldId: string;
+  readonly label?: string;
+  readonly maskPolicyId?: string;
+}
+
+/** An editor-side view of a block: which atoms it owns and its user-facing config. */
+export interface FormBlock {
+  readonly id: string;
+  readonly kind: FormBlockKind;
+  /** The block's primary Collection (search/input target, or list/detail source). */
+  readonly collectionId?: string;
+  /** Ids of the components this block owns (for selection/removal/preview). */
+  readonly componentIds: readonly string[];
+  /** The "anchor" component whose placement represents the block on the canvas. */
+  readonly anchorComponentId: string;
+}
+
+const BLOCK_LABELS: Readonly<Record<FormBlockKind, string>> = {
+  search: "검색폼",
+  "date-search": "날짜·기간 검색",
+  "select-search": "선택 필터",
+  "number-search": "숫자 범위 검색",
+  "multi-search": "다중 조건 검색",
+  list: "목록표",
+  cards: "카드 목록",
+  detail: "상세",
+  field: "단일 필드",
+  "input-form": "입력폼",
+  "item-actions": "항목 작업",
+};
+
+export function blockKindLabel(kind: FormBlockKind): string {
+  return BLOCK_LABELS[kind];
+}
+
+/** Allocates the next free block id (`blk1`, `blk2`, …) on a page. */
+export function nextBlockId(page: ComposedPageDefinition): string {
+  const used = new Set(page.components.map((component) => blockIdOf(component.id)).filter((id): id is string => id !== null));
+  let index = 1;
+  while (used.has(`blk${index}`)) index += 1;
+  return `blk${index}`;
+}
+
+/** The block id that owns an atom id, by the `blk<n>_...` prefix convention. */
+export function blockIdOf(atomId: string): string | null {
+  const match = /^(blk\d+)_/.exec(atomId);
+  return match === null ? null : match[1]!;
+}
+
+function protection(field: FormBlockField): { readonly mode: string; readonly maskPolicyId?: string } {
+  return field.maskPolicyId === undefined
+    ? { mode: "normal" }
+    : { mode: "mask-when-required", maskPolicyId: field.maskPolicyId };
+}
+
+export interface AddBlockInput {
+  readonly kind: FormBlockKind;
+  readonly collectionId: string;
+  readonly fields: readonly FormBlockField[];
+  /** Field a search block filters on; defaults to the first field. */
+  readonly searchFieldId?: string;
+  /** Top-left grid cell to place the block at. */
+  readonly at?: { readonly x: number; readonly y: number };
+}
+
+/**
+ * Produces the atoms for a new block. Each atom id is `<blockId>_...`, so the
+ * block can later be re-identified, moved, reconfigured, or removed as a unit.
+ */
+export function buildBlock(blockId: string, input: AddBlockInput): {
+  readonly components: readonly ComponentDefinition[];
+  readonly state: readonly PageStateDefinition[];
+  readonly dataSources: readonly DataSourceDefinition[];
+  readonly connections: readonly ConnectionDefinition[];
+} {
+  const built = buildAtoms(blockId, input);
+  // Stamp the block kind on the first component so describeBlocks recovers it
+  // exactly (component-kind inference cannot tell e.g. search vs multi-search).
+  const components = built.components.map((component, index) =>
+    index === 0 ? { ...component, props: { ...component.props, _blockKind: input.kind } } : component);
+  return { ...built, components };
+}
+
+function buildAtoms(blockId: string, input: AddBlockInput): {
+  readonly components: readonly ComponentDefinition[];
+  readonly state: readonly PageStateDefinition[];
+  readonly dataSources: readonly DataSourceDefinition[];
+  readonly connections: readonly ConnectionDefinition[];
+} {
+  const at = input.at ?? { x: 0, y: 0 };
+  switch (input.kind) {
+    case "search": return searchBlock(blockId, input, at);
+    case "date-search": return rangeSearchBlock(blockId, "date", input, at);
+    case "number-search": return rangeSearchBlock(blockId, "number", input, at);
+    case "select-search": return selectSearchBlock(blockId, input, at);
+    case "multi-search": return multiSearchBlock(blockId, input, at);
+    case "list": return outputBlock(blockId, "list", input, at);
+    case "cards": return outputBlock(blockId, "cards", input, at);
+    case "detail": return outputBlock(blockId, "detail", input, at);
+    case "field": return fieldBlock(blockId, input, at);
+    case "input-form": return inputFormBlock(blockId, input, at);
+    case "item-actions": return itemActionsBlock(blockId, input, at);
+  }
+}
+
+function place(at: { x: number; y: number }, dx: number, dy: number, width: number, height: number): GridPlacement {
+  return { x: Math.min(47, at.x + dx), y: at.y + dy, width, height };
+}
+
+function searchBlock(blockId: string, input: AddBlockInput, at: { x: number; y: number }) {
+  const searchFieldId = input.searchFieldId ?? input.fields[0]?.fieldId;
+  const components: ComponentDefinition[] = [
+    { id: `${blockId}_input`, kind: "core.input.text", placement: place(at, 0, 0, 16, 5), props: { label: "검색" } },
+    { id: `${blockId}_button`, kind: "core.button", placement: place(at, 16, 0, 5, 5), props: { label: "조회", tone: "primary" } },
+  ];
+  const state: PageStateDefinition[] = [{ id: `${blockId}_state_search`, valueType: "string", initialValue: "" }];
+  const dataSources: DataSourceDefinition[] = [{
+    id: `${blockId}_query`,
+    type: "document-query",
+    collectionId: input.collectionId,
+    trigger: "manual",
+    fields: input.fields.map((field) => field.fieldId),
+    parameters: [{ id: "param_search", valueType: "string" }],
+    ...(searchFieldId === undefined ? {} : {
+      filter: {
+        type: "condition" as const,
+        field: { kind: "data" as const, fieldId: searchFieldId },
+        operator: "contains" as const,
+        value: { type: "parameter" as const, parameterId: "param_search" },
+      },
+    }),
+    limit: 20,
+  }];
+  const connections: ConnectionDefinition[] = [
+    conn(`${blockId}_c_in`, comp(`${blockId}_input`, "value"), state_(`${blockId}_state_search`, "write")),
+    conn(`${blockId}_c_pm`, state_(`${blockId}_state_search`, "value"), ds(`${blockId}_query`, "parameter:param_search")),
+    conn(`${blockId}_c_ex`, comp(`${blockId}_button`, "clicked"), ds(`${blockId}_query`, "execute")),
+  ];
+  return { components, state, dataSources, connections };
+}
+
+/** A start/end range search (date or number): two inputs → gte/lte AND filter. */
+function rangeSearchBlock(blockId: string, kind: "date" | "number", input: AddBlockInput, at: { x: number; y: number }) {
+  const fieldId = input.searchFieldId ?? input.fields[0]?.fieldId;
+  const inputKind = kind === "date" ? "core.input.date" : "core.input.number";
+  const valueType = kind === "date" ? "date" as const : "number" as const;
+  const components: ComponentDefinition[] = [
+    { id: `${blockId}_from`, kind: inputKind, placement: place(at, 0, 0, 10, 5), props: { label: "시작" } },
+    { id: `${blockId}_to`, kind: inputKind, placement: place(at, 10, 0, 10, 5), props: { label: "끝" } },
+    { id: `${blockId}_button`, kind: "core.button", placement: place(at, 20, 0, 5, 5), props: { label: "조회", tone: "primary" } },
+  ];
+  const state: PageStateDefinition[] = [
+    { id: `${blockId}_state_from`, valueType, initialValue: kind === "date" ? "" : null },
+    { id: `${blockId}_state_to`, valueType, initialValue: kind === "date" ? "" : null },
+  ];
+  const dataSources: DataSourceDefinition[] = [{
+    id: `${blockId}_query`, type: "document-query", collectionId: input.collectionId, trigger: "manual",
+    fields: input.fields.map((field) => field.fieldId),
+    parameters: [{ id: "param_from", valueType }, { id: "param_to", valueType }],
+    ...(fieldId === undefined ? {} : {
+      filter: {
+        type: "group" as const, operator: "and" as const,
+        filters: [
+          { type: "condition" as const, field: { kind: "data" as const, fieldId }, operator: "gte" as const, value: { type: "parameter" as const, parameterId: "param_from" } },
+          { type: "condition" as const, field: { kind: "data" as const, fieldId }, operator: "lte" as const, value: { type: "parameter" as const, parameterId: "param_to" } },
+        ],
+      },
+    }),
+    limit: 20,
+  }];
+  const connections: ConnectionDefinition[] = [
+    conn(`${blockId}_c_from`, comp(`${blockId}_from`, "value"), state_(`${blockId}_state_from`, "write")),
+    conn(`${blockId}_c_to`, comp(`${blockId}_to`, "value"), state_(`${blockId}_state_to`, "write")),
+    conn(`${blockId}_c_pf`, state_(`${blockId}_state_from`, "value"), ds(`${blockId}_query`, "parameter:param_from")),
+    conn(`${blockId}_c_pt`, state_(`${blockId}_state_to`, "value"), ds(`${blockId}_query`, "parameter:param_to")),
+    conn(`${blockId}_c_ex`, comp(`${blockId}_button`, "clicked"), ds(`${blockId}_query`, "execute")),
+  ];
+  return { components, state, dataSources, connections };
+}
+
+/** A dropdown filter: one select → eq filter. Options come from the field later. */
+function selectSearchBlock(blockId: string, input: AddBlockInput, at: { x: number; y: number }) {
+  const fieldId = input.searchFieldId ?? input.fields[0]?.fieldId;
+  const components: ComponentDefinition[] = [
+    { id: `${blockId}_select`, kind: "core.input.select", placement: place(at, 0, 0, 14, 5), props: { label: "선택", options: [] } },
+    { id: `${blockId}_button`, kind: "core.button", placement: place(at, 14, 0, 5, 5), props: { label: "조회", tone: "primary" } },
+  ];
+  const state: PageStateDefinition[] = [{ id: `${blockId}_state_select`, valueType: "string", initialValue: "" }];
+  const dataSources: DataSourceDefinition[] = [{
+    id: `${blockId}_query`, type: "document-query", collectionId: input.collectionId, trigger: "manual",
+    fields: input.fields.map((field) => field.fieldId),
+    parameters: [{ id: "param_select", valueType: "string" }],
+    ...(fieldId === undefined ? {} : {
+      filter: { type: "condition" as const, field: { kind: "data" as const, fieldId }, operator: "eq" as const, value: { type: "parameter" as const, parameterId: "param_select" } },
+    }),
+    limit: 20,
+  }];
+  const connections: ConnectionDefinition[] = [
+    conn(`${blockId}_c_sel`, comp(`${blockId}_select`, "value"), state_(`${blockId}_state_select`, "write")),
+    conn(`${blockId}_c_pm`, state_(`${blockId}_state_select`, "value"), ds(`${blockId}_query`, "parameter:param_select")),
+    conn(`${blockId}_c_ex`, comp(`${blockId}_button`, "clicked"), ds(`${blockId}_query`, "execute")),
+  ];
+  return { components, state, dataSources, connections };
+}
+
+/** Multiple text conditions ANDed together — one input per configured field. */
+function multiSearchBlock(blockId: string, input: AddBlockInput, at: { x: number; y: number }) {
+  const fields = input.fields.slice(0, 4);
+  const components: ComponentDefinition[] = fields.map((field, index) => ({
+    id: `${blockId}_in${index}`, kind: "core.input.text", placement: place(at, index * 12, 0, 11, 5),
+    props: { label: field.label ?? field.fieldId },
+  }));
+  components.push({ id: `${blockId}_button`, kind: "core.button", placement: place(at, fields.length * 12, 0, 5, 5), props: { label: "조회", tone: "primary" } });
+  const state: PageStateDefinition[] = fields.map((_, index) => ({ id: `${blockId}_st${index}`, valueType: "string" as const, initialValue: "" }));
+  const dataSources: DataSourceDefinition[] = [{
+    id: `${blockId}_query`, type: "document-query", collectionId: input.collectionId, trigger: "manual",
+    fields: input.fields.map((field) => field.fieldId),
+    parameters: fields.map((_, index) => ({ id: `param_${index}`, valueType: "string" as const })),
+    ...(fields.length === 0 ? {} : {
+      filter: {
+        type: "group" as const, operator: "and" as const,
+        filters: fields.map((field, index) => ({
+          type: "condition" as const, field: { kind: "data" as const, fieldId: field.fieldId }, operator: "contains" as const,
+          value: { type: "parameter" as const, parameterId: `param_${index}` },
+        })),
+      },
+    }),
+    limit: 20,
+  }];
+  const connections: ConnectionDefinition[] = [
+    ...fields.flatMap((_, index) => [
+      conn(`${blockId}_ci${index}`, comp(`${blockId}_in${index}`, "value"), state_(`${blockId}_st${index}`, "write")),
+      conn(`${blockId}_cp${index}`, state_(`${blockId}_st${index}`, "value"), ds(`${blockId}_query`, `parameter:param_${index}`)),
+    ]),
+    conn(`${blockId}_c_ex`, comp(`${blockId}_button`, "clicked"), ds(`${blockId}_query`, "execute")),
+  ];
+  return { components, state, dataSources, connections };
+}
+
+function outputBlock(blockId: string, kind: "list" | "cards" | "detail", input: AddBlockInput, at: { x: number; y: number }) {
+  if (kind === "list" || kind === "cards") {
+    const anchor: ComponentDefinition = {
+      id: `${blockId}_${kind === "list" ? "table" : "cards"}`,
+      kind: kind === "list" ? "core.output.table" : "core.output.cards",
+      placement: place(at, 0, 0, 30, 24),
+      props: { collectionId: input.collectionId, columns: input.fields.map((field, index) => ({ id: `col_${index}`, fieldId: field.fieldId, label: field.label ?? field.fieldId, protection: protection(field) })) },
+    };
+    return { components: [anchor], state: [], dataSources: [], connections: [] };
+  }
+  const detail: ComponentDefinition = {
+    id: `${blockId}_detail`, kind: "core.output.detail", placement: place(at, 0, 0, 18, 24),
+    props: { collectionId: input.collectionId, fields: input.fields.map((field) => ({ fieldId: field.fieldId, protection: protection(field) })) },
+  };
+  return { components: [detail], state: [], dataSources: [], connections: [] };
+}
+
+/** A single-field value tile (label + value of the bound document). */
+function fieldBlock(blockId: string, input: AddBlockInput, at: { x: number; y: number }) {
+  const field = input.fields[0];
+  const component: ComponentDefinition = {
+    id: `${blockId}_field`, kind: "core.output.field", placement: place(at, 0, 0, 12, 6),
+    props: { collectionId: input.collectionId, ...(field === undefined ? {} : { fieldId: field.fieldId, label: field.label ?? field.fieldId }) },
+  };
+  return { components: [component], state: [], dataSources: [], connections: [] };
+}
+
+/** Edit/Delete buttons acting on a selected document (target set by a link). */
+function itemActionsBlock(blockId: string, input: AddBlockInput, at: { x: number; y: number }) {
+  const stateId = `${blockId}_state_target`;
+  const edit: ComponentDefinition = {
+    id: `${blockId}_edit`, kind: "core.button", placement: place(at, 0, 0, 6, 5), props: { label: "수정" },
+    events: [{ id: `${blockId}_evt_edit`, event: "onClick", effects: [
+      { id: `${blockId}_fx_update`, kind: "action.execute", args: { actionId: "core.action.update", collectionId: input.collectionId, formComponentId: `${blockId}_form`, documentStateId: stateId } },
+    ] }],
+  };
+  const del: ComponentDefinition = {
+    id: `${blockId}_delete`, kind: "core.button", placement: place(at, 6, 0, 6, 5), props: { label: "삭제", tone: "danger" },
+    events: [{ id: `${blockId}_evt_del`, event: "onClick", effects: [
+      { id: `${blockId}_fx_delete`, kind: "action.execute", args: { actionId: "core.action.delete", collectionId: input.collectionId, documentStateId: stateId, confirm: "선택한 항목을 삭제할까요?" } },
+    ] }],
+  };
+  const state: PageStateDefinition[] = [{ id: stateId, valueType: "document-id", initialValue: null }];
+  return { components: [edit, del], state, dataSources: [], connections: [] };
+}
+
+function inputFormBlock(blockId: string, input: AddBlockInput, at: { x: number; y: number }) {
+  const form: ComponentDefinition = {
+    id: `${blockId}_form`, kind: "core.form", placement: place(at, 0, 0, 18, 20),
+    props: { collectionId: input.collectionId, label: "입력", fields: input.fields.map((field) => ({ fieldId: field.fieldId, inputKind: "text" })) },
+  };
+  const save: ComponentDefinition = {
+    id: `${blockId}_save`, kind: "core.button", placement: place(at, 0, 20, 6, 5), props: { label: "저장", tone: "primary" },
+    events: [{
+      id: `${blockId}_evt_save`, event: "onClick",
+      effects: [{ id: `${blockId}_fx_create`, kind: "action.execute", args: { actionId: "core.action.create", collectionId: input.collectionId, formComponentId: `${blockId}_form` } }],
+    }],
+  };
+  return { components: [form, save], state: [], dataSources: [], connections: [] };
+}
+
+// --- Connection helpers (kept local so callers never touch raw port strings) ---
+
+function comp(nodeId: string, portId: string) { return { nodeType: "component" as const, nodeId, portId }; }
+function state_(nodeId: string, portId: string) { return { nodeType: "state" as const, nodeId, portId }; }
+function ds(nodeId: string, portId: string) { return { nodeType: "data-source" as const, nodeId, portId }; }
+function conn(id: string, from: ConnectionDefinition["from"], to: ConnectionDefinition["to"]): ConnectionDefinition {
+  return { id, from, to };
+}
+
+/**
+ * Groups a page's components into blocks by their `blk<n>_` prefix and infers the
+ * kind from the components present. Atoms without the prefix (hand-placed legacy
+ * components) are ignored here — the canvas still renders them, they just aren't
+ * treated as blocks.
+ */
+export function describeBlocks(page: ComposedPageDefinition): readonly FormBlock[] {
+  const byBlock = new Map<string, ComponentDefinition[]>();
+  for (const component of page.components) {
+    const blockId = blockIdOf(component.id);
+    if (blockId === null) continue;
+    const list = byBlock.get(blockId) ?? [];
+    list.push(component);
+    byBlock.set(blockId, list);
+  }
+  const blocks: FormBlock[] = [];
+  for (const [id, components] of byBlock) {
+    const kind = inferKind(components);
+    if (kind === null) continue;
+    const anchor = anchorFor(kind, components) ?? components[0]!;
+    blocks.push({
+      id, kind,
+      collectionId: collectionOf(page, id, components),
+      componentIds: components.map((component) => component.id),
+      anchorComponentId: anchor.id,
+    });
+  }
+  return blocks;
+}
+
+const ALL_KINDS: readonly FormBlockKind[] = [
+  "search", "date-search", "select-search", "number-search", "multi-search",
+  "list", "cards", "detail", "field", "input-form", "item-actions",
+];
+
+function inferKind(components: readonly ComponentDefinition[]): FormBlockKind | null {
+  // The stamped `_blockKind` (set by buildBlock) is authoritative.
+  for (const component of components) {
+    const stamped = component.props["_blockKind"];
+    if (typeof stamped === "string" && (ALL_KINDS as readonly string[]).includes(stamped)) {
+      return stamped as FormBlockKind;
+    }
+  }
+  // Fallback for hand-built/legacy blocks: infer from components present.
+  const kinds = new Set(components.map((component) => component.kind));
+  if (kinds.has("core.output.table")) return "list";
+  if (kinds.has("core.output.cards")) return "cards";
+  if (kinds.has("core.output.detail")) return "detail";
+  if (kinds.has("core.output.field")) return "field";
+  if (kinds.has("core.form")) return "input-form";
+  if (kinds.has("core.input.select")) return "select-search";
+  if (kinds.has("core.input.date") || kinds.has("core.input.number")) return "number-search";
+  if (kinds.has("core.input.text") || kinds.has("core.input.adaptive")) return "search";
+  if (kinds.has("core.button")) return "item-actions";
+  return null;
+}
+
+function anchorFor(kind: FormBlockKind, components: readonly ComponentDefinition[]): ComponentDefinition | undefined {
+  // The stamped component is the anchor; else fall back to a kind-appropriate one.
+  const stamped = components.find((component) => typeof component.props["_blockKind"] === "string");
+  if (stamped !== undefined) return stamped;
+  const wanted = kind === "list" ? "core.output.table"
+    : kind === "cards" ? "core.output.cards"
+      : kind === "detail" ? "core.output.detail"
+        : kind === "field" ? "core.output.field"
+          : kind === "input-form" ? "core.form"
+            : kind === "select-search" ? "core.input.select"
+              : kind === "item-actions" ? "core.button" : "core.input.text";
+  return components.find((component) => component.kind === wanted);
+}
+
+function collectionOf(page: ComposedPageDefinition, blockId: string, components: readonly ComponentDefinition[]): string | undefined {
+  // A block's collection is its data source's, or a component prop's collectionId.
+  const source = page.dataSources.find((entry) => blockIdOf(entry.id) === blockId);
+  if (source !== undefined) return source.collectionId;
+  for (const component of components) {
+    const value = component.props["collectionId"];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
+/** The fields a block currently shows/collects, read back from its atoms. */
+export function blockFields(page: ComposedPageDefinition, block: FormBlock): readonly FormBlockField[] {
+  const readColumns = (value: unknown): FormBlockField[] =>
+    Array.isArray(value)
+      ? value.flatMap((entry) => {
+          const record = entry as Record<string, unknown>;
+          const fieldId = record["fieldId"];
+          if (typeof fieldId !== "string") return [];
+          const label = typeof record["label"] === "string" ? record["label"] : undefined;
+          const protectionRec = record["protection"] as Record<string, unknown> | undefined;
+          const maskPolicyId = typeof protectionRec?.["maskPolicyId"] === "string" ? protectionRec["maskPolicyId"] as string : undefined;
+          return [{ fieldId, ...(label === undefined ? {} : { label }), ...(maskPolicyId === undefined ? {} : { maskPolicyId }) }];
+        })
+      : [];
+  const anchor = page.components.find((component) => component.id === block.anchorComponentId);
+  if (block.kind === "list" || block.kind === "cards") return readColumns(anchor?.props["columns"]);
+  if (block.kind === "detail" || block.kind === "input-form" || block.kind === "field") return readColumns(anchor?.props["fields"] ?? (anchor?.props["fieldId"] === undefined ? [] : [{ fieldId: anchor?.props["fieldId"] }]));
+  // Search blocks: the displayed/queried fields live on the data source.
+  const source = page.dataSources.find((entry) => blockIdOf(entry.id) === block.id);
+  return (source?.fields ?? []).map((fieldId) => ({ fieldId }));
+}
+
+/** The (first) filter field a search block filters on, if any. */
+export function blockSearchField(page: ComposedPageDefinition, block: FormBlock): string | undefined {
+  const source = page.dataSources.find((entry) => blockIdOf(entry.id) === block.id);
+  const filter = source?.filter;
+  if (filter === undefined) return undefined;
+  if (filter.type === "condition" && filter.field.kind === "data") return filter.field.fieldId;
+  // Range/multi blocks use a group; report the first condition's field.
+  if (filter.type === "group") {
+    const first = filter.filters.find((f) => f.type === "condition" && f.field.kind === "data");
+    if (first !== undefined && first.type === "condition" && first.field.kind === "data") return first.field.fieldId;
+  }
+  return undefined;
+}
+
+/** Whether a block is a search (produces query results to feed outputs). */
+export function isSearchBlock(kind: FormBlockKind): boolean {
+  return kind === "search" || kind === "date-search" || kind === "select-search" || kind === "number-search" || kind === "multi-search";
+}
+
+/** Whether a block is a row/list output (feeds detail/field/actions via selection). */
+export function isListBlock(kind: FormBlockKind): boolean {
+  return kind === "list" || kind === "cards";
+}
+
+// --- Page-level block operations ---
+
+/** Adds a block's atoms to a page below the existing content (no overlap). */
+export function addBlockToPage(page: ComposedPageDefinition, input: AddBlockInput): {
+  readonly page: ComposedPageDefinition;
+  readonly blockId: string;
+} {
+  const blockId = nextBlockId(page);
+  const at = input.at ?? { x: 0, y: nextFreeRow(page) };
+  const built = buildBlock(blockId, { ...input, at });
+  return {
+    blockId,
+    page: {
+      ...page,
+      components: [...page.components, ...built.components],
+      state: [...page.state, ...built.state],
+      dataSources: [...page.dataSources, ...built.dataSources],
+      connections: [...page.connections, ...built.connections],
+    },
+  };
+}
+
+/** Components that predate the form-block system (no `blk<n>_` prefix). */
+export function legacyComponents(page: ComposedPageDefinition): readonly ComponentDefinition[] {
+  return page.components.filter((component) => blockIdOf(component.id) === null);
+}
+
+/**
+ * Removes every prefix-less legacy component (old palette / converted Generated
+ * Page) and any state/data source/connection they touch. Form blocks (`blk<n>_`)
+ * are untouched. Used to clean up pages built before the form-block editor.
+ */
+export function removeLegacyComponents(page: ComposedPageDefinition): ComposedPageDefinition {
+  const legacyIds = new Set(legacyComponents(page).map((component) => component.id));
+  if (legacyIds.size === 0) return page;
+  // A state/data source is "legacy" if it has no block prefix (blocks own theirs).
+  const legacyNode = (nodeId: string): boolean => blockIdOf(nodeId) === null;
+  return {
+    ...page,
+    components: page.components.filter((component) => !legacyIds.has(component.id)),
+    // Drop prefix-less state/data sources too (they belonged to the legacy graph).
+    state: page.state.filter((entry) => !legacyNode(entry.id)),
+    dataSources: page.dataSources.filter((entry) => !legacyNode(entry.id)),
+    connections: page.connections.filter((connection) =>
+      !legacyNode(connection.from.nodeId) && !legacyNode(connection.to.nodeId)),
+  };
+}
+
+/** Removes a block and every atom (component/state/data source/connection) it owns. */
+export function removeBlockFromPage(page: ComposedPageDefinition, blockId: string): ComposedPageDefinition {
+  const ownsAtom = (atomId: string): boolean => blockIdOf(atomId) === blockId;
+  const ownsNode = (nodeId: string): boolean => ownsAtom(nodeId);
+  return {
+    ...page,
+    components: page.components.filter((component) => !ownsAtom(component.id)),
+    state: page.state.filter((entry) => !ownsAtom(entry.id)),
+    dataSources: page.dataSources.filter((entry) => !ownsAtom(entry.id)),
+    connections: page.connections.filter((connection) =>
+      !ownsNode(connection.from.nodeId) && !ownsNode(connection.to.nodeId)),
+  };
+}
+
+/**
+ * Rebuilds a block's atoms in place from new config (collection/fields/search
+ * field), preserving the block id and the anchor component's placement. Other
+ * blocks and their connections to this block survive because ids are stable.
+ */
+export function reconfigureBlock(
+  page: ComposedPageDefinition,
+  block: FormBlock,
+  config: { readonly collectionId: string; readonly fields: readonly FormBlockField[]; readonly searchFieldId?: string },
+): ComposedPageDefinition {
+  const anchor = page.components.find((component) => component.id === block.anchorComponentId);
+  const at = anchor === undefined ? { x: 0, y: 0 } : { x: anchor.placement.x, y: anchor.placement.y };
+  // Preserve any custom labels/text the user set, keyed by atom id, so a schema
+  // or field change doesn't reset them.
+  const priorText = new Map<string, { label?: unknown; text?: unknown }>();
+  for (const component of page.components) {
+    if (blockIdOf(component.id) !== block.id) continue;
+    priorText.set(component.id, { label: component.props["label"], text: component.props["text"] });
+  }
+  const stripped = removeBlockFromPage(page, block.id);
+  const built = buildBlock(block.id, { kind: block.kind, collectionId: config.collectionId, fields: config.fields, ...(config.searchFieldId === undefined ? {} : { searchFieldId: config.searchFieldId }), at });
+  const components = built.components.map((component) => {
+    const prior = priorText.get(component.id);
+    if (prior === undefined) return component;
+    const props = { ...component.props };
+    if (typeof prior.label === "string") props["label"] = prior.label;
+    if (typeof prior.text === "string") props["text"] = prior.text;
+    return { ...component, props };
+  });
+  return {
+    ...stripped,
+    components: [...stripped.components, ...components],
+    state: [...stripped.state, ...built.state],
+    dataSources: [...stripped.dataSources, ...built.dataSources],
+    connections: [...stripped.connections, ...built.connections],
+  };
+}
+
+/** The editable text labels of a block's components (buttons, form title, inputs). */
+export interface BlockLabel {
+  readonly componentId: string;
+  readonly role: string;
+  readonly value: string;
+}
+
+export function blockLabels(page: ComposedPageDefinition, block: FormBlock): readonly BlockLabel[] {
+  const roleOf = (component: ComponentDefinition): string | null => {
+    if (component.kind === "core.button") {
+      const label = typeof component.props["label"] === "string" ? component.props["label"] : "";
+      return `버튼 (${label || component.id})`;
+    }
+    if (component.kind === "core.form") return "폼 제목";
+    if (component.kind.startsWith("core.input.")) return "입력 라벨";
+    return null;
+  };
+  return page.components.flatMap((component) => {
+    if (blockIdOf(component.id) !== block.id) return [];
+    const role = roleOf(component);
+    if (role === null) return [];
+    return [{ componentId: component.id, role, value: typeof component.props["label"] === "string" ? component.props["label"] : "" }];
+  });
+}
+
+/** Sets one component's label text directly (no rebuild), keeping everything else. */
+export function setComponentLabel(page: ComposedPageDefinition, componentId: string, label: string): ComposedPageDefinition {
+  return {
+    ...page,
+    components: page.components.map((component) =>
+      component.id === componentId ? { ...component, props: { ...component.props, label } } : component),
+  };
+}
+
+// --- Block ↔ block connections (the user draws one line; ports auto-generated) ---
+
+/** A form-to-form link, as the user sees it (one line between two blocks). */
+export interface BlockLink {
+  readonly fromBlockId: string;
+  readonly toBlockId: string;
+}
+
+/**
+ * Which output block kinds a source block kind can feed. Same-schema flow only
+ * (slice 3-1): a search feeds a list (its rows) or a detail (its selected row);
+ * a list feeds a detail (row selection). Cross-schema lookup is a later slice.
+ */
+export function canLinkBlocks(from: FormBlock, to: FormBlock): boolean {
+  if (from.id === to.id) return false;
+  // A search feeds a row output (list/cards) with its query results.
+  if (isSearchBlock(from.kind)) return isListBlock(to.kind) || to.kind === "detail" || to.kind === "field";
+  // A row output feeds a per-row consumer (detail/field/actions) via selection.
+  if (isListBlock(from.kind)) return to.kind === "detail" || to.kind === "field" || to.kind === "item-actions";
+  return false;
+}
+
+/**
+ * Creates the internal atoms/connections that realize a form-to-form link.
+ * search→list/cards: the search query's rows feed the output.
+ * *→detail/field/actions: the source's selected row feeds the consumer via a
+ * shared `<toBlockId>_state_target` document-id state (list writes it on select).
+ */
+export function linkBlocks(page: ComposedPageDefinition, from: FormBlock, to: FormBlock): ComposedPageDefinition {
+  if (!canLinkBlocks(from, to)) return page;
+  if (isSearchBlock(from.kind) && isListBlock(to.kind)) {
+    const query = page.dataSources.find((entry) => blockIdOf(entry.id) === from.id);
+    const output = page.components.find((entry) => entry.id === to.anchorComponentId);
+    if (query === undefined || output === undefined) return page;
+    return addLink(page, `${to.id}_link_rows`, ds(query.id, "rows"), comp(output.id, "data"));
+  }
+  // *→detail/field/item-actions: route the source's selected row via a state.
+  const consumer = page.components.find((entry) => entry.id === to.anchorComponentId);
+  if (consumer === undefined) return page;
+  // The document-id state the consumer reads (item-actions declares it itself).
+  const stateId = `${to.id}_state_target`;
+  const withState = page.state.some((entry) => entry.id === stateId)
+    ? page
+    : { ...page, state: [...page.state, { id: stateId, valueType: "document-id" as const, initialValue: null }] };
+  let next = withState;
+  // detail/field consume documentId; item-actions already reference the state.
+  if (to.kind === "detail" || to.kind === "field") {
+    next = addLink(next, `${to.id}_link_bind`, state_(stateId, "value"), comp(consumer.id, "documentId"));
+  }
+  if (isListBlock(from.kind)) {
+    const output = page.components.find((entry) => entry.id === from.anchorComponentId);
+    if (output !== undefined) next = addLink(next, `${to.id}_link_select`, comp(output.id, "selectedDocumentId"), state_(stateId, "write"));
+  }
+  return next;
+}
+
+/** Removes the atoms/connections a form-to-form link created (by its id prefix). */
+export function unlinkBlocks(page: ComposedPageDefinition, from: FormBlock, to: FormBlock): ComposedPageDefinition {
+  const linkPrefix = `${to.id}_link_`;
+  const targetState = `${to.id}_state_target`;
+  const keptConnections = page.connections.filter((connection) => !connection.id.startsWith(linkPrefix));
+  // Drop the selection state only if nothing else references it AND the target
+  // block did not declare it itself (item-actions owns its own target state).
+  const ownedByTarget = to.kind === "item-actions";
+  const stillUsed = ownedByTarget || keptConnections.some((connection) =>
+    connection.from.nodeId === targetState || connection.to.nodeId === targetState);
+  void from;
+  return {
+    ...page,
+    connections: keptConnections,
+    state: stillUsed ? page.state : page.state.filter((entry) => entry.id !== targetState),
+  };
+}
+
+/** The form-to-form links currently on a page, derived from `_link_` connections. */
+export function blockLinks(page: ComposedPageDefinition): readonly BlockLink[] {
+  const links = new Map<string, BlockLink>();
+  const byComponent = new Map<string, string>();
+  for (const block of describeBlocks(page)) {
+    for (const componentId of block.componentIds) byComponent.set(componentId, block.id);
+  }
+  for (const connection of page.connections) {
+    const match = /^(blk\d+)_link_/.exec(connection.id);
+    if (match === null) continue;
+    const toBlockId = match[1]!;
+    // The other endpoint that is not the target block identifies the source.
+    const endpoints = [connection.from.nodeId, connection.to.nodeId]
+      .map((nodeId) => byComponent.get(nodeId) ?? blockIdOf(nodeId))
+      .filter((id): id is string => id !== null && id !== toBlockId);
+    const fromBlockId = endpoints[0];
+    if (fromBlockId !== undefined) links.set(`${fromBlockId}->${toBlockId}`, { fromBlockId, toBlockId });
+  }
+  return [...links.values()];
+}
+
+function addLink(page: ComposedPageDefinition, id: string, from: ConnectionDefinition["from"], to: ConnectionDefinition["to"]): ComposedPageDefinition {
+  if (page.connections.some((connection) => connection.id === id)) return page;
+  return { ...page, connections: [...page.connections, conn(id, from, to)] };
+}
+
+/** First empty grid row below every existing component. */
+function nextFreeRow(page: ComposedPageDefinition): number {
+  const lowest = page.components.reduce(
+    (max, component) => Math.max(max, component.placement.y + component.placement.height),
+    0,
+  );
+  return lowest === 0 ? 0 : lowest + 2;
+}
