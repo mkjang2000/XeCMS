@@ -17,6 +17,12 @@ export interface WiringGraph {
   readonly rowsSource: ReadonlyMap<string, string>;
   /** component id -> state ids its `selectedDocumentId` port writes (row select). */
   readonly selectedDocumentTargets: ReadonlyMap<string, readonly string[]>;
+  /**
+   * component id -> { fieldId -> state ids } its `selectedField:<fieldId>` port
+   * writes on row select. Carries a *field value* of the selected row (not the
+   * document id) so it can feed another Data Source's parameter (cross-schema).
+   */
+  readonly selectedFieldTargets: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>;
   /** component id -> state id whose `value` feeds its `documentId` input (detail). */
   readonly documentIdSource: ReadonlyMap<string, string>;
   /** adaptive input id -> { variantId -> state ids its `value:<variantId>` writes }. */
@@ -29,6 +35,7 @@ export function buildWiringGraph(page: ComposedPageDefinition): WiringGraph {
   const parameterSources = new Map<string, Map<string, string>>();
   const rowsSource = new Map<string, string>();
   const selectedDocumentTargets = new Map<string, string[]>();
+  const selectedFieldTargets = new Map<string, Map<string, string[]>>();
   const documentIdSource = new Map<string, string>();
   const variantTargets = new Map<string, Map<string, string[]>>();
 
@@ -72,6 +79,16 @@ export function buildWiringGraph(page: ComposedPageDefinition): WiringGraph {
       && to.nodeType === "state" && to.portId === "write") {
       push(selectedDocumentTargets, from.nodeId, to.nodeId);
     }
+    // table.selectedField:<fieldId> → state.write (row's field value → state)
+    if (from.nodeType === "component" && from.portId.startsWith("selectedField:")
+      && to.nodeType === "state" && to.portId === "write") {
+      const fieldId = from.portId.slice("selectedField:".length);
+      const byField = selectedFieldTargets.get(from.nodeId) ?? new Map<string, string[]>();
+      const states = byField.get(fieldId) ?? [];
+      states.push(to.nodeId);
+      byField.set(fieldId, states);
+      selectedFieldTargets.set(from.nodeId, byField);
+    }
     // state.value → component.documentId (detail input)
     if (from.nodeType === "state" && from.portId === "value"
       && to.nodeType === "component" && to.portId === "documentId") {
@@ -81,8 +98,16 @@ export function buildWiringGraph(page: ComposedPageDefinition): WiringGraph {
 
   return {
     inputTargets, clickTargets, parameterSources, rowsSource,
-    selectedDocumentTargets, documentIdSource, variantTargets,
+    selectedDocumentTargets, selectedFieldTargets, documentIdSource, variantTargets,
   };
+}
+
+/** { fieldId -> state ids } written by a component's selectedField ports. */
+export function selectedFieldStatesFor(
+  graph: WiringGraph,
+  componentId: string,
+): ReadonlyMap<string, readonly string[]> {
+  return graph.selectedFieldTargets.get(componentId) ?? new Map();
 }
 
 /** State ids written by a specific variant of an adaptive input. */

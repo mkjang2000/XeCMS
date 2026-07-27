@@ -7,8 +7,13 @@ import {
   blockKindLabel,
   blockLabels,
   blockSearchField,
+  disableSelfQuery,
+  enableSelfQuery,
+  hasSelfQuery,
+  isListBlock,
   isSearchBlock,
   reconfigureBlock,
+  selfQueryFilterField,
   setComponentLabel,
   type FormBlock,
   type FormBlockField,
@@ -20,6 +25,7 @@ export interface FormBlockPanelProps {
   readonly block: FormBlock;
   readonly collections: readonly CollectionSummaryDto[];
   readonly onChange: (next: ComposedPageDefinition) => void;
+  readonly onDuplicate: () => void;
   readonly onRemove: () => void;
 }
 
@@ -46,13 +52,15 @@ function kindHelp(kind: FormBlock["kind"]): string {
  * It speaks in schemas and fields, never ports or state; reconfiguring rebuilds
  * the block's atoms in place (`reconfigureBlock`) under the same block id.
  */
-export function FormBlockPanel({ page, block, collections, onChange, onRemove }: FormBlockPanelProps) {
+export function FormBlockPanel({ page, block, collections, onChange, onDuplicate, onRemove }: FormBlockPanelProps) {
   const collectionId = block.collectionId ?? "";
   const collection = collections.find((entry) => entry.id === collectionId);
   const fields = blockFields(page, block);
   const searchFieldId = blockSearchField(page, block);
   const selectedIds = new Set(fields.map((field) => field.fieldId));
   const labels = blockLabels(page, block);
+  const selfQuery = hasSelfQuery(page, block);
+  const selfQueryField = selfQueryFilterField(page, block);
 
   const apply = (nextFields: readonly FormBlockField[], nextCollectionId = collectionId, nextSearchField = searchFieldId): void => {
     onChange(reconfigureBlock(page, block, {
@@ -119,6 +127,32 @@ export function FormBlockPanel({ page, block, collections, onChange, onRemove }:
         </div>
       )}
 
+      {isListBlock(block.kind) ? (
+        <div className={styles.dataField}>
+          <label className={styles.checkList}>
+            <span style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+              <input type="checkbox" checked={selfQuery} onChange={(event) => {
+                if (event.target.checked) {
+                  const firstField = collection?.fields[0]?.id;
+                  if (firstField !== undefined) onChange(enableSelfQuery(page, block, firstField));
+                } else onChange(disableSelfQuery(page, block));
+              }} />
+              이 목록은 자체 스키마를 조회
+            </span>
+          </label>
+          {selfQuery ? (
+            <>
+              <small>조건 필드 (연결폼의 값으로 이 필드를 조회)</small>
+              <select value={selfQueryField ?? ""} onChange={(event) => onChange(enableSelfQuery(page, block, event.target.value))}>
+                <option value="">선택…</option>
+                {(collection?.fields ?? []).map((field) => <option key={field.id} value={field.id}>{field.label ?? field.name}</option>)}
+              </select>
+              <p className={styles.inspectorEmpty}>연결 모드에서 다른 목록과 이으면, 선택한 행의 값으로 이 목록이 조회됩니다.</p>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
       {labels.length > 0 ? (
         <div className={styles.dataField}>
           <span>텍스트</span>
@@ -131,7 +165,10 @@ export function FormBlockPanel({ page, block, collections, onChange, onRemove }:
         </div>
       ) : null}
 
-      <Button size="small" variant="secondary" onPress={onRemove}>폼 제거</Button>
+      <div className={styles.dataFieldRow}>
+        <Button size="small" variant="secondary" onPress={onDuplicate}>복사</Button>
+        <Button size="small" variant="secondary" onPress={onRemove}>폼 제거</Button>
+      </div>
     </div>
   );
 }

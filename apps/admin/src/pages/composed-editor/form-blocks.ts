@@ -471,6 +471,60 @@ export function isListBlock(kind: FormBlockKind): boolean {
   return kind === "list" || kind === "cards";
 }
 
+// --- Self-query (cross-schema): a list/cards block that runs its OWN query,
+//     filtered by a field value it receives from another form (도서관 예시). ---
+
+/** Whether a list/cards block owns a self-query data source. */
+export function hasSelfQuery(page: ComposedPageDefinition, block: FormBlock): boolean {
+  return page.dataSources.some((entry) => entry.id === `${block.id}_query`);
+}
+
+/** The field id a self-query filters on (`param_link`), if configured. */
+export function selfQueryFilterField(page: ComposedPageDefinition, block: FormBlock): string | undefined {
+  const source = page.dataSources.find((entry) => entry.id === `${block.id}_query`);
+  const filter = source?.filter;
+  if (filter !== undefined && filter.type === "condition" && filter.field.kind === "data") return filter.field.fieldId;
+  return undefined;
+}
+
+/**
+ * Turns on (or reconfigures) a list/cards block's own query: it queries its own
+ * Collection filtered by `filterFieldId = <param_link>`, and its rows feed the
+ * block's table/cards. The `param_link` value is supplied by a cross-schema link
+ * (`linkBlocksByField`). Idempotent — replaces any existing self-query.
+ */
+export function enableSelfQuery(page: ComposedPageDefinition, block: FormBlock, filterFieldId: string): ComposedPageDefinition {
+  if (!isListBlock(block.kind) || block.collectionId === undefined) return page;
+  const cleared = disableSelfQuery(page, block);
+  const queryId = `${block.id}_query`;
+  const anchor = cleared.components.find((component) => component.id === block.anchorComponentId);
+  const fields = blockFields(cleared, block).map((field) => field.fieldId);
+  const dataSource: DataSourceDefinition = {
+    // on-change so selecting a source row re-runs it automatically via param_link.
+    id: queryId, type: "document-query", collectionId: block.collectionId, trigger: "on-change",
+    fields, parameters: [{ id: "param_link", valueType: "string" }],
+    filter: { type: "condition", field: { kind: "data", fieldId: filterFieldId }, operator: "eq", value: { type: "parameter", parameterId: "param_link" } },
+    limit: 20,
+  };
+  const connection = anchor === undefined ? [] : [conn(`${block.id}_selfrows`, ds(queryId, "rows"), comp(anchor.id, "data"))];
+  return {
+    ...cleared,
+    dataSources: [...cleared.dataSources, dataSource],
+    connections: [...cleared.connections, ...connection],
+  };
+}
+
+/** Removes a block's self-query data source and its rows connection. */
+export function disableSelfQuery(page: ComposedPageDefinition, block: FormBlock): ComposedPageDefinition {
+  const queryId = `${block.id}_query`;
+  return {
+    ...page,
+    dataSources: page.dataSources.filter((entry) => entry.id !== queryId),
+    connections: page.connections.filter((connection) =>
+      connection.from.nodeId !== queryId && connection.to.nodeId !== queryId && connection.id !== `${block.id}_selfrows`),
+  };
+}
+
 // --- Page-level block operations ---
 
 /** Adds a block's atoms to a page below the existing content (no overlap). */
@@ -517,6 +571,26 @@ export function removeLegacyComponents(page: ComposedPageDefinition): ComposedPa
     connections: page.connections.filter((connection) =>
       !legacyNode(connection.from.nodeId) && !legacyNode(connection.to.nodeId)),
   };
+}
+
+/**
+ * Duplicates a block: re-derives its config from the current atoms and adds a
+ * fresh block (new id, placed below). Links to/from the original are not copied —
+ * a copy starts unconnected, which is the least surprising behavior.
+ */
+export function duplicateBlock(page: ComposedPageDefinition, block: FormBlock): {
+  readonly page: ComposedPageDefinition;
+  readonly blockId: string;
+} {
+  const anchor = page.components.find((component) => component.id === block.anchorComponentId);
+  const at = anchor === undefined ? undefined : { x: anchor.placement.x, y: nextFreeRow(page) };
+  return addBlockToPage(page, {
+    kind: block.kind,
+    collectionId: block.collectionId ?? "",
+    fields: blockFields(page, block),
+    ...(blockSearchField(page, block) === undefined ? {} : { searchFieldId: blockSearchField(page, block) }),
+    ...(at === undefined ? {} : { at }),
+  });
 }
 
 /** Removes a block and every atom (component/state/data source/connection) it owns. */
@@ -618,13 +692,41 @@ export interface BlockLink {
  * (slice 3-1): a search feeds a list (its rows) or a detail (its selected row);
  * a list feeds a detail (row selection). Cross-schema lookup is a later slice.
  */
-export function canLinkBlocks(from: FormBlock, to: FormBlock): boolean {
+export function canLinkBlocks(from: FormBlock, to: FormBlock, page?: ComposedPageDefinition): boolean {
   if (from.id === to.id) return false;
   // A search feeds a row output (list/cards) with its query results.
   if (isSearchBlock(from.kind)) return isListBlock(to.kind) || to.kind === "detail" || to.kind === "field";
-  // A row output feeds a per-row consumer (detail/field/actions) via selection.
-  if (isListBlock(from.kind)) return to.kind === "detail" || to.kind === "field" || to.kind === "item-actions";
+  // A row output feeds a per-row consumer (detail/field/actions) via selection,
+  // OR a cross-schema list/cards that runs its OWN query (self-query).
+  if (isListBlock(from.kind)) {
+    if (to.kind === "detail" || to.kind === "field" || to.kind === "item-actions") return true;
+    if (isListBlock(to.kind) && page !== undefined && hasSelfQuery(page, to)) return true;
+  }
   return false;
+}
+
+/**
+ * Cross-schema link (도서관 예시): the source list's selected-row value of
+ * `sourceFieldId` feeds the target's self-query `param_link`, then re-runs it.
+ * The target must already have a self-query (`enableSelfQuery`).
+ */
+export function linkBlocksByField(
+  page: ComposedPageDefinition,
+  from: FormBlock,
+  to: FormBlock,
+  sourceFieldId: string,
+): ComposedPageDefinition {
+  if (!isListBlock(from.kind) || !isListBlock(to.kind) || !hasSelfQuery(page, to)) return page;
+  const output = page.components.find((entry) => entry.id === from.anchorComponentId);
+  const queryId = `${to.id}_query`;
+  if (output === undefined) return page;
+  const stateId = `${to.id}_state_link`;
+  const withState = page.state.some((entry) => entry.id === stateId)
+    ? page
+    : { ...page, state: [...page.state, { id: stateId, valueType: "string" as const, initialValue: "" }] };
+  let next = addLink(withState, `${to.id}_link_field`, comp(output.id, `selectedField:${sourceFieldId}`), state_(stateId, "write"));
+  next = addLink(next, `${to.id}_link_param`, state_(stateId, "value"), ds(queryId, "parameter:param_link"));
+  return next;
 }
 
 /**
@@ -664,18 +766,18 @@ export function linkBlocks(page: ComposedPageDefinition, from: FormBlock, to: Fo
 /** Removes the atoms/connections a form-to-form link created (by its id prefix). */
 export function unlinkBlocks(page: ComposedPageDefinition, from: FormBlock, to: FormBlock): ComposedPageDefinition {
   const linkPrefix = `${to.id}_link_`;
-  const targetState = `${to.id}_state_target`;
   const keptConnections = page.connections.filter((connection) => !connection.id.startsWith(linkPrefix));
-  // Drop the selection state only if nothing else references it AND the target
-  // block did not declare it itself (item-actions owns its own target state).
-  const ownedByTarget = to.kind === "item-actions";
-  const stillUsed = ownedByTarget || keptConnections.some((connection) =>
-    connection.from.nodeId === targetState || connection.to.nodeId === targetState);
   void from;
+  // Drop link-only states (`_state_target`, `_state_link`) that nothing else uses.
+  // item-actions declares its own `_state_target`, so keep that one.
+  const linkStates = [`${to.id}_state_link`];
+  if (to.kind !== "item-actions") linkStates.push(`${to.id}_state_target`);
+  const orphaned = new Set(linkStates.filter((stateId) =>
+    !keptConnections.some((c) => c.from.nodeId === stateId || c.to.nodeId === stateId)));
   return {
     ...page,
     connections: keptConnections,
-    state: stillUsed ? page.state : page.state.filter((entry) => entry.id !== targetState),
+    state: page.state.filter((entry) => !orphaned.has(entry.id)),
   };
 }
 

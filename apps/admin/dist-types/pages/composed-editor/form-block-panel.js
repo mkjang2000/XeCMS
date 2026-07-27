@@ -1,6 +1,6 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { Fragment as _Fragment, jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { Button } from "@xecms/ui";
-import { blockFields, blockKindLabel, blockLabels, blockSearchField, isSearchBlock, reconfigureBlock, setComponentLabel, } from "./form-blocks.js";
+import { blockFields, blockKindLabel, blockLabels, blockSearchField, disableSelfQuery, enableSelfQuery, hasSelfQuery, isListBlock, isSearchBlock, reconfigureBlock, selfQueryFilterField, setComponentLabel, } from "./form-blocks.js";
 import styles from "./composed-editor.module.css";
 const KIND_HELP = {
     search: "스키마에서 조건에 맞는 행을 찾아, 연결된 폼으로 결과를 넘깁니다.",
@@ -23,13 +23,15 @@ function kindHelp(kind) {
  * It speaks in schemas and fields, never ports or state; reconfiguring rebuilds
  * the block's atoms in place (`reconfigureBlock`) under the same block id.
  */
-export function FormBlockPanel({ page, block, collections, onChange, onRemove }) {
+export function FormBlockPanel({ page, block, collections, onChange, onDuplicate, onRemove }) {
     const collectionId = block.collectionId ?? "";
     const collection = collections.find((entry) => entry.id === collectionId);
     const fields = blockFields(page, block);
     const searchFieldId = blockSearchField(page, block);
     const selectedIds = new Set(fields.map((field) => field.fieldId));
     const labels = blockLabels(page, block);
+    const selfQuery = hasSelfQuery(page, block);
+    const selfQueryField = selfQueryFilterField(page, block);
     const apply = (nextFields, nextCollectionId = collectionId, nextSearchField = searchFieldId) => {
         onChange(reconfigureBlock(page, block, {
             collectionId: nextCollectionId,
@@ -49,6 +51,14 @@ export function FormBlockPanel({ page, block, collections, onChange, onRemove })
     };
     return (_jsxs("div", { className: styles.dataForm, children: [_jsx("h4", { children: blockKindLabel(block.kind) }), _jsx("p", { className: styles.inspectorEmpty, children: kindHelp(block.kind) }), _jsxs("label", { className: styles.dataField, children: [_jsx("span", { children: "\uC2A4\uD0A4\uB9C8" }), _jsxs("select", { value: collectionId, onChange: (event) => changeCollection(event.target.value), children: [_jsx("option", { value: "", children: "\uC120\uD0DD\u2026" }), collections.map((entry) => _jsx("option", { value: entry.id, children: entry.label ?? entry.name }, entry.id))] })] }), isSearchBlock(block.kind) ? (_jsxs("label", { className: styles.dataField, children: [_jsx("span", { children: "\uAC80\uC0C9\uD560 \uD544\uB4DC" }), _jsxs("select", { value: searchFieldId ?? "", onChange: (event) => apply(fields, collectionId, event.target.value || undefined), children: [_jsx("option", { value: "", children: "\uC120\uD0DD\u2026" }), (collection?.fields ?? []).map((field) => _jsx("option", { value: field.id, children: field.label ?? field.name }, field.id))] })] })) : null, block.kind === "item-actions" ? (_jsx("p", { className: styles.inspectorEmpty, children: "\uC774 \uD3FC\uC740 \uBAA9\uB85D\uC5D0 \uC5F0\uACB0\uD55C \uB4A4, \uC120\uD0DD\uB41C \uD589\uC744 \uC218\uC815\u00B7\uC0AD\uC81C\uD569\uB2C8\uB2E4. \uD544\uB4DC \uC124\uC815\uC740 \uD544\uC694 \uC5C6\uC2B5\uB2C8\uB2E4." })) : (_jsxs("div", { className: styles.dataField, children: [_jsx("span", { children: block.kind === "input-form" ? "입력 필드" : block.kind === "field" ? "표시할 필드(1개)" : "표시 필드" }), _jsx("div", { className: styles.checkList, children: collection === undefined ? _jsx("small", { children: "\uC2A4\uD0A4\uB9C8\uB97C \uBA3C\uC800 \uC120\uD0DD\uD558\uC138\uC694." })
                             : collection.fields.length === 0 ? _jsx("small", { children: "\uC774 \uC2A4\uD0A4\uB9C8\uC5D0\uB294 \uD544\uB4DC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })
-                                : collection.fields.map((field) => (_jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: selectedIds.has(field.id), onChange: (event) => toggleField(field.id, field.label ?? field.name, event.target.checked) }), field.label ?? field.name, " ", _jsxs("small", { children: ["(", field.type, ")"] })] }, field.id))) })] })), labels.length > 0 ? (_jsxs("div", { className: styles.dataField, children: [_jsx("span", { children: "\uD14D\uC2A4\uD2B8" }), labels.map((entry) => (_jsxs("div", { className: styles.dataField, children: [_jsx("small", { children: entry.role }), _jsx("input", { value: entry.value, onChange: (event) => onChange(setComponentLabel(page, entry.componentId, event.target.value)) })] }, entry.componentId)))] })) : null, _jsx(Button, { size: "small", variant: "secondary", onPress: onRemove, children: "\uD3FC \uC81C\uAC70" })] }));
+                                : collection.fields.map((field) => (_jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: selectedIds.has(field.id), onChange: (event) => toggleField(field.id, field.label ?? field.name, event.target.checked) }), field.label ?? field.name, " ", _jsxs("small", { children: ["(", field.type, ")"] })] }, field.id))) })] })), isListBlock(block.kind) ? (_jsxs("div", { className: styles.dataField, children: [_jsx("label", { className: styles.checkList, children: _jsxs("span", { style: { display: "flex", gap: "0.4rem", alignItems: "center" }, children: [_jsx("input", { type: "checkbox", checked: selfQuery, onChange: (event) => {
+                                        if (event.target.checked) {
+                                            const firstField = collection?.fields[0]?.id;
+                                            if (firstField !== undefined)
+                                                onChange(enableSelfQuery(page, block, firstField));
+                                        }
+                                        else
+                                            onChange(disableSelfQuery(page, block));
+                                    } }), "\uC774 \uBAA9\uB85D\uC740 \uC790\uCCB4 \uC2A4\uD0A4\uB9C8\uB97C \uC870\uD68C"] }) }), selfQuery ? (_jsxs(_Fragment, { children: [_jsx("small", { children: "\uC870\uAC74 \uD544\uB4DC (\uC5F0\uACB0\uD3FC\uC758 \uAC12\uC73C\uB85C \uC774 \uD544\uB4DC\uB97C \uC870\uD68C)" }), _jsxs("select", { value: selfQueryField ?? "", onChange: (event) => onChange(enableSelfQuery(page, block, event.target.value)), children: [_jsx("option", { value: "", children: "\uC120\uD0DD\u2026" }), (collection?.fields ?? []).map((field) => _jsx("option", { value: field.id, children: field.label ?? field.name }, field.id))] }), _jsx("p", { className: styles.inspectorEmpty, children: "\uC5F0\uACB0 \uBAA8\uB4DC\uC5D0\uC11C \uB2E4\uB978 \uBAA9\uB85D\uACFC \uC774\uC73C\uBA74, \uC120\uD0DD\uD55C \uD589\uC758 \uAC12\uC73C\uB85C \uC774 \uBAA9\uB85D\uC774 \uC870\uD68C\uB429\uB2C8\uB2E4." })] })) : null] })) : null, labels.length > 0 ? (_jsxs("div", { className: styles.dataField, children: [_jsx("span", { children: "\uD14D\uC2A4\uD2B8" }), labels.map((entry) => (_jsxs("div", { className: styles.dataField, children: [_jsx("small", { children: entry.role }), _jsx("input", { value: entry.value, onChange: (event) => onChange(setComponentLabel(page, entry.componentId, event.target.value)) })] }, entry.componentId)))] })) : null, _jsxs("div", { className: styles.dataFieldRow, children: [_jsx(Button, { size: "small", variant: "secondary", onPress: onDuplicate, children: "\uBCF5\uC0AC" }), _jsx(Button, { size: "small", variant: "secondary", onPress: onRemove, children: "\uD3FC \uC81C\uAC70" })] })] }));
 }
 //# sourceMappingURL=form-block-panel.js.map

@@ -17,6 +17,7 @@ import {
   onLoadDataSources,
   rowsSourceFor,
   selectedDocumentStatesFor,
+  selectedFieldStatesFor,
   statesWrittenBy,
   variantStatesFor,
 } from "./composed-wiring.js";
@@ -48,8 +49,11 @@ export interface ComposedRuntimeContextValue {
   readonly runFromComponent: (componentId: string) => void;
   readonly dataSourceForOutput: (componentId: string) => DataSourceState | undefined;
   readonly nextPage: (componentId: string) => void;
-  /** Records a table row selection into the connected state (master → detail). */
-  readonly selectRow: (componentId: string, documentId: string) => void;
+  /**
+   * Records a table row selection into connected state: the document id (master →
+   * detail) and any `selectedField:<fieldId>` values (cross-schema lookup).
+   */
+  readonly selectRow: (componentId: string, row: { readonly id: string; readonly data: Readonly<Record<string, unknown>> }) => void;
   /**
    * Writes an adaptive input's active-variant value and clears every other
    * variant's state, so an inactive variant's value never reaches the query.
@@ -186,15 +190,32 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     for (const dataSourceId of dataSourcesExecutedBy(graph, componentId)) execute(dataSourceId);
   }, [graph, execute]);
 
-  const selectRow = useCallback((componentId: string, documentId: string): void => {
-    const targets = selectedDocumentStatesFor(graph, componentId);
-    if (targets.length === 0) return;
+  const selectRow = useCallback((componentId: string, row: { readonly id: string; readonly data: Readonly<Record<string, unknown>> }): void => {
+    const docTargets = selectedDocumentStatesFor(graph, componentId);
+    const fieldTargets = selectedFieldStatesFor(graph, componentId);
+    if (docTargets.length === 0 && fieldTargets.size === 0) return;
     setState((prev) => {
       const next = new Map(prev);
-      for (const stateId of targets) next.set(stateId, documentId);
+      for (const stateId of docTargets) next.set(stateId, row.id);
+      // Cross-schema: write each wired field's value from the selected row.
+      for (const [fieldId, stateIds] of fieldTargets) {
+        const name = fieldNames.get(fieldId);
+        const value = name === undefined ? undefined : row.data[name];
+        for (const stateId of stateIds) next.set(stateId, value ?? "");
+      }
       return next;
     });
-  }, [graph]);
+    // A selection that feeds parameters should re-run those on-change data sources.
+    for (const stateIds of fieldTargets.values()) {
+      for (const stateId of stateIds) {
+        for (const { id, debounceMs } of onChangeDataSourcesForState(page, graph, stateId)) {
+          const existing = debounces.current.get(id);
+          if (existing !== undefined) clearTimeout(existing);
+          debounces.current.set(id, setTimeout(() => { debounces.current.delete(id); execute(id); }, debounceMs));
+        }
+      }
+    }
+  }, [graph, fieldNames, page, execute]);
 
   const setAdaptiveValue = useCallback((componentId: string, variantId: string, value: unknown): void => {
     const active = new Set(variantStatesFor(graph, componentId, variantId));

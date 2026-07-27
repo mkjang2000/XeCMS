@@ -3,13 +3,20 @@ import { assertValidAdminAppManifestV2, type AdminAppManifestV2, type ComposedPa
 
 import {
   addBlockToPage,
+  blockFields,
   blockIdOf,
   blockLinks,
   canLinkBlocks,
   describeBlocks,
+  disableSelfQuery,
+  duplicateBlock,
+  enableSelfQuery,
+  hasSelfQuery,
   legacyComponents,
   linkBlocks,
+  linkBlocksByField,
   reconfigureBlock,
+  selfQueryFilterField,
   removeBlockFromPage,
   removeLegacyComponents,
   setComponentLabel,
@@ -96,6 +103,62 @@ describe("form blocks (CPB-UX)", () => {
     expect(page.state).toHaveLength(0);
     expect(page.dataSources).toHaveLength(0);
     expect(describeBlocks(page).map((block) => block.id)).toEqual([b.blockId]);
+  });
+});
+
+describe("cross-schema self-query link (CPB-UX)", () => {
+  function block(page: ComposedPageDefinition, id: string): FormBlock {
+    return describeBlocks(page).find((b) => b.id === id)!;
+  }
+  it("enables a self-query on a list, then links a source field into it", () => {
+    let page = emptyPage();
+    // Source: 회원 목록 (col_people). Target: 대여목록 (col_loans, self-query by 회원ID).
+    const src = addBlockToPage(page, { kind: "list", collectionId: "col_people", fields: [{ fieldId: "fld_member_id" }, { fieldId: "fld_name" }] });
+    page = src.page;
+    const tgt = addBlockToPage(page, { kind: "list", collectionId: "col_loans", fields: [{ fieldId: "fld_book" }] });
+    page = tgt.page;
+    page = enableSelfQuery(page, block(page, tgt.blockId), "fld_member_id");
+    expect(hasSelfQuery(page, block(page, tgt.blockId))).toBe(true);
+    expect(selfQueryFilterField(page, block(page, tgt.blockId))).toBe("fld_member_id");
+    // Now list→list(self-query) is a valid link.
+    expect(canLinkBlocks(block(page, src.blockId), block(page, tgt.blockId), page)).toBe(true);
+    page = linkBlocksByField(page, block(page, src.blockId), block(page, tgt.blockId), "fld_member_id");
+    assertValid(page);
+    // The cross-schema wiring exists: source selectedField → state → target query param.
+    expect(page.connections.some((c) => c.from.portId === "selectedField:fld_member_id")).toBe(true);
+    expect(page.connections.some((c) => c.to.portId === "parameter:param_link")).toBe(true);
+  });
+
+  it("disableSelfQuery removes the query and its rows connection", () => {
+    let page = emptyPage();
+    const t = addBlockToPage(page, { kind: "list", collectionId: "col_loans", fields: [{ fieldId: "fld_book" }] });
+    page = t.page;
+    page = enableSelfQuery(page, block(page, t.blockId), "fld_member_id");
+    expect(page.dataSources).toHaveLength(1);
+    page = disableSelfQuery(page, block(page, t.blockId));
+    expect(page.dataSources).toHaveLength(0);
+    expect(page.connections.some((c) => c.id.endsWith("_selfrows"))).toBe(false);
+    assertValid(page);
+  });
+});
+
+describe("duplicateBlock (CPB-UX)", () => {
+  it("clones a block under a new id, keeping fields, without copying links", () => {
+    let page = emptyPage();
+    const s = addBlockToPage(page, { kind: "search", collectionId: "col_people", fields: cols, searchFieldId: "fld_name" });
+    page = s.page;
+    const l = addBlockToPage(page, { kind: "list", collectionId: "col_people", fields: cols });
+    page = l.page;
+    page = linkBlocks(page, describeBlocks(page).find((b) => b.id === s.blockId)!, describeBlocks(page).find((b) => b.id === l.blockId)!);
+    const dup = duplicateBlock(page, describeBlocks(page).find((b) => b.id === s.blockId)!);
+    assertValid(dup.page);
+    expect(dup.blockId).not.toBe(s.blockId);
+    // The copy has the same kind + fields as the original search block.
+    const copy = describeBlocks(dup.page).find((b) => b.id === dup.blockId)!;
+    expect(copy.kind).toBe("search");
+    expect(blockFields(dup.page, copy).map((f) => f.fieldId)).toEqual(cols.map((c) => c.fieldId));
+    // The original link (search→list) is unchanged; the copy has none.
+    expect(blockLinks(dup.page).filter((link) => link.fromBlockId === dup.blockId)).toHaveLength(0);
   });
 });
 

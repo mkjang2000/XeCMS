@@ -11,6 +11,8 @@ export interface CanvasProps {
     readonly onLockedActivate?: (id: string) => void;
     /** Highlights cells (e.g. the pending link source / linkable targets). */
     readonly cellTone?: (id: string) => "source" | "target" | null;
+    /** Whether a component has a validation issue (renders a ⚠ badge). */
+    readonly cellHasIssue?: (id: string) => boolean;
     /** Overlay drawn above the grid (e.g. connection lines). */
     readonly overlay?: ReactNode;
     /** Renders the body of a single component cell. */
@@ -23,5 +25,5 @@ export interface CanvasProps {
     readonly extraHeight?: number;
 }
 /** 48-column drag/resize canvas at the fixed 1152px design width. */
-export declare function ComposedCanvas({ page, selectedId, locked, onSelect, onPlace, onLockedActivate, cellTone, overlay, renderComponent, scale, profile, extraHeight, }: CanvasProps): import("react").JSX.Element;
+export declare function ComposedCanvas({ page, selectedId, locked, onSelect, onPlace, onLockedActivate, cellTone, cellHasIssue, overlay, renderComponent, scale, profile, extraHeight, }: CanvasProps): import("react").JSX.Element;
 //# sourceMappingURL=canvas.d.ts.map

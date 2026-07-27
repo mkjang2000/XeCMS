@@ -38,6 +38,10 @@ export type { PluginComponentRegistry, PluginComponentRenderer } from "./compose
 // a draft page with a mock client (no live runtime/data needed).
 export { ComposedRuntimeProvider } from "./composed-runtime.js";
 export { renderComposedComponent } from "./composed-components.js";
+// Full-page Runtime renderer + client-side query resolver, used by the Builder's
+// Preview to run the editing (unsaved) page against real data without an apply.
+export { ComposedPage } from "./composed-page.js";
+export { resolvePreviewQuery, type PreviewQueryParameterValue } from "./preview-query.js";
 
 export interface AdminRuntimeShellProps {
   readonly runtime: AdminAppRuntimeDto;

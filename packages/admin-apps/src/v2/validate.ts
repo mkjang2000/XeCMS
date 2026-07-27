@@ -253,6 +253,7 @@ function portDirection(port: PortReference): PortDirection {
   }
   // component: heuristic on well-known port names; unknown treated as output-capable value port.
   if (port.portId === "clicked" || port.portId === "value" || port.portId === "selectedDocumentId"
+    || port.portId.startsWith("value:") || port.portId.startsWith("selectedField:")
     || port.portId.startsWith("out:")) return "out";
   if (port.portId === "data" || port.portId === "documentId" || port.portId.startsWith("in:")) return "in";
   return "out";

@@ -4,7 +4,7 @@ import { COLUMN_WIDTH, ROW_HEIGHT, CANVAS_WIDTH, baseViewportHeight, clampPlacem
 import { canPlace } from "./model.js";
 import styles from "./composed-editor.module.css";
 /** 48-column drag/resize canvas at the fixed 1152px design width. */
-export function ComposedCanvas({ page, selectedId, locked, onSelect, onPlace, onLockedActivate, cellTone, overlay, renderComponent, scale = 1, profile = "16:9", extraHeight = 0, }) {
+export function ComposedCanvas({ page, selectedId, locked, onSelect, onPlace, onLockedActivate, cellTone, cellHasIssue, overlay, renderComponent, scale = 1, profile = "16:9", extraHeight = 0, }) {
     const ref = useRef(null);
     // Match the runtime: grow the canvas to the lowest component (and the overlay),
     // floored at the real viewport height, so nothing is clipped by a fixed min.
@@ -74,7 +74,7 @@ export function ComposedCanvas({ page, selectedId, locked, onSelect, onPlace, on
                     ].filter(Boolean).join(" "), style: {
                         gridColumn: `${placement.x + 1} / span ${placement.width}`,
                         gridRow: `${placement.y + 1} / span ${placement.height}`,
-                    }, onPointerDown: (event) => beginMove(event, component), onClick: locked ? () => onLockedActivate?.(component.id) : undefined, onKeyDown: (event) => handleKeyboard(event, page, component, onPlace), tabIndex: 0, role: "group", "aria-label": `${component.kind} (${component.id})`, children: [_jsx("div", { className: styles.cellBody, children: renderComponent(component) }), !locked ? (_jsx("span", { className: styles.resizeHandle, onPointerDown: (event) => beginResize(event, component), "aria-hidden": "true" })) : null] }, component.id));
+                    }, onPointerDown: (event) => beginMove(event, component), onClick: locked ? () => onLockedActivate?.(component.id) : undefined, onKeyDown: (event) => handleKeyboard(event, page, component, onPlace), tabIndex: 0, role: "group", "aria-label": `${component.kind} (${component.id})`, children: [_jsx("div", { className: styles.cellBody, children: renderComponent(component) }), cellHasIssue?.(component.id) === true ? (_jsx("span", { className: styles.cellIssueBadge, title: "\uC774 \uD3FC\uC5D0 \uBB38\uC81C\uAC00 \uC788\uC2B5\uB2C8\uB2E4", "aria-label": "\uBB38\uC81C \uC788\uC74C", children: "\u26A0" })) : null, !locked ? (_jsx("span", { className: styles.resizeHandle, onPointerDown: (event) => beginResize(event, component), "aria-hidden": "true" })) : null] }, component.id));
             }), overlay] }));
 }
 /** Keyboard alternative for move (arrows) and resize (Shift+arrows). */

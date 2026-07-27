@@ -6,6 +6,7 @@ export interface FormBlockPanelProps {
     readonly block: FormBlock;
     readonly collections: readonly CollectionSummaryDto[];
     readonly onChange: (next: ComposedPageDefinition) => void;
+    readonly onDuplicate: () => void;
     readonly onRemove: () => void;
 }
 /**
@@ -13,5 +14,5 @@ export interface FormBlockPanelProps {
  * It speaks in schemas and fields, never ports or state; reconfiguring rebuilds
  * the block's atoms in place (`reconfigureBlock`) under the same block id.
  */
-export declare function FormBlockPanel({ page, block, collections, onChange, onRemove }: FormBlockPanelProps): import("react").JSX.Element;
+export declare function FormBlockPanel({ page, block, collections, onChange, onDuplicate, onRemove }: FormBlockPanelProps): import("react").JSX.Element;
 //# sourceMappingURL=form-block-panel.d.ts.map

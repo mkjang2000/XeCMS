@@ -70,8 +70,38 @@ export declare function blockSearchField(page: ComposedPageDefinition, block: Fo
 export declare function isSearchBlock(kind: FormBlockKind): boolean;
 /** Whether a block is a row/list output (feeds detail/field/actions via selection). */
 export declare function isListBlock(kind: FormBlockKind): boolean;
+/** Whether a list/cards block owns a self-query data source. */
+export declare function hasSelfQuery(page: ComposedPageDefinition, block: FormBlock): boolean;
+/** The field id a self-query filters on (`param_link`), if configured. */
+export declare function selfQueryFilterField(page: ComposedPageDefinition, block: FormBlock): string | undefined;
+/**
+ * Turns on (or reconfigures) a list/cards block's own query: it queries its own
+ * Collection filtered by `filterFieldId = <param_link>`, and its rows feed the
+ * block's table/cards. The `param_link` value is supplied by a cross-schema link
+ * (`linkBlocksByField`). Idempotent — replaces any existing self-query.
+ */
+export declare function enableSelfQuery(page: ComposedPageDefinition, block: FormBlock, filterFieldId: string): ComposedPageDefinition;
+/** Removes a block's self-query data source and its rows connection. */
+export declare function disableSelfQuery(page: ComposedPageDefinition, block: FormBlock): ComposedPageDefinition;
 /** Adds a block's atoms to a page below the existing content (no overlap). */
 export declare function addBlockToPage(page: ComposedPageDefinition, input: AddBlockInput): {
+    readonly page: ComposedPageDefinition;
+    readonly blockId: string;
+};
+/** Components that predate the form-block system (no `blk<n>_` prefix). */
+export declare function legacyComponents(page: ComposedPageDefinition): readonly ComponentDefinition[];
+/**
+ * Removes every prefix-less legacy component (old palette / converted Generated
+ * Page) and any state/data source/connection they touch. Form blocks (`blk<n>_`)
+ * are untouched. Used to clean up pages built before the form-block editor.
+ */
+export declare function removeLegacyComponents(page: ComposedPageDefinition): ComposedPageDefinition;
+/**
+ * Duplicates a block: re-derives its config from the current atoms and adds a
+ * fresh block (new id, placed below). Links to/from the original are not copied —
+ * a copy starts unconnected, which is the least surprising behavior.
+ */
+export declare function duplicateBlock(page: ComposedPageDefinition, block: FormBlock): {
     readonly page: ComposedPageDefinition;
     readonly blockId: string;
 };
@@ -106,7 +136,13 @@ export interface BlockLink {
  * (slice 3-1): a search feeds a list (its rows) or a detail (its selected row);
  * a list feeds a detail (row selection). Cross-schema lookup is a later slice.
  */
-export declare function canLinkBlocks(from: FormBlock, to: FormBlock): boolean;
+export declare function canLinkBlocks(from: FormBlock, to: FormBlock, page?: ComposedPageDefinition): boolean;
+/**
+ * Cross-schema link (도서관 예시): the source list's selected-row value of
+ * `sourceFieldId` feeds the target's self-query `param_link`, then re-runs it.
+ * The target must already have a self-query (`enableSelfQuery`).
+ */
+export declare function linkBlocksByField(page: ComposedPageDefinition, from: FormBlock, to: FormBlock, sourceFieldId: string): ComposedPageDefinition;
 /**
  * Creates the internal atoms/connections that realize a form-to-form link.
  * search→list/cards: the search query's rows feed the output.

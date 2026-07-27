@@ -11,6 +11,7 @@ import {
   onLoadDataSources,
   rowsSourceFor,
   selectedDocumentStatesFor,
+  selectedFieldStatesFor,
   statesWrittenBy,
   variantStatesFor,
 } from "./composed-wiring.js";
@@ -103,6 +104,21 @@ describe("composed wiring graph", () => {
     expect(variantStatesFor(graph, "cmp_adaptive", "v_name")).toEqual(["state_name"]);
     expect(variantStatesFor(graph, "cmp_adaptive", "v_age")).toEqual(["state_age"]);
     expect([...allVariantStatesFor(graph, "cmp_adaptive")].sort()).toEqual(["state_age", "state_name"]);
+  });
+
+  it("maps selectedField ports to states (cross-schema lookup)", () => {
+    const crossSchema: ComposedPageDefinition = {
+      ...page(),
+      state: [{ id: "state_link", valueType: "string", initialValue: "" }],
+      components: [
+        { id: "cmp_table", kind: "core.output.table", placement: { x: 0, y: 0, width: 20, height: 10 }, props: {} },
+      ],
+      connections: [
+        { id: "sf", from: { nodeType: "component", nodeId: "cmp_table", portId: "selectedField:fld_member_id" }, to: { nodeType: "state", nodeId: "state_link", portId: "write" } },
+      ],
+    };
+    const graph = buildWiringGraph(crossSchema);
+    expect(selectedFieldStatesFor(graph, "cmp_table").get("fld_member_id")).toEqual(["state_link"]);
   });
 
   it("finds on-change data sources a state change should re-run", () => {

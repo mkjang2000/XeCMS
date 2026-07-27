@@ -324,8 +324,8 @@ function TableOutput({ component }: ComposedComponentProps) {
               className={[styles.composedTableRow, runtime.selectedRowId(component.id) === row.id ? styles.composedTableRowSelected : ""].filter(Boolean).join(" ")}
               role="row"
               tabIndex={0}
-              onClick={() => runtime.selectRow(component.id, row.id)}
-              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); runtime.selectRow(component.id, row.id); } }}
+              onClick={() => runtime.selectRow(component.id, row)}
+              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); runtime.selectRow(component.id, row); } }}
             >
               {columns.map((column, index) => (
                 <span key={column.id ?? index} role="cell"><FormattedCell value={cell(row, column)} /></span>
@@ -369,8 +369,8 @@ function CardListOutput({ component }: ComposedComponentProps) {
             className={[styles.composedCard, runtime.selectedRowId(component.id) === row.id ? styles.composedCardSelected : ""].filter(Boolean).join(" ")}
             role="button"
             tabIndex={0}
-            onClick={() => runtime.selectRow(component.id, row.id)}
-            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); runtime.selectRow(component.id, row.id); } }}
+            onClick={() => runtime.selectRow(component.id, row)}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); runtime.selectRow(component.id, row); } }}
           >
             {columns.map((column, index) => (
               <div key={column.id ?? index} className={styles.composedCardRow}>

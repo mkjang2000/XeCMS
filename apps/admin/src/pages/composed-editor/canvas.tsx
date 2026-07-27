@@ -27,6 +27,8 @@ export interface CanvasProps {
   readonly onLockedActivate?: (id: string) => void;
   /** Highlights cells (e.g. the pending link source / linkable targets). */
   readonly cellTone?: (id: string) => "source" | "target" | null;
+  /** Whether a component has a validation issue (renders a ⚠ badge). */
+  readonly cellHasIssue?: (id: string) => boolean;
   /** Overlay drawn above the grid (e.g. connection lines). */
   readonly overlay?: ReactNode;
   /** Renders the body of a single component cell. */
@@ -41,7 +43,7 @@ export interface CanvasProps {
 
 /** 48-column drag/resize canvas at the fixed 1152px design width. */
 export function ComposedCanvas({
-  page, selectedId, locked, onSelect, onPlace, onLockedActivate, cellTone, overlay, renderComponent, scale = 1, profile = "16:9", extraHeight = 0,
+  page, selectedId, locked, onSelect, onPlace, onLockedActivate, cellTone, cellHasIssue, overlay, renderComponent, scale = 1, profile = "16:9", extraHeight = 0,
 }: CanvasProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Match the runtime: grow the canvas to the lowest component (and the overlay),
@@ -143,6 +145,9 @@ export function ComposedCanvas({
             aria-label={`${component.kind} (${component.id})`}
           >
             <div className={styles.cellBody}>{renderComponent(component)}</div>
+            {cellHasIssue?.(component.id) === true ? (
+              <span className={styles.cellIssueBadge} title="이 폼에 문제가 있습니다" aria-label="문제 있음">⚠</span>
+            ) : null}
             {!locked ? (
               <span
                 className={styles.resizeHandle}
