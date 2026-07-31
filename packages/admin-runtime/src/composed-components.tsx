@@ -1,8 +1,9 @@
 import { Component, useState, type ReactNode } from "react";
-import type { ComponentDefinition } from "@xecms/admin-apps";
+import type { ComponentDefinition, RuleCondition } from "@xecms/admin-apps";
 
+import { evaluateCondition } from "./composed-effects.js";
 import { formatFieldValue, type FormattedValue, type OutputFormat } from "./composed-format.js";
-import { useComposedRuntime } from "./composed-runtime.js";
+import { useComposedRuntime, type ComposedRuntimeContextValue } from "./composed-runtime.js";
 import styles from "./runtime.module.css";
 
 export interface ComposedComponentProps {
@@ -21,6 +22,7 @@ const REGISTRY: Readonly<Record<string, ComposedComponent>> = {
   "core.input.number": NumberInput,
   "core.input.date": DateInput,
   "core.input.select": SelectInput,
+  "core.input.scan": ScanInput,
   "core.input.adaptive": AdaptiveInput,
   "core.button": ButtonComponent,
   "core.form": FormComponent,
@@ -115,6 +117,41 @@ function DateInput({ component }: ComposedComponentProps) {
         type="date"
         aria-label={label}
         onChange={(event) => runtime.setInputValue(component.id, event.target.value === "" ? "" : event.target.value)}
+      />
+    </label>
+  );
+}
+
+/**
+ * A field-desk scan input (CPB-WF 슬3). A barcode scanner types the code then
+ * sends Enter, so the value is written to state on every keystroke and the
+ * `onScan` rule chain fires on Enter — then the field clears for the next scan.
+ * The rule chain (await-query + when) decides what the scan means (대출/반납 등).
+ */
+function ScanInput({ component }: ComposedComponentProps) {
+  const runtime = useComposedRuntime();
+  const label = textProp(component, "label", "바코드 스캔");
+  const [value, setValue] = useState("");
+  const running = runtime.actionState.status === "running";
+  const onScan = (): void => {
+    if (value === "") return;
+    runtime.runComponentEvent(component.id, "onScan");
+    setValue("");
+    runtime.setInputValue(component.id, "");
+  };
+  return (
+    <label className={styles.composedField}>
+      <span>{label}</span>
+      <input
+        type="text"
+        inputMode="text"
+        autoComplete="off"
+        aria-label={label}
+        placeholder={textProp(component, "placeholder", "바코드를 스캔하세요")}
+        value={value}
+        disabled={running}
+        onChange={(event) => { setValue(event.target.value); runtime.setInputValue(component.id, event.target.value); }}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onScan(); } }}
       />
     </label>
   );
@@ -284,6 +321,27 @@ interface ColumnProp {
   readonly format?: OutputFormat;
 }
 
+/**
+ * Evaluates an output's `highlightWhen` condition (CPB-WF 슬4) against one row.
+ * Field conditions read the row's data by Field name; state/query conditions
+ * still see Page State. Returns false for a malformed/absent condition.
+ */
+function rowHighlighted(
+  highlightWhen: unknown,
+  row: { readonly data: Readonly<Record<string, unknown>> },
+  runtime: ComposedRuntimeContextValue,
+): boolean {
+  if (typeof highlightWhen !== "object" || highlightWhen === null) return false;
+  return evaluateCondition(highlightWhen as RuleCondition, {
+    stateValue: (stateId) => runtime.stateValue(stateId),
+    lastQueryRowCount: undefined,
+    fieldValue: (fieldId) => {
+      const name = runtime.fieldName(fieldId);
+      return name === undefined ? undefined : row.data[name];
+    },
+  });
+}
+
 /** Renders a formatted value with its badge/long-text presentation. */
 function FormattedCell({ value }: { readonly value: FormattedValue }) {
   if (value.kind === "badge") return <span className={styles.composedBadge}>{value.text}</span>;
@@ -321,7 +379,11 @@ function TableOutput({ component }: ComposedComponentProps) {
           {source.rows.map((row) => (
             <div
               key={row.id}
-              className={[styles.composedTableRow, runtime.selectedRowId(component.id) === row.id ? styles.composedTableRowSelected : ""].filter(Boolean).join(" ")}
+              className={[
+                styles.composedTableRow,
+                runtime.selectedRowId(component.id) === row.id ? styles.composedTableRowSelected : "",
+                rowHighlighted(component.props["highlightWhen"], row, runtime) ? styles.composedRowHighlight : "",
+              ].filter(Boolean).join(" ")}
               role="row"
               tabIndex={0}
               onClick={() => runtime.selectRow(component.id, row)}
@@ -366,7 +428,11 @@ function CardListOutput({ component }: ComposedComponentProps) {
         source.rows.map((row) => (
           <div
             key={row.id}
-            className={[styles.composedCard, runtime.selectedRowId(component.id) === row.id ? styles.composedCardSelected : ""].filter(Boolean).join(" ")}
+            className={[
+              styles.composedCard,
+              runtime.selectedRowId(component.id) === row.id ? styles.composedCardSelected : "",
+              rowHighlighted(component.props["highlightWhen"], row, runtime) ? styles.composedRowHighlight : "",
+            ].filter(Boolean).join(" ")}
             role="button"
             tabIndex={0}
             onClick={() => runtime.selectRow(component.id, row)}

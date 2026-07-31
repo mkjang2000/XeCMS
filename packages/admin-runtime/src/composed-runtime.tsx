@@ -6,7 +6,7 @@ import type { ComponentDefinition } from "@xecms/admin-apps";
 import type { ComposedDocumentDto } from "@xecms/contracts";
 
 import type { AdminRuntimeDataClient } from "./api.js";
-import { planEffect, type EffectContext } from "./composed-effects.js";
+import { evaluateCondition, planEffect, type EffectContext } from "./composed-effects.js";
 import {
   allVariantStatesFor,
   buildWiringGraph,
@@ -155,6 +155,38 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     });
   }, [client, graph, page.id]);
 
+  /**
+   * Runs a Data Source and resolves with its rows — used by the `await-query`
+   * effect so a following condition can branch on the result (CPB-WF). It also
+   * stores the result in `sources` (like {@link execute}) so any bound output
+   * updates. Errors resolve to an empty result (the chain fails closed).
+   */
+  const executeAndGet = useCallback(async (dataSourceId: string): Promise<readonly ComposedQueryRowDto[]> => {
+    aborts.current.get(dataSourceId)?.abort();
+    const controller = new AbortController();
+    aborts.current.set(dataSourceId, controller);
+    const parameters = collectParameters(graph, dataSourceId, stateRef.current);
+    setSources((prev) => new Map(prev).set(dataSourceId, { ...(prev.get(dataSourceId) ?? IDLE), status: "loading" }));
+    try {
+      const result = await client.queryComposed(page.id, dataSourceId, {
+        parameters: parameters as Readonly<Record<string, never>>,
+      }, controller.signal);
+      if (controller.signal.aborted) return [];
+      setSources((prev) => new Map(prev).set(dataSourceId, {
+        status: "success", rows: result.items, hasNextPage: result.hasNextPage,
+        ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+      }));
+      return result.items;
+    } catch (error: unknown) {
+      if (controller.signal.aborted) return [];
+      setSources((prev) => new Map(prev).set(dataSourceId, {
+        status: "error", rows: [], hasNextPage: false,
+        error: error instanceof Error ? error.message : "조회에 실패했습니다.",
+      }));
+      return [];
+    }
+  }, [client, graph, page.id]);
+
   // on-load Data Sources run once on mount.
   useEffect(() => {
     const timers = debounces.current;
@@ -258,8 +290,16 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     const context: EffectContext = {
       stateValue: (stateId) => stateRef.current.get(stateId),
       canRunAction,
+      fieldName: (fieldId) => fieldNames.get(fieldId),
     };
+    // Row count of the last `await-query` in this chain, for `queryResult` guards.
+    let lastQueryRowCount: number | undefined;
     for (const effect of effects) {
+      // Declarative guard (CPB-WF): skip the effect when its condition is false.
+      if (effect.when !== undefined && !evaluateCondition(effect.when, {
+        stateValue: (stateId) => stateRef.current.get(stateId),
+        lastQueryRowCount,
+      })) continue;
       const plan = planEffect(effect, context);
       switch (plan.kind) {
         case "state.set":
@@ -274,6 +314,12 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
         case "data-source.reset":
           setSources((prev) => new Map(prev).set(plan.dataSourceId, IDLE));
           break;
+        case "await-query": {
+          // Wait for the result so a following condition can branch on it.
+          const rows = await executeAndGet(plan.dataSourceId);
+          lastQueryRowCount = rows.length;
+          break;
+        }
         case "navigate":
           navigate?.(plan.pageId);
           break;
@@ -298,11 +344,19 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
           if (!ok) return;
           break;
         }
+        case "form.setField":
+          setFormFieldValue(plan.formComponentId, plan.fieldName, plan.value);
+          break;
+        case "action.updateFields": {
+          const ok = await runUpdateFields(plan.collectionId, plan.documentId, plan.fields);
+          if (!ok) return;
+          break;
+        }
         case "noop":
           break;
       }
     }
-  }, [execute, navigate, canRunAction]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [execute, executeAndGet, navigate, canRunAction, fieldNames]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Executes the delete Action through the content API (which re-checks the permission). */
   const runDelete = useCallback(async (collectionId: string, documentId: string, confirmMessage: string): Promise<boolean> => {
@@ -369,6 +423,31 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
       runningAction.current = false;
     }
   }, [client, collectFormData]);
+
+  /**
+   * Partial update (CPB-WF 슬2): re-reads the record, merges only the named fields
+   * onto its current data, and writes back. Used for 반납/연장/상태변경 where only a
+   * couple of fields change. content.update is enforced server-side.
+   */
+  const runUpdateFields = useCallback(async (
+    collectionId: string,
+    documentId: string,
+    fields: Readonly<Record<string, unknown>>,
+  ): Promise<boolean> => {
+    runningAction.current = true;
+    setActionState({ status: "running" });
+    try {
+      const document = await client.get(collectionId, documentId);
+      await client.update(collectionId, documentId, { ...document.data, ...fields }, document.version);
+      setActionState({ status: "success", message: "처리되었습니다." });
+      return true;
+    } catch (error: unknown) {
+      setActionState({ status: "error", message: error instanceof Error ? error.message : "작업에 실패했습니다." });
+      return false;
+    } finally {
+      runningAction.current = false;
+    }
+  }, [client]);
 
   const runComponentEvent = useCallback((componentId: string, event: string): void => {
     const component = page.components.find(({ id }) => id === componentId);

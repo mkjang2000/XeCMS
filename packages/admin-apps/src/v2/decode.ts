@@ -42,6 +42,7 @@ import type {
   ParameterizedFilterExpression,
   ParameterizedFilterValue,
   PortReference,
+  RuleCondition,
 } from "./types.js";
 
 const STATE_VALUE_TYPES = [
@@ -50,10 +51,15 @@ const STATE_VALUE_TYPES = [
 const FILTER_OPERATORS = [
   "eq", "ne", "lt", "lte", "gt", "gte", "contains", "startsWith", "in", "isNull", "isNotNull",
 ] as const;
-const EVENT_NAMES = ["onLoad", "onClick", "onChange", "onRowSelect", "onSubmit"] as const;
+const EVENT_NAMES = ["onLoad", "onClick", "onChange", "onRowSelect", "onSubmit", "onScan"] as const;
 const EFFECT_KINDS = [
-  "state.set", "state.reset", "data-source.execute", "data-source.reset", "navigate", "action.execute",
+  "state.set", "state.reset", "data-source.execute", "data-source.reset", "await-query",
+  "form.setField", "action.updateFields", "navigate", "action.execute",
 ] as const;
+const STATE_CONDITION_OPS = ["eq", "ne", "empty", "notEmpty", "gt", "lt"] as const;
+const QUERY_CONDITION_OPS = ["hasRows", "noRows", "countGt"] as const;
+const CONDITION_TYPES = ["state", "field", "queryResult", "and", "or"] as const;
+const MAX_CONDITION_DEPTH = 4;
 
 export function decodeAdminAppManifestV2(input: unknown): AdminAppManifestV2 {
   assertJsonCompatible(input, [], new Set());
@@ -346,10 +352,55 @@ function decodeEvent(input: unknown, path: Path): ComposedPageEventBinding {
 
 function decodeEffect(input: unknown, path: Path): ComposedEffectDefinition {
   const value = object(input, path);
-  exact(value, ["id", "kind", "args"], path);
+  exact(value, ["id", "kind", "args", "when"], path);
   return {
     id: text(required(value, "id", path), [...path, "id"]),
     kind: choice(required(value, "kind", path), EFFECT_KINDS, [...path, "kind"]),
     ...(has(value, "args") ? { args: object(value["args"], [...path, "args"]) } : {}),
+    ...(has(value, "when") ? { when: decodeRuleCondition(value["when"], [...path, "when"], 0) } : {}),
+  };
+}
+
+/** Decodes a declarative effect guard (CPB-WF). Bounded depth; no arbitrary code. */
+function decodeRuleCondition(input: unknown, path: Path, depth: number): RuleCondition {
+  if (depth > MAX_CONDITION_DEPTH) fail("CONDITION_TOO_DEEP", `조건 중첩이 너무 깊습니다(최대 ${MAX_CONDITION_DEPTH}단계).`, path);
+  const value = object(input, path);
+  const type = choice(required(value, "type", path), CONDITION_TYPES, [...path, "type"]);
+  if (type === "state") {
+    exact(value, ["type", "stateId", "op", "value"], path);
+    const op = choice(required(value, "op", path), STATE_CONDITION_OPS, [...path, "op"]);
+    return {
+      type: "state",
+      stateId: text(required(value, "stateId", path), [...path, "stateId"]),
+      op,
+      ...(has(value, "value") ? { value: scalar(value["value"], [...path, "value"]) } : {}),
+    };
+  }
+  if (type === "field") {
+    exact(value, ["type", "fieldId", "op", "value"], path);
+    const op = choice(required(value, "op", path), STATE_CONDITION_OPS, [...path, "op"]);
+    return {
+      type: "field",
+      fieldId: text(required(value, "fieldId", path), [...path, "fieldId"]),
+      op,
+      ...(has(value, "value") ? { value: scalar(value["value"], [...path, "value"]) } : {}),
+    };
+  }
+  if (type === "queryResult") {
+    exact(value, ["type", "source", "op", "value"], path);
+    return {
+      type: "queryResult",
+      source: literal(required(value, "source", path), "lastQuery", [...path, "source"]),
+      op: choice(required(value, "op", path), QUERY_CONDITION_OPS, [...path, "op"]),
+      ...(has(value, "value") ? { value: integer(value["value"], [...path, "value"]) } : {}),
+    };
+  }
+  // "and" / "or"
+  exact(value, ["type", "conditions"], path);
+  return {
+    type,
+    conditions: list(required(value, "conditions", path), [...path, "conditions"]).map(
+      (item, index) => decodeRuleCondition(item, [...path, "conditions", index], depth + 1),
+    ),
   };
 }

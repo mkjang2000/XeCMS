@@ -245,6 +245,10 @@
 .composedTableRow:hover { background: var(--xe-color-surface-muted, #f5f5f5); }
 .composedTableRowSelected { background: var(--xe-color-primary-soft, #eef0ff); }
 .composedTableRow:focus-visible { outline: 2px solid var(--xe-color-primary, #5865e8); outline-offset: -2px; }
+/* CPB-WF 슬4: conditional row highlight (e.g. overdue → red). A left accent bar +
+   soft tint reads in both light/dark without relying on color alone. */
+.composedRowHighlight { background: var(--xe-color-danger-soft, #fdecec); box-shadow: inset 3px 0 0 0 var(--xe-color-danger, #c4322a); }
+.composedRowHighlight:hover { background: var(--xe-color-danger-soft, #fdecec); }
 .composedBadge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--xe-color-surface-muted, #eef); font-size: 0.75rem; }
 .composedLongText { display: block; white-space: pre-wrap; word-break: break-word; }
 .adaptiveHeader { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

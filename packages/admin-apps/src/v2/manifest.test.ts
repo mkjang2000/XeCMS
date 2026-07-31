@@ -76,6 +76,66 @@ describe("Admin App Manifest V2 (Composed Page) contract", () => {
     expect(deps.extensionIds).not.toContain("core.button");
   });
 
+  it("round-trips a rule effect chain: await-query + when condition (CPB-WF)", () => {
+    const manifest = clone();
+    const page = composedPage(manifest);
+    page.components.push({
+      id: "cmp_scan", kind: "core.button", placement: { x: 0, y: 40, width: 6, height: 5 }, props: {},
+      events: [{ id: "e_scan", event: "onClick", effects: [
+        { id: "f_q", kind: "await-query", args: { dataSourceId: "query_customers" } },
+        {
+          id: "f_return", kind: "state.set", args: { stateId: "state_search_name", value: "on-loan" },
+          when: { type: "and", conditions: [
+            { type: "queryResult", source: "lastQuery", op: "hasRows" },
+            { type: "state", stateId: "state_search_name", op: "notEmpty" },
+          ] },
+        },
+      ] }],
+    } as never);
+    const decoded = decodeAdminAppManifestV2(manifest);
+    const reparsed = decodeAdminAppManifestV2(JSON.parse(serializeManifestValue(decoded)));
+    expect(reparsed).toEqual(decoded);
+    // The decoded effect keeps its guard.
+    const effects = (composedPage(decoded as Mutable<AdminAppManifestV2>).components.at(-1) as never as { events: { effects: unknown[] }[] }).events[0]!.effects;
+    expect(effects).toHaveLength(2);
+  });
+
+  it("round-trips slice 2-4 rule effects: form.setField, action.updateFields, onScan, field highlight", () => {
+    const manifest = clone();
+    const page = composedPage(manifest);
+    page.components.push({
+      id: "cmp_scan", kind: "core.input.scan", placement: { x: 0, y: 40, width: 12, height: 5 }, props: { label: "스캔" },
+      events: [{ id: "e_scan", event: "onScan", effects: [
+        { id: "f_q", kind: "await-query", args: { dataSourceId: "query_customers" } },
+        { id: "f_set", kind: "form.setField",
+          args: { formComponentId: "cmp_form", fieldId: "fld_customer_name", value: { from: "today" } } },
+        { id: "f_upd", kind: "action.updateFields",
+          args: { collectionId: "col_customers", documentStateId: "state_sel",
+            fields: [{ fieldId: "fld_customer_name", value: { from: "literal", value: "returned" } }] },
+          when: { type: "queryResult", source: "lastQuery", op: "hasRows" } },
+      ] }],
+    } as never);
+    // A row-level highlight condition on the output table.
+    (page.components[2] as unknown as { props: Record<string, unknown> }).props["highlightWhen"] = {
+      type: "field", fieldId: "fld_customer_name", op: "notEmpty",
+    };
+    const decoded = decodeAdminAppManifestV2(manifest);
+    const reparsed = decodeAdminAppManifestV2(JSON.parse(serializeManifestValue(decoded)));
+    expect(reparsed).toEqual(decoded);
+  });
+
+  it("rejects an unknown condition op / over-deep nesting (fails closed)", () => {
+    const badOp = clone();
+    composedPage(badOp).components.push({
+      id: "cmp_b", kind: "core.button", placement: { x: 0, y: 40, width: 6, height: 5 }, props: {},
+      events: [{ id: "e", event: "onClick", effects: [
+        { id: "f", kind: "state.reset", args: { stateId: "state_search_name" },
+          when: { type: "state", stateId: "state_search_name", op: "matches" } },
+      ] }],
+    } as never);
+    expect(() => decodeAdminAppManifestV2(badOp as never)).toThrow(AdminAppManifestDecodeError);
+  });
+
   it("dispatches by formatVersion", () => {
     expect(isComposedPageManifest(decodeAdminAppManifestAny(minimalComposedPageManifest))).toBe(true);
     expect(isComposedPageManifest(decodeAdminAppManifestAny(minimalBackofficeManifest))).toBe(false);

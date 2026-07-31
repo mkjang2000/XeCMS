@@ -31,6 +31,7 @@ interface AdaptiveVariantProp {
 export function componentPorts(component: ComponentDefinition): readonly PortSpec[] {
   switch (component.kind) {
     case "core.input.text":
+    case "core.input.scan":
       return [{ portId: "value", label: "값", direction: "out", valueType: "string" }];
     case "core.input.number":
       return [{ portId: "value", label: "값", direction: "out", valueType: "number" }];

@@ -103,7 +103,7 @@ export interface OutputProtectionDefinition {
 
 export interface ComposedPageEventBinding {
   readonly id: string;
-  readonly event: "onLoad" | "onClick" | "onChange" | "onRowSelect" | "onSubmit";
+  readonly event: "onLoad" | "onClick" | "onChange" | "onRowSelect" | "onSubmit" | "onScan";
   readonly effects: readonly ComposedEffectDefinition[];
 }
 
@@ -114,10 +114,51 @@ export interface ComposedEffectDefinition {
     | "state.reset"
     | "data-source.execute"
     | "data-source.reset"
+    | "await-query"
+    | "form.setField"
+    | "action.updateFields"
     | "navigate"
     | "action.execute";
   readonly args?: Readonly<Record<string, unknown>>;
+  /**
+   * Optional declarative guard (CPB-WF): the effect runs only when this evaluates
+   * true against the current Page State and the last `await-query` result. Absent
+   * ⇒ always runs. Declarative-only — never arbitrary code (§3, D-20).
+   */
+  readonly when?: RuleCondition;
 }
+
+/**
+ * A pure, declarative condition guarding an effect (CPB-WF). Evaluated at runtime
+ * against Page State and the most recent `await-query` result — no arbitrary JS.
+ */
+export type RuleCondition =
+  | {
+      readonly type: "state";
+      readonly stateId: string;
+      readonly op: "eq" | "ne" | "empty" | "notEmpty" | "gt" | "lt";
+      readonly value?: AdminAppScalar;
+    }
+  | {
+      readonly type: "queryResult";
+      /** The result of the last `await-query` effect in this chain. */
+      readonly source: "lastQuery";
+      readonly op: "hasRows" | "noRows" | "countGt";
+      readonly value?: number;
+    }
+  | {
+      /**
+       * Reads a Field of the row being rendered (CPB-WF 슬4 `highlightWhen`). Only
+       * meaningful in a per-row context (output columns/rows); elsewhere it reads
+       * as empty and fails closed.
+       */
+      readonly type: "field";
+      readonly fieldId: string;
+      readonly op: "eq" | "ne" | "empty" | "notEmpty" | "gt" | "lt";
+      readonly value?: AdminAppScalar;
+    }
+  | { readonly type: "and"; readonly conditions: readonly RuleCondition[] }
+  | { readonly type: "or"; readonly conditions: readonly RuleCondition[] };
 
 export interface ComponentBindings {
   readonly [portId: string]: unknown;
