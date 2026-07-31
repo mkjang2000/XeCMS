@@ -58,6 +58,8 @@
 .linkLine { stroke: var(--xe-color-primary, #5865e8); stroke-width: 2.5; }
 .linkHandle { fill: var(--xe-color-surface, #fff); stroke: var(--xe-color-danger, #c4322a); stroke-width: 2; pointer-events: auto; cursor: pointer; }
 .linkDimmed { opacity: 0.25; }
+/* Rubber-band drawn from the drag source's anchor to the cursor while linking. */
+.linkDragLine { stroke: var(--xe-color-primary, #5865e8); stroke-width: 2.5; stroke-dasharray: 6 5; stroke-linecap: round; opacity: 0.85; }
 
 /* Live preview: real Component chrome, but inert so drags pass through to the cell. */
 .livePreview { height: 100%; overflow: hidden; pointer-events: none; }

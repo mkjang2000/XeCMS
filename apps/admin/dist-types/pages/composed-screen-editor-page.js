@@ -46,6 +46,8 @@ export function ComposedScreenEditorPage() {
     const [selectedConnectionId, setSelectedConnectionId] = useState(null);
     // Connect mode: the block picked as the link source ("이 검색폼에서 →").
     const [pendingLinkBlockId, setPendingLinkBlockId] = useState(null);
+    // Connect mode: an in-progress drag from a source block to a target (rubber-band line).
+    const [linkDrag, setLinkDrag] = useState(null);
     const [issuesOpen, setIssuesOpen] = useState(false);
     const [previewOpen, setPreviewOpen] = useState(false);
     const savedJson = useRef("");
@@ -292,7 +294,26 @@ export function ComposedScreenEditorPage() {
             setSelectedConnectionId(null);
         }
     };
-    /** Connect mode: clicking a block picks it as source, then a target to link. */
+    /** Commits a form→form link if the blocks are compatible. Shared by click & drag. */
+    const linkBlockIds = (fromBlockId, toBlockId) => {
+        if (active === null || fromBlockId === toBlockId)
+            return;
+        const blocks = describeBlocks(active);
+        const from = blocks.find((block) => block.id === fromBlockId);
+        const to = blocks.find((block) => block.id === toBlockId);
+        if (from === undefined || to === undefined || !canLinkBlocks(from, to, active))
+            return;
+        // Cross-schema: target runs its own query → feed it a source-row field value.
+        if (isListBlock(from.kind) && isListBlock(to.kind) && hasSelfQuery(active, to)) {
+            const sourceFieldId = blockFields(active, from)[0]?.fieldId;
+            if (sourceFieldId !== undefined)
+                commit(linkBlocksByField(active, from, to, sourceFieldId));
+        }
+        else {
+            commit(linkBlocks(active, from, to));
+        }
+    };
+    /** Connect mode (click flow): pick a source block, then a target to link. */
     const onBlockClick = (componentId) => {
         if (active === null)
             return;
@@ -300,7 +321,6 @@ export function ComposedScreenEditorPage() {
         const blockId = blockIdOf(componentId);
         if (blockId === null)
             return;
-        const blocks = describeBlocks(active);
         if (pendingLinkBlockId === null) {
             setPendingLinkBlockId(blockId);
             return;
@@ -309,20 +329,27 @@ export function ComposedScreenEditorPage() {
             setPendingLinkBlockId(null);
             return;
         }
-        const from = blocks.find((block) => block.id === pendingLinkBlockId);
-        const to = blocks.find((block) => block.id === blockId);
-        if (from !== undefined && to !== undefined && canLinkBlocks(from, to, active)) {
-            // Cross-schema: target runs its own query → feed it a source-row field value.
-            if (isListBlock(from.kind) && isListBlock(to.kind) && hasSelfQuery(active, to)) {
-                const sourceFieldId = blockFields(active, from)[0]?.fieldId;
-                if (sourceFieldId !== undefined)
-                    commit(linkBlocksByField(active, from, to, sourceFieldId));
-            }
-            else {
-                commit(linkBlocks(active, from, to));
-            }
-        }
+        linkBlockIds(pendingLinkBlockId, blockId);
         setPendingLinkBlockId(null);
+    };
+    /** Connect mode (drag flow): the canvas reports the live drag; mirror its source
+     *  into `pendingLinkBlockId` so target highlighting/overlay dimming light up. */
+    const onLinkDrag = (state) => {
+        setLinkDrag(state);
+        if (state === null)
+            return;
+        const sourceBlockId = blockIdOf(state.sourceId);
+        if (sourceBlockId !== null)
+            setPendingLinkBlockId(sourceBlockId);
+    };
+    /** Connect mode (drag flow): released over a target cell → link the two blocks. */
+    const onLinkDrop = (sourceComponentId, targetComponentId) => {
+        const fromBlockId = blockIdOf(sourceComponentId);
+        const toBlockId = targetComponentId === null ? null : blockIdOf(targetComponentId);
+        if (fromBlockId !== null && toBlockId !== null)
+            linkBlockIds(fromBlockId, toBlockId);
+        setPendingLinkBlockId(null);
+        setLinkDrag(null);
     };
     const selected = active?.components.find(({ id }) => id === selectedId) ?? null;
     // A selected component that belongs to a form block → edit the whole block.
@@ -373,10 +400,10 @@ export function ComposedScreenEditorPage() {
                                         return;
                                     commit(removeLegacyComponents(active));
                                     setSelectedId(null);
-                                }, children: ["\uC774\uC804 \uD3FC \uC815\uB9AC (", legacyCount, ")"] })) : null] }), _jsxs("div", { className: styles.topbarRight, children: [_jsxs("div", { className: styles.undoRedo, children: [_jsx("button", { type: "button", onClick: undo, disabled: !canUndo, title: "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)", "aria-label": "\uC2E4\uD589 \uCDE8\uC18C", children: "\u21B6" }), _jsx("button", { type: "button", onClick: redo, disabled: !canRedo, title: "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Shift+Z)", "aria-label": "\uB2E4\uC2DC \uC2E4\uD589", children: "\u21B7" })] }), _jsxs("div", { className: styles.modeToggle, role: "tablist", "aria-label": "\uD3B8\uC9D1 \uBAA8\uB4DC", children: [_jsx("button", { type: "button", role: "tab", "aria-selected": mode === "layout", onClick: () => { setMode("layout"); setPendingLinkBlockId(null); }, children: "\uBC30\uCE58" }), _jsx("button", { type: "button", role: "tab", "aria-selected": mode === "connect", onClick: () => { setMode("connect"); setSelectedId(null); }, children: "\uC5F0\uACB0" })] }), mode === "connect" ? (_jsx("span", { className: styles.connectHint, children: pendingLinkBlockId === null ? "연결할 검색폼을 누르세요" : "결과를 받을 폼을 누르세요" })) : null, issues.length > 0 ? (_jsxs("button", { type: "button", className: styles.issueBadge, onClick: () => setIssuesOpen((open) => !open), "aria-expanded": issuesOpen, children: [issues.length, "\uAC1C \uBB38\uC81C ", issuesOpen ? "▲" : "▼"] })) : null, _jsx(Button, { size: "small", variant: "secondary", onPress: () => setPreviewOpen(true), isDisabled: composedPages.length === 0, children: "\uBBF8\uB9AC\uBCF4\uAE30" }), _jsx(Button, { size: "small", onPress: () => void save(), isDisabled: pending || !dirty, children: pending ? "저장 중…" : "저장" })] })] }), error !== null ? _jsx(Callout, { tone: "error", children: error }) : null, issues.length > 0 && issuesOpen ? (_jsxs("div", { className: styles.issuePanel, role: "region", "aria-label": "\uAC80\uC99D \uBB38\uC81C", children: [_jsx("ul", { children: issues.slice(0, 20).map((issue, index) => {
+                                }, children: ["\uC774\uC804 \uD3FC \uC815\uB9AC (", legacyCount, ")"] })) : null] }), _jsxs("div", { className: styles.topbarRight, children: [_jsxs("div", { className: styles.undoRedo, children: [_jsx("button", { type: "button", onClick: undo, disabled: !canUndo, title: "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)", "aria-label": "\uC2E4\uD589 \uCDE8\uC18C", children: "\u21B6" }), _jsx("button", { type: "button", onClick: redo, disabled: !canRedo, title: "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Shift+Z)", "aria-label": "\uB2E4\uC2DC \uC2E4\uD589", children: "\u21B7" })] }), _jsxs("div", { className: styles.modeToggle, role: "tablist", "aria-label": "\uD3B8\uC9D1 \uBAA8\uB4DC", children: [_jsx("button", { type: "button", role: "tab", "aria-selected": mode === "layout", onClick: () => { setMode("layout"); setPendingLinkBlockId(null); }, children: "\uBC30\uCE58" }), _jsx("button", { type: "button", role: "tab", "aria-selected": mode === "connect", onClick: () => { setMode("connect"); setSelectedId(null); }, children: "\uC5F0\uACB0" })] }), mode === "connect" ? (_jsx("span", { className: styles.connectHint, children: linkDrag !== null ? "결과를 받을 폼 위에서 놓으세요" : pendingLinkBlockId === null ? "검색폼에서 결과 폼으로 드래그하거나, 눌러서 연결하세요" : "결과를 받을 폼을 누르세요" })) : null, issues.length > 0 ? (_jsxs("button", { type: "button", className: styles.issueBadge, onClick: () => setIssuesOpen((open) => !open), "aria-expanded": issuesOpen, children: [issues.length, "\uAC1C \uBB38\uC81C ", issuesOpen ? "▲" : "▼"] })) : null, _jsx(Button, { size: "small", variant: "secondary", onPress: () => setPreviewOpen(true), isDisabled: composedPages.length === 0, children: "\uBBF8\uB9AC\uBCF4\uAE30" }), _jsx(Button, { size: "small", onPress: () => void save(), isDisabled: pending || !dirty, children: pending ? "저장 중…" : "저장" })] })] }), error !== null ? _jsx(Callout, { tone: "error", children: error }) : null, issues.length > 0 && issuesOpen ? (_jsxs("div", { className: styles.issuePanel, role: "region", "aria-label": "\uAC80\uC99D \uBB38\uC81C", children: [_jsx("ul", { children: issues.slice(0, 20).map((issue, index) => {
                             const componentId = issueComponentId(manifest, active, issue);
                             return (_jsx("li", { children: componentId !== null ? (_jsxs("button", { type: "button", className: styles.issueJump, onClick: () => { setMode("layout"); setSelectedId(componentId); }, children: [friendlyIssue(issue.code, issue.message), " ", _jsx("span", { "aria-hidden": "true", children: "\u2192 \uC774\uB3D9" })] })) : friendlyIssue(issue.code, issue.message) }, index));
-                        }) }), issues.length > 20 ? _jsxs("p", { className: styles.paletteHint, children: ["\uC678 ", issues.length - 20, "\uAC74"] }) : null] })) : null, _jsxs("div", { className: styles.body, children: [_jsx("aside", { className: styles.palette, "aria-label": "\uD3FC \uBE14\uB85D \uD314\uB808\uD2B8", children: mode === "layout" ? (_jsxs(_Fragment, { children: [PALETTE_GROUPS.map((group) => (_jsxs("section", { children: [_jsx("h4", { children: group.title }), group.kinds.map((kind) => (_jsxs("button", { type: "button", className: styles.paletteItem, onClick: () => addFormBlock(kind), disabled: active === null, children: ["+ ", blockKindLabel(kind)] }, kind)))] }, group.title))), _jsx("p", { className: styles.paletteHint, children: "\uD3FC\uC744 \uB193\uC73C\uBA74 \uC2A4\uD0A4\uB9C8 \uCCAB \uD544\uB4DC\uB85C \uCC44\uC6CC\uC9D1\uB2C8\uB2E4. \uD3FC\uC744 \uC120\uD0DD\uD574 \uC2A4\uD0A4\uB9C8\u00B7\uD544\uB4DC\uB97C \uBC14\uAFB8\uC138\uC694." })] })) : (_jsxs("section", { children: [_jsx("h4", { children: "\uD3FC \uC5F0\uACB0" }), _jsx("p", { className: styles.paletteHint, children: "\uAC80\uC0C9\uD3FC\uC744 \uBAA9\uB85D\u00B7\uC0C1\uC138 \uD3FC\uC5D0 \uC5F0\uACB0\uD558\uBA74, \uAC80\uC0C9 \uACB0\uACFC\uAC00 \uADF8 \uD3FC\uC73C\uB85C \uD758\uB7EC\uAC11\uB2C8\uB2E4." })] })) }), _jsx("div", { className: styles.stage, children: active === null ? (_jsx("p", { className: styles.stageEmpty, children: "\uD3B8\uC9D1\uD560 Composed \uD654\uBA74\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." })) : (_jsx(AppShellFrame, { manifest: manifest, activePageId: active.id, children: (scale) => (_jsxs(_Fragment, { children: [mode === "layout" && active.components.length === 0 ? (_jsxs("div", { className: styles.onboarding, role: "note", children: [_jsx("strong", { children: "\uC774 \uD654\uBA74\uC740 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4" }), _jsxs("p", { children: ["\uC67C\uCABD ", _jsx("b", { children: "\uD3FC \uCD94\uAC00" }), "\uC5D0\uC11C \uD3FC\uC744 \uB193\uC544 \uC2DC\uC791\uD558\uC138\uC694. \uBCF4\uD1B5 \uC774\uB807\uAC8C \uB9CC\uB4ED\uB2C8\uB2E4:"] }), _jsxs("ol", { children: [_jsxs("li", { children: [_jsx("b", { children: "\uAC80\uC0C9\uD3FC" }), "\uC73C\uB85C \uC2A4\uD0A4\uB9C8\u00B7\uAC80\uC0C9 \uC870\uAC74\uC744 \uC815\uD558\uACE0"] }), _jsxs("li", { children: [_jsx("b", { children: "\uBAA9\uB85D\uD45C" }), "\uB97C \uCD94\uAC00\uD574 ", _jsx("b", { children: "\uC5F0\uACB0 \uBAA8\uB4DC" }), "\uC5D0\uC11C \uAC80\uC0C9\uD3FC\uACFC \uC774\uC73C\uBA74"] }), _jsxs("li", { children: ["\uC870\uD68C \uACB0\uACFC\uAC00 \uBAA9\uB85D\uC5D0 \uB098\uC635\uB2C8\uB2E4. ", _jsx("b", { children: "\uC0C1\uC138" }), "\uB3C4 \uBAA9\uB85D\uC5D0 \uC774\uC5B4 \uBD99\uC77C \uC218 \uC788\uC5B4\uC694."] })] }), _jsxs("div", { className: styles.onboardingActions, children: [_jsx(Button, { size: "small", onPress: () => addFormBlock("search"), children: "\uAC80\uC0C9\uD3FC \uCD94\uAC00" }), _jsx(Button, { size: "small", variant: "secondary", onPress: () => addFormBlock("list"), children: "\uBAA9\uB85D\uD45C \uCD94\uAC00" })] })] })) : null, _jsx(ComposedCanvas, { page: active, selectedId: selectedId, locked: mode === "connect", scale: scale, profile: manifest.presentation.layoutProfile, onSelect: (id) => { setSelectedId(id); setSelectedConnectionId(null); }, onPlace: (id, placement) => commit(updatePlacement(active, id, placement)), onLockedActivate: onBlockClick, cellTone: mode === "connect" ? (id) => blockCellTone(active, id, pendingLinkBlockId) : undefined, cellHasIssue: (id) => issueComponentIds.has(id), overlay: mode === "connect" ? (_jsx(BlockLinkOverlay, { page: active, pendingLinkBlockId: pendingLinkBlockId, onUnlink: (link) => {
+                        }) }), issues.length > 20 ? _jsxs("p", { className: styles.paletteHint, children: ["\uC678 ", issues.length - 20, "\uAC74"] }) : null] })) : null, _jsxs("div", { className: styles.body, children: [_jsx("aside", { className: styles.palette, "aria-label": "\uD3FC \uBE14\uB85D \uD314\uB808\uD2B8", children: mode === "layout" ? (_jsxs(_Fragment, { children: [PALETTE_GROUPS.map((group) => (_jsxs("section", { children: [_jsx("h4", { children: group.title }), group.kinds.map((kind) => (_jsxs("button", { type: "button", className: styles.paletteItem, onClick: () => addFormBlock(kind), disabled: active === null, children: ["+ ", blockKindLabel(kind)] }, kind)))] }, group.title))), _jsx("p", { className: styles.paletteHint, children: "\uD3FC\uC744 \uB193\uC73C\uBA74 \uC2A4\uD0A4\uB9C8 \uCCAB \uD544\uB4DC\uB85C \uCC44\uC6CC\uC9D1\uB2C8\uB2E4. \uD3FC\uC744 \uC120\uD0DD\uD574 \uC2A4\uD0A4\uB9C8\u00B7\uD544\uB4DC\uB97C \uBC14\uAFB8\uC138\uC694." })] })) : (_jsxs("section", { children: [_jsx("h4", { children: "\uD3FC \uC5F0\uACB0" }), _jsxs("p", { className: styles.paletteHint, children: ["\uAC80\uC0C9\uD3FC\uC5D0\uC11C \uBAA9\uB85D\u00B7\uC0C1\uC138 \uD3FC\uC73C\uB85C ", _jsx("b", { children: "\uB4DC\uB798\uADF8" }), "\uD574 \uC5F0\uACB0\uD558\uC138\uC694. (\uB204\uB978 \uB4A4 \uB300\uC0C1 \uD3FC\uC744 \uB20C\uB7EC\uB3C4 \uB429\uB2C8\uB2E4.) \uC5F0\uACB0\uD558\uBA74 \uAC80\uC0C9 \uACB0\uACFC\uAC00 \uADF8 \uD3FC\uC73C\uB85C \uD758\uB7EC\uAC11\uB2C8\uB2E4."] }), _jsx("p", { className: styles.paletteHint, children: "\uC5F0\uACB0\uC120 \uAC00\uC6B4\uB370 \uC810\uC744 \uB204\uB974\uBA74 \uC5F0\uACB0\uC774 \uB04A\uAE41\uB2C8\uB2E4." })] })) }), _jsx("div", { className: styles.stage, children: active === null ? (_jsx("p", { className: styles.stageEmpty, children: "\uD3B8\uC9D1\uD560 Composed \uD654\uBA74\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." })) : (_jsx(AppShellFrame, { manifest: manifest, activePageId: active.id, children: (scale) => (_jsxs(_Fragment, { children: [mode === "layout" && active.components.length === 0 ? (_jsxs("div", { className: styles.onboarding, role: "note", children: [_jsx("strong", { children: "\uC774 \uD654\uBA74\uC740 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4" }), _jsxs("p", { children: ["\uC67C\uCABD ", _jsx("b", { children: "\uD3FC \uCD94\uAC00" }), "\uC5D0\uC11C \uD3FC\uC744 \uB193\uC544 \uC2DC\uC791\uD558\uC138\uC694. \uBCF4\uD1B5 \uC774\uB807\uAC8C \uB9CC\uB4ED\uB2C8\uB2E4:"] }), _jsxs("ol", { children: [_jsxs("li", { children: [_jsx("b", { children: "\uAC80\uC0C9\uD3FC" }), "\uC73C\uB85C \uC2A4\uD0A4\uB9C8\u00B7\uAC80\uC0C9 \uC870\uAC74\uC744 \uC815\uD558\uACE0"] }), _jsxs("li", { children: [_jsx("b", { children: "\uBAA9\uB85D\uD45C" }), "\uB97C \uCD94\uAC00\uD574 ", _jsx("b", { children: "\uC5F0\uACB0 \uBAA8\uB4DC" }), "\uC5D0\uC11C \uAC80\uC0C9\uD3FC\uACFC \uC774\uC73C\uBA74"] }), _jsxs("li", { children: ["\uC870\uD68C \uACB0\uACFC\uAC00 \uBAA9\uB85D\uC5D0 \uB098\uC635\uB2C8\uB2E4. ", _jsx("b", { children: "\uC0C1\uC138" }), "\uB3C4 \uBAA9\uB85D\uC5D0 \uC774\uC5B4 \uBD99\uC77C \uC218 \uC788\uC5B4\uC694."] })] }), _jsxs("div", { className: styles.onboardingActions, children: [_jsx(Button, { size: "small", onPress: () => addFormBlock("search"), children: "\uAC80\uC0C9\uD3FC \uCD94\uAC00" }), _jsx(Button, { size: "small", variant: "secondary", onPress: () => addFormBlock("list"), children: "\uBAA9\uB85D\uD45C \uCD94\uAC00" })] })] })) : null, _jsx(ComposedCanvas, { page: active, selectedId: selectedId, locked: mode === "connect", scale: scale, profile: manifest.presentation.layoutProfile, onSelect: (id) => { setSelectedId(id); setSelectedConnectionId(null); }, onPlace: (id, placement) => commit(updatePlacement(active, id, placement)), onLockedActivate: onBlockClick, onLinkDrag: mode === "connect" ? onLinkDrag : undefined, onLinkDrop: mode === "connect" ? onLinkDrop : undefined, cellTone: mode === "connect" ? (id) => blockCellTone(active, id, pendingLinkBlockId) : undefined, cellHasIssue: (id) => issueComponentIds.has(id), overlay: mode === "connect" ? (_jsx(BlockLinkOverlay, { page: active, pendingLinkBlockId: pendingLinkBlockId, linkDrag: linkDrag, onUnlink: (link) => {
                                                 const blocks = describeBlocks(active);
                                                 const from = blocks.find((b) => b.id === link.fromBlockId);
                                                 const to = blocks.find((b) => b.id === link.toBlockId);
@@ -471,27 +498,31 @@ function BlockPreview({ component }) {
     const label = typeof component.props["label"] === "string" ? component.props["label"] : component.kind;
     return (_jsxs("div", { className: styles.componentPreview, children: [_jsx("span", { className: styles.componentKind, children: component.kind.replace("core.", "") }), _jsx("strong", { children: label })] }));
 }
-/** Draws a line between each linked pair of blocks (form-to-form links). */
-function BlockLinkOverlay({ page, pendingLinkBlockId, onUnlink }) {
+/** Draws a line between each linked pair of blocks, plus the live drag rubber-band. */
+function BlockLinkOverlay({ page, pendingLinkBlockId, linkDrag, onUnlink }) {
     const blocks = describeBlocks(page);
-    const anchor = (blockId) => {
-        const block = blocks.find((entry) => entry.id === blockId);
-        const component = page.components.find((entry) => entry.id === block?.anchorComponentId);
+    const anchorOf = (component) => {
         if (component === undefined)
             return null;
         const { x, y, width, height } = component.placement;
         return { cx: (x + width / 2) * COLUMN_WIDTH, cy: (y + height / 2) * ROW_HEIGHT };
     };
+    const anchor = (blockId) => {
+        const block = blocks.find((entry) => entry.id === blockId);
+        return anchorOf(page.components.find((entry) => entry.id === block?.anchorComponentId));
+    };
     const links = blockLinks(page);
     const height = Math.max(baseViewportHeight("16:9"), ...page.components.map((c) => (c.placement.y + c.placement.height) * ROW_HEIGHT));
-    return (_jsx("svg", { className: styles.linkLayer, style: { width: CANVAS_WIDTH, height }, viewBox: `0 0 ${CANVAS_WIDTH} ${height}`, children: links.map((link) => {
-            const from = anchor(link.fromBlockId);
-            const to = anchor(link.toBlockId);
-            if (from === null || to === null)
-                return null;
-            const dim = pendingLinkBlockId !== null && link.fromBlockId !== pendingLinkBlockId && link.toBlockId !== pendingLinkBlockId;
-            return (_jsxs("g", { className: dim ? styles.linkDimmed : undefined, children: [_jsx("line", { x1: from.cx, y1: from.cy, x2: to.cx, y2: to.cy, className: styles.linkLine }), _jsx("circle", { cx: (from.cx + to.cx) / 2, cy: (from.cy + to.cy) / 2, r: 9, className: styles.linkHandle, onClick: (event) => { event.stopPropagation(); onUnlink(link); } })] }, `${link.fromBlockId}->${link.toBlockId}`));
-        }) }));
+    // Rubber-band: from the drag source's anchor to the current cursor position.
+    const dragFrom = linkDrag === null ? null : anchorOf(page.components.find((c) => c.id === linkDrag.sourceId));
+    return (_jsxs("svg", { className: styles.linkLayer, style: { width: CANVAS_WIDTH, height }, viewBox: `0 0 ${CANVAS_WIDTH} ${height}`, children: [links.map((link) => {
+                const from = anchor(link.fromBlockId);
+                const to = anchor(link.toBlockId);
+                if (from === null || to === null)
+                    return null;
+                const dim = pendingLinkBlockId !== null && link.fromBlockId !== pendingLinkBlockId && link.toBlockId !== pendingLinkBlockId;
+                return (_jsxs("g", { className: dim ? styles.linkDimmed : undefined, children: [_jsx("line", { x1: from.cx, y1: from.cy, x2: to.cx, y2: to.cy, className: styles.linkLine }), _jsx("circle", { cx: (from.cx + to.cx) / 2, cy: (from.cy + to.cy) / 2, r: 9, className: styles.linkHandle, onClick: (event) => { event.stopPropagation(); onUnlink(link); } })] }, `${link.fromBlockId}->${link.toBlockId}`));
+            }), dragFrom !== null && linkDrag !== null ? (_jsx("line", { x1: dragFrom.cx, y1: dragFrom.cy, x2: linkDrag.cursor.x, y2: linkDrag.cursor.y, className: styles.linkDragLine })) : null] }));
 }
 /** Renders the real App shell (menu + 1152 content) at 1440 width, scaled to fit. */
 function AppShellFrame({ manifest, activePageId, children }) {

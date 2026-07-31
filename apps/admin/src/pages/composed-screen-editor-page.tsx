@@ -29,7 +29,7 @@ import {
 
 import { UnsavedChangesGuard } from "../components/unsaved-guard.js";
 import { xecmsClient as client } from "../xecms-client.js";
-import { ComposedCanvas } from "./composed-editor/canvas.js";
+import { ComposedCanvas, type LinkDragState } from "./composed-editor/canvas.js";
 import {
   addBlockToPage,
   blockFields,
@@ -98,6 +98,8 @@ export function ComposedScreenEditorPage() {
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   // Connect mode: the block picked as the link source ("이 검색폼에서 →").
   const [pendingLinkBlockId, setPendingLinkBlockId] = useState<string | null>(null);
+  // Connect mode: an in-progress drag from a source block to a target (rubber-band line).
+  const [linkDrag, setLinkDrag] = useState<LinkDragState | null>(null);
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -319,27 +321,50 @@ export function ComposedScreenEditorPage() {
     if (block !== undefined) { setSelectedId(block.anchorComponentId); setSelectedConnectionId(null); }
   };
 
-  /** Connect mode: clicking a block picks it as source, then a target to link. */
+  /** Commits a form→form link if the blocks are compatible. Shared by click & drag. */
+  const linkBlockIds = (fromBlockId: string, toBlockId: string): void => {
+    if (active === null || fromBlockId === toBlockId) return;
+    const blocks = describeBlocks(active);
+    const from = blocks.find((block) => block.id === fromBlockId);
+    const to = blocks.find((block) => block.id === toBlockId);
+    if (from === undefined || to === undefined || !canLinkBlocks(from, to, active)) return;
+    // Cross-schema: target runs its own query → feed it a source-row field value.
+    if (isListBlock(from.kind) && isListBlock(to.kind) && hasSelfQuery(active, to)) {
+      const sourceFieldId = blockFields(active, from)[0]?.fieldId;
+      if (sourceFieldId !== undefined) commit(linkBlocksByField(active, from, to, sourceFieldId));
+    } else {
+      commit(linkBlocks(active, from, to));
+    }
+  };
+
+  /** Connect mode (click flow): pick a source block, then a target to link. */
   const onBlockClick = (componentId: string): void => {
     if (active === null) return;
     // The canvas hands us the clicked component id; map it to its owning block.
     const blockId = blockIdOf(componentId);
     if (blockId === null) return;
-    const blocks = describeBlocks(active);
     if (pendingLinkBlockId === null) { setPendingLinkBlockId(blockId); return; }
     if (pendingLinkBlockId === blockId) { setPendingLinkBlockId(null); return; }
-    const from = blocks.find((block) => block.id === pendingLinkBlockId);
-    const to = blocks.find((block) => block.id === blockId);
-    if (from !== undefined && to !== undefined && canLinkBlocks(from, to, active)) {
-      // Cross-schema: target runs its own query → feed it a source-row field value.
-      if (isListBlock(from.kind) && isListBlock(to.kind) && hasSelfQuery(active, to)) {
-        const sourceFieldId = blockFields(active, from)[0]?.fieldId;
-        if (sourceFieldId !== undefined) commit(linkBlocksByField(active, from, to, sourceFieldId));
-      } else {
-        commit(linkBlocks(active, from, to));
-      }
-    }
+    linkBlockIds(pendingLinkBlockId, blockId);
     setPendingLinkBlockId(null);
+  };
+
+  /** Connect mode (drag flow): the canvas reports the live drag; mirror its source
+   *  into `pendingLinkBlockId` so target highlighting/overlay dimming light up. */
+  const onLinkDrag = (state: LinkDragState | null): void => {
+    setLinkDrag(state);
+    if (state === null) return;
+    const sourceBlockId = blockIdOf(state.sourceId);
+    if (sourceBlockId !== null) setPendingLinkBlockId(sourceBlockId);
+  };
+
+  /** Connect mode (drag flow): released over a target cell → link the two blocks. */
+  const onLinkDrop = (sourceComponentId: string, targetComponentId: string | null): void => {
+    const fromBlockId = blockIdOf(sourceComponentId);
+    const toBlockId = targetComponentId === null ? null : blockIdOf(targetComponentId);
+    if (fromBlockId !== null && toBlockId !== null) linkBlockIds(fromBlockId, toBlockId);
+    setPendingLinkBlockId(null);
+    setLinkDrag(null);
   };
 
   const selected = active?.components.find(({ id }) => id === selectedId) ?? null;
@@ -422,7 +447,7 @@ export function ComposedScreenEditorPage() {
             <button type="button" role="tab" aria-selected={mode === "connect"} onClick={() => { setMode("connect"); setSelectedId(null); }}>연결</button>
           </div>
           {mode === "connect" ? (
-            <span className={styles.connectHint}>{pendingLinkBlockId === null ? "연결할 검색폼을 누르세요" : "결과를 받을 폼을 누르세요"}</span>
+            <span className={styles.connectHint}>{linkDrag !== null ? "결과를 받을 폼 위에서 놓으세요" : pendingLinkBlockId === null ? "검색폼에서 결과 폼으로 드래그하거나, 눌러서 연결하세요" : "결과를 받을 폼을 누르세요"}</span>
           ) : null}
           {issues.length > 0 ? (
             <button type="button" className={styles.issueBadge} onClick={() => setIssuesOpen((open) => !open)} aria-expanded={issuesOpen}>
@@ -473,7 +498,8 @@ export function ComposedScreenEditorPage() {
           ) : (
             <section>
               <h4>폼 연결</h4>
-              <p className={styles.paletteHint}>검색폼을 목록·상세 폼에 연결하면, 검색 결과가 그 폼으로 흘러갑니다.</p>
+              <p className={styles.paletteHint}>검색폼에서 목록·상세 폼으로 <b>드래그</b>해 연결하세요. (누른 뒤 대상 폼을 눌러도 됩니다.) 연결하면 검색 결과가 그 폼으로 흘러갑니다.</p>
+              <p className={styles.paletteHint}>연결선 가운데 점을 누르면 연결이 끊깁니다.</p>
             </section>
           )}
         </aside>
@@ -509,10 +535,12 @@ export function ComposedScreenEditorPage() {
                   onSelect={(id) => { setSelectedId(id); setSelectedConnectionId(null); }}
                   onPlace={(id, placement) => commit(updatePlacement(active, id, placement))}
                   onLockedActivate={onBlockClick}
+                  onLinkDrag={mode === "connect" ? onLinkDrag : undefined}
+                  onLinkDrop={mode === "connect" ? onLinkDrop : undefined}
                   cellTone={mode === "connect" ? (id) => blockCellTone(active, id, pendingLinkBlockId) : undefined}
                   cellHasIssue={(id) => issueComponentIds.has(id)}
                   overlay={mode === "connect" ? (
-                    <BlockLinkOverlay page={active} pendingLinkBlockId={pendingLinkBlockId} onUnlink={(link) => {
+                    <BlockLinkOverlay page={active} pendingLinkBlockId={pendingLinkBlockId} linkDrag={linkDrag} onUnlink={(link) => {
                       const blocks = describeBlocks(active);
                       const from = blocks.find((b) => b.id === link.fromBlockId);
                       const to = blocks.find((b) => b.id === link.toBlockId);
@@ -755,22 +783,27 @@ function BlockPreview({ component }: { readonly component: ComponentDefinition }
   );
 }
 
-/** Draws a line between each linked pair of blocks (form-to-form links). */
-function BlockLinkOverlay({ page, pendingLinkBlockId, onUnlink }: {
+/** Draws a line between each linked pair of blocks, plus the live drag rubber-band. */
+function BlockLinkOverlay({ page, pendingLinkBlockId, linkDrag, onUnlink }: {
   readonly page: ComposedPageDefinition;
   readonly pendingLinkBlockId: string | null;
+  readonly linkDrag: LinkDragState | null;
   readonly onUnlink: (link: BlockLink) => void;
 }) {
   const blocks = describeBlocks(page);
-  const anchor = (blockId: string) => {
-    const block = blocks.find((entry) => entry.id === blockId);
-    const component = page.components.find((entry) => entry.id === block?.anchorComponentId);
+  const anchorOf = (component: ComponentDefinition | undefined) => {
     if (component === undefined) return null;
     const { x, y, width, height } = component.placement;
     return { cx: (x + width / 2) * COLUMN_WIDTH, cy: (y + height / 2) * ROW_HEIGHT };
   };
+  const anchor = (blockId: string) => {
+    const block = blocks.find((entry) => entry.id === blockId);
+    return anchorOf(page.components.find((entry) => entry.id === block?.anchorComponentId));
+  };
   const links = blockLinks(page);
   const height = Math.max(baseViewportHeight("16:9"), ...page.components.map((c) => (c.placement.y + c.placement.height) * ROW_HEIGHT));
+  // Rubber-band: from the drag source's anchor to the current cursor position.
+  const dragFrom = linkDrag === null ? null : anchorOf(page.components.find((c) => c.id === linkDrag.sourceId));
   return (
     <svg className={styles.linkLayer} style={{ width: CANVAS_WIDTH, height }} viewBox={`0 0 ${CANVAS_WIDTH} ${height}`}>
       {links.map((link) => {
@@ -785,6 +818,13 @@ function BlockLinkOverlay({ page, pendingLinkBlockId, onUnlink }: {
           </g>
         );
       })}
+      {dragFrom !== null && linkDrag !== null ? (
+        <line
+          x1={dragFrom.cx} y1={dragFrom.cy}
+          x2={linkDrag.cursor.x} y2={linkDrag.cursor.y}
+          className={styles.linkDragLine}
+        />
+      ) : null}
     </svg>
   );
 }
