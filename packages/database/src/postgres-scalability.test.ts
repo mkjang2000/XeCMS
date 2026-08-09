@@ -16,11 +16,11 @@ import { PostgresPluginStore } from "./postgres-plugins.js";
 import { PostgresUnifiedAuditStore } from "./postgres-unified-audit.js";
 import { PostgresDatabase } from "./postgres.js";
 
-const RUN = process.env["XECMS_RUN_P2_BENCHMARKS"] === "true";
+const RUN = process.env["XECMS_RUN_DATABASE_BENCHMARKS"] === "true";
 const DATABASE_URL = process.env["XECMS_TEST_DATABASE_URL"]
   ?? process.env["DATABASE_URL"] ?? "postgresql://xecms:xecms@127.0.0.1:55432/xecms_e2e";
 
-describe.runIf(RUN)("P2 scalability characterization", () => {
+describe.runIf(RUN)("PostgreSQL scalability characterization", () => {
   const schema = `xecms_p2_${randomUUID().replaceAll("-", "_")}`;
   const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 8 });
   const q = (name: string) => qualifiedName(schema, name);
@@ -46,7 +46,7 @@ describe.runIf(RUN)("P2 scalability characterization", () => {
   });
 
   it("measures full-snapshot hierarchy mutation and read paths", async () => {
-    const sizes = numberList(process.env["XECMS_P2_HIERARCHY_SIZES"], [100, 1_000, 5_000]);
+    const sizes = numberList(process.env["XECMS_BENCHMARK_HIERARCHY_SIZES"], [100, 1_000, 5_000]);
     const results = [];
     for (const size of sizes) {
       const collectionId = `col_p2_hierarchy_${size}`;
@@ -81,7 +81,7 @@ describe.runIf(RUN)("P2 scalability characterization", () => {
   }, 240_000);
 
   it("measures unified audit pagination and captures the PostgreSQL execution plan", async () => {
-    const perSourceSizes = numberList(process.env["XECMS_P2_AUDIT_PER_SOURCE_SIZES"], [10_000, 50_000]);
+    const perSourceSizes = numberList(process.env["XECMS_BENCHMARK_AUDIT_PER_SOURCE_SIZES"], [10_000, 50_000]);
     const auditStore = new PostgresUnifiedAuditStore(database.pool, schema);
     const audit = new UnifiedAuditService(auditStore);
     const results = [];
@@ -114,7 +114,7 @@ describe.runIf(RUN)("P2 scalability characterization", () => {
   }, 240_000);
 
   it("measures the current in-transaction Plugin JSONB export path", async () => {
-    const sizes = numberList(process.env["XECMS_P2_PLUGIN_EXPORT_SIZES"], [10_000, 100_000]);
+    const sizes = numberList(process.env["XECMS_BENCHMARK_PLUGIN_EXPORT_SIZES"], [10_000, 100_000]);
     const results = [];
     for (const size of sizes) {
       const id = `export-bench-${size}`;
@@ -252,7 +252,7 @@ function numberList(raw: string|undefined, fallback: number[]): number[] {
   return raw?.split(",").map(Number).filter((value) => Number.isInteger(value)&&value>0) ?? fallback;
 }
 function report(name: string, result: unknown): void {
-  console.info(`P2_BENCHMARK ${name} ${JSON.stringify(result)}`);
+  console.info(`DATABASE_BENCHMARK ${name} ${JSON.stringify(result)}`);
 }
 function summarizePlan(value: unknown): Record<string, number> {
   const counts: Record<string, number> = {};

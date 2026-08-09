@@ -82,7 +82,7 @@ test("M4-C2 Workspace 설정과 Site lifecycle을 Admin UI에서 완주한다", 
 
   await page.getByRole("link", { name: "스키마" }).click();
   await expect(page.getByText(/시각 편집과 적용이 잠겨 있습니다/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "새 콘텐츠 타입" }).first()).toBeDisabled();
+  await expect(page.getByRole("button", { name: "새 콘텐츠 타입" })).toHaveCount(0);
 
   expect(pageErrors).toEqual([]);
   expect(failedResponses).toEqual([]);

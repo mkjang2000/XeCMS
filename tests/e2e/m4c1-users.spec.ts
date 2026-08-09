@@ -36,7 +36,7 @@ test("M4-C1 사용자 생성·수정·비활성화를 Admin UI에서 완주한�
   });
 
   await login(page);
-  await page.getByRole("link", { name: "사용자" }).click();
+  await page.getByRole("link", { name: "사용자", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/users\/?$/);
   await expect(page.getByRole("heading", { name: "사용자", exact: true })).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "admin" })).toBeVisible();
@@ -60,7 +60,7 @@ test("M4-C1 사용자 생성·수정·비활성화를 Admin UI에서 완주한�
   await expect(page.getByText("비활성", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "계정 재활성화" })).toBeVisible();
 
-  await page.getByRole("link", { name: "사용자" }).click();
+  await page.getByRole("link", { name: "사용자", exact: true }).click();
   await expect(page.getByRole("row").filter({ hasText: "browser.renamed" })).toContainText("비활성");
 
   await page.getByRole("row").filter({ hasText: "browser.renamed" }).getByRole("link").click();
@@ -82,15 +82,15 @@ test("M4-C1 사용자 생성·수정·비활성화를 Admin UI에서 완주한�
   await dialog.getByRole("button", { name: "Credential 재설정" }).click();
   await expect(page.getByText("Credential version").locator("..")).toContainText("3");
 
-  await page.getByRole("button", { name: "Owner로 이전" }).click();
+  await page.getByRole("button", { name: "CMS 소유자로 이전" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("이전 사유").fill("Chromium acceptance Owner handover");
-  await dialog.getByLabel("현재 Owner 비밀번호").fill(ownerPassword);
-  await dialog.getByRole("button", { name: "Owner 이전", exact: true }).click();
+  await dialog.getByLabel("현재 소유자 비밀번호").fill(ownerPassword);
+  await dialog.getByRole("button", { name: "소유자 이전", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/login\/?$/);
 
   await login(page, "browser.renamed", "Browser-reset-operator-2026!", "Browser-final-operator-2026!");
-  await page.getByRole("link", { name: "사용자" }).click();
+  await page.getByRole("link", { name: "사용자", exact: true }).click();
   await page.getByRole("row").filter({ hasText: "browser.renamed" }).getByRole("link").click();
   await expect(page.getByText("Owner", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Admin · 현재", { exact: true })).toBeVisible();
@@ -100,7 +100,7 @@ test("M4-C1 사용자 생성·수정·비활성화를 Admin UI에서 완주한�
   await page.getByRole("button", { name: "활성 session" }).click();
   await expect(page.getByText("Admin · 현재", { exact: true })).toBeVisible();
 
-  await page.getByRole("link", { name: "사용자" }).click();
+  await page.getByRole("link", { name: "사용자", exact: true }).click();
   await page.getByRole("button", { name: "서비스 계정 생성" }).click();
   const serviceForm = page.getByRole("region", { name: "새 서비스 계정" });
   await serviceForm.getByLabel("서비스 식별자").fill("browser.indexer");

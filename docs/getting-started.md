@@ -49,8 +49,8 @@ cp .env.example .env
 
 ```bash
 pnpm db:up           # PostgreSQL 시작 및 readiness 대기
-pnpm db:migrate      # 스키마 마이그레이션 적용 (forward-only)
-pnpm dev:m1          # API + Admin Studio 개발 서버
+pnpm migrate         # 스키마 마이그레이션 적용 (forward-only)
+pnpm dev             # API + Admin Studio 개발 서버
 ```
 
 실행 후 사용할 수 있는 주소:
@@ -61,6 +61,10 @@ pnpm dev:m1          # API + Admin Studio 개발 서버
 | REST API | <http://127.0.0.1:3100/api> |
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
+
+`pnpm dev`는 소스 변경을 감지하는 API 서버와 Vite Admin 서버를 함께 실행한다. 이 명령은
+개발 전용이며 프로덕션 배포에는 사용하지 않는다. 빌드 산출물을 production 모드로 실행하는
+절차는 [빌드 및 배포](./deployment.md)를 참고한다.
 
 ## 4. 최초 설정 완료하기
 
@@ -120,3 +124,5 @@ curl -b cookies.txt http://127.0.0.1:3100/api/collections
 - [인증](./authentication.md) — API Key 발급과 사용
 - [REST API 레퍼런스](./rest-api.md) — 콘텐츠 CRUD
 - [Schema 정의](./schema.md) — 콘텐츠 구조 설계
+- [개발 및 검증](./development.md) — 빌드, 테스트와 release gate
+- [빌드 및 배포](./deployment.md) — production 환경 구성과 실행

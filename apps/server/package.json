@@ -2,6 +2,7 @@
   "name": "@xecms/server",
   "private": true,
   "version": "0.5.0",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": {
@@ -17,7 +18,7 @@
     "db:migrate": "tsx --tsconfig ../../tsconfig.dev.json src/migrate.ts",
     "db:migrate:built": "node dist/migrate.js",
     "test:integration": "XECMS_RUN_POSTGRES_TESTS=true vitest run --config vitest.config.ts src/server.integration.test.ts src/setup-template.integration.test.ts src/m2.integration.test.ts src/m3-acceptance.integration.test.ts",
-    "test:integration:m2": "XECMS_RUN_POSTGRES_TESTS=true vitest run --config vitest.config.ts src/m2.integration.test.ts"
+    "test:integration:content-core": "XECMS_RUN_POSTGRES_TESTS=true vitest run --config vitest.config.ts src/m2.integration.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

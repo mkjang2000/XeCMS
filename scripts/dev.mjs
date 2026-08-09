@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const rootDirectory = new URL("../", import.meta.url);
-const environmentFile = new URL(".env", rootDirectory);
+const environmentFile = new URL(process.env.XECMS_ENV_FILE ?? ".env", rootDirectory);
 
 if (existsSync(environmentFile)) {
   process.loadEnvFile(fileURLToPath(environmentFile));
@@ -67,7 +67,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 for (const child of children) {
   child.on("error", (error) => {
-    console.error(`M1 development process could not start: ${error.message}`);
+    console.error(`Development process could not start: ${error.message}`);
     stop();
     process.exitCode = 1;
   });
@@ -76,7 +76,7 @@ for (const child of children) {
     if (stopping) return;
 
     const reason = signal === null ? `exit code ${code ?? 1}` : signal;
-    console.error(`An M1 development process stopped unexpectedly (${reason}).`);
+    console.error(`A development process stopped unexpectedly (${reason}).`);
     process.exitCode = code === 0 ? 1 : (code ?? 1);
     stop();
   });

@@ -26,7 +26,7 @@ for (const packageName of domainPackages) {
         continue;
       }
       violations.push(
-        `${relative(root.pathname, file.pathname)} imports '${specifier}', but M0 domain packages may only use relative domain imports.`,
+        `${relative(root.pathname, file.pathname)} imports '${specifier}', but core domain packages may only use relative domain imports.`,
       );
     }
   }
@@ -37,7 +37,7 @@ for (const packageName of domainPackages) {
     const dependencies = Object.keys(packageJson[dependencySection] ?? {});
     if (dependencies.length > 0) {
       violations.push(
-        `packages/${packageName}/package.json has ${dependencySection}: ${dependencies.join(", ")}. M0 domain packages must remain dependency-free.`,
+        `packages/${packageName}/package.json has ${dependencySection}: ${dependencies.join(", ")}. Core domain packages must remain dependency-free.`,
       );
     }
   }
@@ -47,7 +47,7 @@ if (violations.length > 0) {
   console.error(violations.join("\n"));
   process.exitCode = 1;
 } else {
-  console.log("M0 domain package boundaries are valid.");
+  console.log("Core domain package boundaries are valid.");
 }
 
 async function walk(directory) {

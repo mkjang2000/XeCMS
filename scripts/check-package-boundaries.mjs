@@ -95,7 +95,7 @@ for (const rule of rules) {
         !rule.allowedXeCms.has(packageName)
       ) {
         violations.push(
-          `${relative(root.pathname, file.pathname)} imports '${specifier}', which crosses its M1 package boundary.`,
+          `${relative(root.pathname, file.pathname)} imports '${specifier}', which crosses its package boundary.`,
         );
       }
     }
@@ -119,7 +119,7 @@ if (violations.length > 0) {
   console.error(violations.join("\n"));
   process.exitCode = 1;
 } else {
-  console.log("M1 application, database, client, Admin, and server boundaries are valid.");
+  console.log("Application, database, client, Admin, and server package boundaries are valid.");
 }
 
 async function walk(directory) {

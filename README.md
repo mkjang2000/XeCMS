@@ -50,8 +50,8 @@ PostgreSQL을 공식 저장소로 사용하며 Schema, Migration, REST API, 관�
 pnpm install --frozen-lockfile
 cp .env.example .env
 pnpm db:up
-pnpm db:migrate
-pnpm dev:m1
+pnpm migrate
+pnpm dev
 ```
 
 현재 공개 Registry 배포 전에는 clone한 저장소나 GitHub Codespaces에서 위 명령을 사용한다.
@@ -65,6 +65,20 @@ pnpm dev:m1
 | REST API | <http://127.0.0.1:3100/api> |
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
+
+`pnpm dev`는 API 서버와 Vite 기반 Admin 개발 서버를 함께 실행한다. 프로덕션과 같은 단일
+서버 실행은 개발 서버와 절차가 다르며, 전체 빌드 후 `pnpm start`를 사용한다.
+
+```bash
+pnpm build
+cp .env.production.example .env.production
+# .env.production의 DB, 공개 Origin, session secret, media 경로를 수정
+XECMS_ENV_FILE=.env.production pnpm migrate
+XECMS_ENV_FILE=.env.production pnpm start
+```
+
+빌드 산출물, Reverse Proxy, 영속 데이터와 Upgrade 순서는 [빌드 및 배포](./docs/deployment.md)를
+참고한다.
 
 자세한 설치와 첫 요청은 [시작하기](./docs/getting-started.md)를 참고한다.
 
@@ -155,6 +169,7 @@ Admin setup이 대화형 템플릿 선택의 기본 경로다. CLI의 starter �
 
 ```text
 xecms dev
+xecms start
 xecms migrate
 xecms schema validate [file]
 xecms schema export [file]
@@ -169,22 +184,25 @@ Migration은 forward-only다. Upgrade와 백업·복구 절차는 [운영 가이
 
 ## 개발과 검증
 
-일반적인 로컬 검증은 다음 명령으로 실행한다.
+일상적인 변경은 빠른 정적·단위 검증으로 확인한다.
 
 ```bash
 pnpm check
+pnpm verify:quick
 ```
 
-전체 release gate는 모든 PostgreSQL 조건부 회귀 테스트, 이전 DB upgrade, 실제
-backup/restore, 배포 tarball과 M1부터 M4-C5까지의 격리된 Chromium 사용자 여정을 포함한다.
+PostgreSQL 통합 테스트와 브라우저 E2E는 Docker가 필요하다. 전체 release gate는 정적·단위
+검증, 프로덕션 빌드, 배포 tarball, PostgreSQL 회귀, Upgrade, 실제 backup/restore와 격리된
+Chromium 사용자 여정을 모두 실행한다.
 
 ```bash
 pnpm exec playwright install chromium
-pnpm verify:m4c5
+pnpm test:database   # PostgreSQL 통합 테스트
+pnpm test:e2e        # 전체 브라우저 사용자 여정
+pnpm verify          # 최종 release gate
 ```
 
-`pnpm test:postgres:all`은 PostgreSQL 조건부 test 파일을 자동 탐색해 직렬 실행한다.
-Release gate에서는 이 전체 회귀와 Chromium 누적 사용자 여정을 함께 검증한다.
+각 명령의 범위와 선택 실행 방법은 [개발 및 검증](./docs/development.md)을 참고한다.
 
 ## 현재 범위
 
@@ -202,7 +220,13 @@ Release gate에서는 이 전체 회귀와 Chromium 누적 사용자 여정을 �
 - [문서 인덱스](./docs/README.md)
 - [시작하기](./docs/getting-started.md) · [핵심 개념](./docs/concepts.md) · [인증](./docs/authentication.md)
 - [REST API](./docs/rest-api.md) · [TypeScript SDK](./docs/typescript-sdk.md) · [Schema](./docs/schema.md)
+- [빌드 및 배포](./docs/deployment.md) · [개발 및 검증](./docs/development.md)
 - [운영 가이드](./docs/operations.md) · [확장 개발](./docs/extending.md)
+
+## 라이선스
+
+XeCMS는 [Apache License 2.0](./LICENSE)에 따라 배포한다. 프로젝트에 포함된 외부 구성요소의
+라이선스와 고지는 [Third-Party Notices](./THIRD_PARTY_NOTICES.md)를 참고한다.
 
 > **배포 상태**: `@xecms/*` 패키지와 공식 컨테이너 이미지의 공개 Registry 배포는 아직
 > 진행되지 않았다. 배포 전까지는 이 저장소를 clone한 뒤 위 빠른 시작 절차로 실행한다.

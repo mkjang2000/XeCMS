@@ -2,12 +2,14 @@
 
 XeCMS 인스턴스를 운영하기 위한 CLI, 헬스 체크, 백업/복구, 진단, 마이그레이션을
 설명합니다. 대부분 `xecms` CLI로 수행합니다.
+프로덕션 빌드와 최초 실행은 [빌드 및 배포](./deployment.md)를 먼저 참고하세요.
 
 ## CLI 개요
 
 ```text
 xecms init [directory] --starter minimal|blog|community
 xecms dev
+xecms start
 xecms migrate
 xecms schema validate [file]
 xecms schema export [file]

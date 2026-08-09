@@ -1,6 +1,6 @@
 import { expect,test } from "./fixtures.js";
 
-test("M4-C5 version headers, liveness and restart-aware readiness are exposed",async({request})=>{const live=await request.get("/api/live");expect(live.status()).toBe(200);expect(live.headers()["x-xecms-version"]).toBe("0.5.0");expect(live.headers()["x-xecms-api-version"]).toBe("1");expect(await live.json()).toEqual({status:"live",version:"0.5.0"});const health=await request.get("/api/health");expect(health.status()).toBe(200);expect(await health.json()).toMatchObject({status:"ok",database:"connected",version:"0.5.0"});const ready=await request.get("/api/ready");expect([200,503]).toContain(ready.status());const body=await ready.json();expect(body.checks).toMatchObject({database:true,migrations:true,storage:true});if(ready.status()===503)expect(body).toMatchObject({status:"not-ready",checks:{plugins:false}});else expect(body).toMatchObject({status:"ready",checks:{plugins:true}})});
+test("version headers, liveness and restart-aware readiness are exposed",async({request})=>{const live=await request.get("/api/live");expect(live.status()).toBe(200);expect(live.headers()["x-xecms-version"]).toBe("0.5.0");expect(live.headers()["x-xecms-api-version"]).toBe("1");expect(await live.json()).toEqual({status:"live",version:"0.5.0"});const health=await request.get("/api/health");expect(health.status()).toBe(200);expect(await health.json()).toMatchObject({status:"ok",database:"connected",version:"0.5.0"});const ready=await request.get("/api/ready");expect([200,503]).toContain(ready.status());const body=await ready.json();expect(body.checks).toMatchObject({database:true,migrations:true,storage:true});if(ready.status()===503)expect(body).toMatchObject({status:"not-ready",checks:{plugins:false}});else expect(body).toMatchObject({status:"ready",checks:{plugins:true}})});
 
 test("Admin 표시 모드는 권한을 바꾸지 않고 단계별 정보량과 개인 선호만 조절한다",async({page})=>{
   await page.goto("/admin/login");
@@ -11,20 +11,20 @@ test("Admin 표시 모드는 권한을 바꾸지 않고 단계별 정보량과 �
 
   const mode=page.getByRole("group",{name:"Admin 표시 모드"});
   await expect(mode.getByRole("button",{name:"간단"})).toHaveAttribute("aria-pressed","true");
-  await expect(page.getByRole("link",{name:"사용자"})).toBeVisible();
-  await expect(page.getByRole("link",{name:"멤버 등급"})).toBeVisible();
-  await expect(page.getByRole("link",{name:"권한"})).toHaveCount(0);
-  await expect(page.getByRole("link",{name:"Identity Realms"})).toHaveCount(0);
-  await expect(page.getByRole("link",{name:"Plugins"})).toHaveCount(0);
+  await expect(page.getByRole("link",{name:"사용자",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"사용자 공간",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"권한",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Plugins",exact:true})).toHaveCount(0);
+  await expect(page.getByRole("link",{name:"운영 및 감사",exact:true})).toHaveCount(0);
 
   await mode.getByRole("button",{name:"표준"}).click();
-  await expect(page.getByRole("link",{name:"Identity Realms"})).toBeVisible();
-  await expect(page.getByRole("link",{name:"권한"})).toBeVisible();
-  await expect(page.getByRole("link",{name:"Plugins"})).toHaveCount(0);
+  await expect(page.getByRole("link",{name:"사용자 공간",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"권한",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Plugins",exact:true})).toHaveCount(0);
 
   await mode.getByRole("button",{name:"고급"}).click();
-  await expect(page.getByRole("link",{name:"Plugins"})).toBeVisible();
-  await expect(page.getByRole("link",{name:"운영 및 감사"})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Plugins",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"운영 및 감사",exact:true})).toBeVisible();
   await page.reload();
   await expect(page.getByRole("group",{name:"Admin 표시 모드"}).getByRole("button",{name:"고급"})).toHaveAttribute("aria-pressed","true");
 

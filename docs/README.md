@@ -19,8 +19,10 @@ TypeScript SDK로 연동하고, Plugin으로 확장하기 위한 공식 문서�
 
 ## 운영과 확장
 
-7. [운영 가이드](./operations.md) — 백업/복구, Doctor, Upgrade, 감사 로그, 데이터 보존
-8. [확장 개발](./extending.md) — Plugin SDK와 Custom Admin App
+7. [빌드 및 배포](./deployment.md) — production 빌드, 환경 설정과 서버 실행
+8. [운영 가이드](./operations.md) — 백업/복구, Doctor, Upgrade, 감사 로그, 데이터 보존
+9. [개발 및 검증](./development.md) — 개발 명령, 테스트 계층과 release gate
+10. [확장 개발](./extending.md) — Plugin SDK와 Custom Admin App
 
 ## 규약
 

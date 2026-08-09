@@ -3,10 +3,13 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const rootDirectory = new URL("../", import.meta.url);
-const environmentFile = new URL(".env", rootDirectory);
+const environmentFile = new URL(process.env.XECMS_ENV_FILE ?? ".env", rootDirectory);
 
 if (existsSync(environmentFile)) {
   process.loadEnvFile(fileURLToPath(environmentFile));
+}
+if (process.env.NODE_ENV === "production" && process.env.DATABASE_URL === undefined) {
+  throw new Error("DATABASE_URL is required for a production migration.");
 }
 
 const environment = {
@@ -37,5 +40,4 @@ function run(arguments_, label) {
   });
 }
 
-await run(["build"], "M1 prerequisite build");
 await run(["--filter", "@xecms/server", "db:migrate"], "XeCMS migration");
