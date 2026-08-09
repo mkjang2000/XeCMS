@@ -11,7 +11,7 @@ import type { ComponentDefinition, ComposedPageDefinition, ConnectionDefinition,
  * This layer promotes the CPB-8 preset pattern (id-prefixed atom bundles) into an
  * add/parse/connect model the canvas edits directly.
  */
-export type FormBlockKind = "search" | "date-search" | "select-search" | "number-search" | "multi-search" | "list" | "cards" | "detail" | "field" | "input-form" | "item-actions";
+export type FormBlockKind = "search" | "date-search" | "select-search" | "number-search" | "multi-search" | "list" | "cards" | "detail" | "field" | "chart" | "input-form" | "item-actions";
 export interface FormBlockField {
     readonly fieldId: string;
     readonly label?: string;
@@ -64,7 +64,7 @@ export declare function buildBlock(blockId: string, input: AddBlockInput): {
 export declare function describeBlocks(page: ComposedPageDefinition): readonly FormBlock[];
 /** The fields a block currently shows/collects, read back from its atoms. */
 export declare function blockFields(page: ComposedPageDefinition, block: FormBlock): readonly FormBlockField[];
-/** The (first) filter field a search block filters on, if any. */
+/** The (first) filter field a search block filters on — or a chart's group-by field. */
 export declare function blockSearchField(page: ComposedPageDefinition, block: FormBlock): string | undefined;
 /** Whether a block is a search (produces query results to feed outputs). */
 export declare function isSearchBlock(kind: FormBlockKind): boolean;

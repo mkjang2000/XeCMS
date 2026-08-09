@@ -35,6 +35,7 @@ import type {
   AdminAppRuntimeDto,
   AdminAppRuntimeUserDto,
   CollectionSummaryDto,
+  ComposedAggregateResultDto,
   ComposedDocumentDto,
   ComposedQueryResultDto,
   DocumentTreeDto,
@@ -90,6 +91,14 @@ interface Options {
       readonly items: readonly { readonly id: string; readonly data: Readonly<Record<string, unknown>> }[];
       readonly hasNextPage: boolean;
       readonly nextCursor?: string;
+    }>;
+    readonly aggregate: (
+      actor: ActorContext,
+      collectionId: string,
+      input: DocumentQueryInput,
+    ) => Promise<{
+      readonly groups: readonly { readonly group: string | number | boolean | null; readonly value: number }[];
+      readonly truncated: boolean;
     }>;
     readonly getDocument: (
       actor: ActorContext,
@@ -273,6 +282,54 @@ export function registerAdminAppRuntimeRoutes(options: Options): void {
         hasNextPage: result.hasNextPage,
         ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
       };
+    },
+  );
+  options.app.post(
+    "/api/admin-apps/runtime/:appKey/pages/:pageId/data-sources/:dataSourceId/aggregate",
+    async (request, reply): Promise<ComposedAggregateResultDto> => {
+      const appKey = routeKey(request.params);
+      const audience = await options.runtime.audience(options.workspaceId, appKey);
+      if (audience === null) runtimeNotFound();
+      const identity = await options.authenticate(request, audience, false);
+      const [loaded, activeSchema] = await Promise.all([
+        options.runtime.load(identity.actor, appKey),
+        options.getActiveSchema(),
+      ]);
+      if (activeSchema === null) {
+        throw new ApplicationError("ADMIN_APP_SCHEMA_UNAVAILABLE", 503, "The active Schema is unavailable.");
+      }
+      const { page, dataSource } = resolveComposedDataSource(
+        loaded.revision.manifest,
+        routeValue(request.params, "pageId"),
+        routeValue(request.params, "dataSourceId"),
+      );
+      if (dataSource.aggregate === undefined) {
+        throw new ApplicationError("ADMIN_APP_DATA_SOURCE_NOT_AGGREGATE", 422, "This Data Source is not an aggregation.");
+      }
+      const collections = runtimeCollections(
+        loaded.revision.manifest,
+        activeSchema.schema,
+        activeSchema.revisionId,
+        identity.user.realmKey,
+      );
+      const access = await buildAdminAppRuntimeAccessProfile(
+        options.authorization,
+        identity.actor,
+        loaded.app,
+        loaded.revision.manifest,
+        collections,
+      );
+      if (access.pages[page.id] !== true) {
+        throw new ApplicationError("ADMIN_APP_PAGE_ACCESS_DENIED", 403, "The page is not readable.");
+      }
+      // Fail closed: a sensitive/masked or unreadable Field must never be usable as
+      // a group key or sum/avg target — the group labels/values would leak it. A
+      // count(*) measure needs no Field and is always allowed.
+      assertAggregatableFields(dataSource, collections, access);
+      const input = resolveComposedQuery({ dataSource, parameters: {} });
+      const result = await options.data.aggregate(identity.actor, dataSource.collectionId, input);
+      reply.header("cache-control", "private, no-store");
+      return { groups: result.groups, truncated: result.truncated };
     },
   );
   options.app.post(
@@ -478,6 +535,40 @@ function detailFieldSummaries(
     .map((field) => (field.sensitivity === undefined
       ? { name: field.name }
       : { name: field.name, sensitivity: field.sensitivity }));
+}
+
+/**
+ * Fails closed (422) if an aggregation's group key or sum/avg target is a
+ * sensitive/masked Field or a Field the actor cannot read. A `count` measure
+ * carries no Field and is always allowed. Sensitive group labels would leak the
+ * Field's distinct values, and sum/avg would leak its magnitudes (slG1 security).
+ */
+function assertAggregatableFields(
+  dataSource: DocumentQueryDataSource,
+  collections: readonly CollectionSummaryDto[],
+  access: AdminAppRuntimeAccessProfileDto,
+): void {
+  const aggregate = dataSource.aggregate;
+  if (aggregate === undefined) return;
+  const collection = collections.find(({ id }) => id === dataSource.collectionId);
+  const readable = access.readableFields[dataSource.collectionId];
+  const check = (reference: { readonly kind: string; readonly fieldId?: string }): void => {
+    if (reference.kind !== "data" || reference.fieldId === undefined) return; // system fields never leak.
+    const fieldId = reference.fieldId;
+    const field = collection?.fields.find(({ id }) => id === fieldId);
+    if (field === undefined) {
+      throw new ApplicationError("ADMIN_APP_AGGREGATE_FIELD_INVALID", 422, "Unknown aggregation field.");
+    }
+    if (field.sensitivity !== undefined) {
+      throw new ApplicationError("ADMIN_APP_AGGREGATE_FIELD_SENSITIVE", 422, "A sensitive Field cannot be aggregated.");
+    }
+    // readable === null means "all fields readable"; otherwise it is an allowlist.
+    if (readable !== null && readable?.includes(fieldId) !== true) {
+      throw new ApplicationError("ADMIN_APP_AGGREGATE_FIELD_FORBIDDEN", 422, "This Field is not readable.");
+    }
+  };
+  check(aggregate.groupBy);
+  if (aggregate.measure.op !== "count") check(aggregate.measure.field);
 }
 
 /** Field summaries (name + sensitivity) for the fields a Data Source projects. */

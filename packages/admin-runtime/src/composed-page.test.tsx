@@ -31,7 +31,7 @@ function renderWithRuntime(
     components: [definition], connections: [],
   };
   return renderToStaticMarkup(
-    <ComposedRuntimeProvider page={page} client={{ queryComposed: () => Promise.reject(new Error("no")), getComposedDocument: () => Promise.resolve(null), get: () => Promise.reject(new Error("no")), delete: () => Promise.resolve(), create: () => Promise.reject(new Error("no")), update: () => Promise.reject(new Error("no")) }} fieldNames={new Map()} plugins={plugins}>
+    <ComposedRuntimeProvider page={page} client={{ queryComposed: () => Promise.reject(new Error("no")), aggregateComposed: () => Promise.resolve({ groups: [], truncated: false }), getComposedDocument: () => Promise.resolve(null), get: () => Promise.reject(new Error("no")), delete: () => Promise.resolve(), create: () => Promise.reject(new Error("no")), update: () => Promise.reject(new Error("no")) }} fieldNames={new Map()} plugins={plugins}>
       {renderComposedComponent(definition)}
     </ComposedRuntimeProvider>,
   );

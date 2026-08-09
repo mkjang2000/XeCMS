@@ -79,6 +79,16 @@ export interface ComposedSortDefinition {
   readonly direction: "asc" | "desc";
 }
 
+/** A group-by aggregation on a Data Source (slG1) — powers chart/summary output. */
+export type ComposedAggregateMeasure =
+  | { readonly op: "count" }
+  | { readonly op: "sum" | "avg"; readonly field: ComposedFieldReference };
+
+export interface ComposedAggregateDefinition {
+  readonly groupBy: ComposedFieldReference;
+  readonly measure: ComposedAggregateMeasure;
+}
+
 export interface DocumentQueryDataSource {
   readonly id: string;
   readonly type: "document-query";
@@ -90,6 +100,8 @@ export interface DocumentQueryDataSource {
   readonly filter?: ParameterizedFilterExpression;
   readonly sort?: readonly ComposedSortDefinition[];
   readonly limit: number;
+  /** When present, this Data Source returns aggregated groups instead of rows. */
+  readonly aggregate?: ComposedAggregateDefinition;
 }
 
 export type DataSourceDefinition = DocumentQueryDataSource;

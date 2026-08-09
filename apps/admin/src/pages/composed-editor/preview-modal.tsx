@@ -32,7 +32,11 @@ export function PreviewModal({ manifest, collections, initialPageId, schemaRevis
   );
   const activePage = composedPages.find((page) => page.id === pageId) ?? composedPages[0];
 
-  const client = useMemo(() => createPreviewDataClient(composedPages), [composedPages]);
+  const fieldNameById = useMemo(
+    () => new Map(collections.flatMap((collection) => collection.fields.map((field) => [field.id, field.name] as const))),
+    [collections],
+  );
+  const client = useMemo(() => createPreviewDataClient(composedPages, fieldNameById), [composedPages, fieldNameById]);
   const runtime = useMemo(
     () => synthesizeRuntime(manifest, collections, schemaRevisionId),
     [manifest, collections, schemaRevisionId],

@@ -1341,6 +1341,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<XeC
           ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         };
       },
+      aggregate: (actor, collectionId, input) => documents.aggregate(actor, collectionId, input),
       getDocument: async (actor, collectionId, documentId) => {
         try {
           const document = await documents.get(actor, collectionId, documentId);

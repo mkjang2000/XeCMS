@@ -18,8 +18,36 @@ const notSupported = () => {
  * data without an apply. Reads pass through; mutations are blocked (Preview never
  * writes). All content endpoints still enforce masking and permissions server-side.
  */
-export function createPreviewDataClient(pages) {
+export function createPreviewDataClient(pages, fieldNameById = new Map()) {
     const pageById = new Map(pages.map((page) => [page.id, page]));
+    const referenceKey = (reference, row) => {
+        if (reference.kind === "system")
+            return reference.field === "id" ? undefined : undefined;
+        const name = fieldNameById.get(reference.fieldId);
+        return name === undefined ? undefined : row[name];
+    };
+    const aggregateRows = (items, dataSource) => {
+        const aggregate = dataSource.aggregate;
+        const acc = new Map();
+        for (const item of items) {
+            const raw = referenceKey(aggregate.groupBy, item.data);
+            const group = raw === null || typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" ? raw : String(raw ?? "");
+            const key = group === null ? " null" : `${typeof group}:${String(group)}`;
+            const entry = acc.get(key) ?? { group, count: 0, sum: 0 };
+            entry.count += 1;
+            if (aggregate.measure.op !== "count") {
+                const value = referenceKey(aggregate.measure.field, item.data);
+                if (typeof value === "number" && Number.isFinite(value))
+                    entry.sum += value;
+            }
+            acc.set(key, entry);
+        }
+        const groups = [...acc.values()].map(({ group, count, sum }) => ({
+            group,
+            value: aggregate.measure.op === "count" ? count : aggregate.measure.op === "sum" ? sum : count === 0 ? 0 : sum / count,
+        })).sort((a, b) => b.value - a.value);
+        return { groups, truncated: false };
+    };
     const toRow = (record) => ({
         id: record.id,
         data: record.data,
@@ -38,6 +66,17 @@ export function createPreviewDataClient(pages) {
                 hasNextPage: result.hasNextPage,
                 ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
             };
+        },
+        aggregateComposed: async (pageId, dataSourceId, input) => {
+            const page = pageById.get(pageId);
+            const dataSource = page?.dataSources.find((source) => source.id === dataSourceId);
+            if (dataSource?.aggregate === undefined)
+                return { groups: [], truncated: false };
+            // Preview aggregates client-side over authorized+masked rows the content API
+            // returns (the runtime route does this server-side over authorized documents).
+            const request = resolvePreviewQuery(dataSource, (input.parameters ?? {}));
+            const result = await xecmsClient.documents.query(dataSource.collectionId, { ...request, limit: 100 });
+            return aggregateRows(result.items, dataSource);
         },
         getComposedDocument: async (_pageId, _componentId, input) => {
             try {

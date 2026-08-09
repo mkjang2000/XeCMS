@@ -43,6 +43,8 @@ export function resolveComposedQuery(input: ResolveComposedQueryInput): Document
     ...(filter === undefined ? {} : { filter }),
     ...(sort === undefined || sort.length === 0 ? {} : { sort }),
     ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    // Aggregation carries no parameters; the filter above is still parameterized.
+    ...(input.dataSource.aggregate === undefined ? {} : { aggregate: input.dataSource.aggregate }),
   };
 }
 

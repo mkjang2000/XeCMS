@@ -26,6 +26,9 @@ export function componentPorts(component) {
             ];
         case "core.output.detail":
             return [{ portId: "documentId", label: "문서 ID", direction: "in", valueType: "document-id", single: true }];
+        case "core.output.chart":
+            // Fed by an aggregate Data Source's rows port (slG2).
+            return [{ portId: "data", label: "데이터", direction: "in", valueType: "document[]", single: true }];
         default:
             return [];
     }

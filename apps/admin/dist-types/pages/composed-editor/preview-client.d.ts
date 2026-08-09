@@ -12,5 +12,5 @@ export declare class PreviewMutationBlocked extends Error {
  * data without an apply. Reads pass through; mutations are blocked (Preview never
  * writes). All content endpoints still enforce masking and permissions server-side.
  */
-export declare function createPreviewDataClient(pages: readonly ComposedPageDefinition[]): AdminRuntimeDataClient;
+export declare function createPreviewDataClient(pages: readonly ComposedPageDefinition[], fieldNameById?: ReadonlyMap<string, string>): AdminRuntimeDataClient;
 //# sourceMappingURL=preview-client.d.ts.map

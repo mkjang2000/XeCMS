@@ -256,6 +256,21 @@ export interface ComposedQueryResultDto {
   readonly hasNextPage: boolean;
   readonly nextCursor?: string;
 }
+export interface ComposedAggregateRequest {
+  /** Page State values bound to the Data Source parameters (parameterId -> value). */
+  readonly parameters?: Readonly<Record<string, JsonValue>>;
+}
+export interface ComposedAggregateGroupDto {
+  /** The group key value (Field/system value the rows were grouped by). */
+  readonly group: string | number | boolean | null;
+  /** The measure result for the group (count / sum / avg). */
+  readonly value: number;
+}
+export interface ComposedAggregateResultDto {
+  readonly groups: readonly ComposedAggregateGroupDto[];
+  /** True when the authorized scan hit its bound before aggregating every match. */
+  readonly truncated: boolean;
+}
 export interface ComposedDocumentRequest {
   readonly documentId: string;
   readonly collectionId: string;

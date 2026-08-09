@@ -1,7 +1,8 @@
 import type { AdminRuntimeDataClient } from "@xecms/admin-runtime";
 import { resolvePreviewQuery, type PreviewQueryParameterValue } from "@xecms/admin-runtime";
-import type { ComposedPageDefinition } from "@xecms/admin-apps";
+import type { ComposedFieldReference, ComposedPageDefinition, DocumentQueryDataSource } from "@xecms/admin-apps";
 import type {
+  ComposedAggregateResultDto,
   ComposedDocumentDto,
   ComposedQueryResultDto,
   DocumentRecordDto,
@@ -29,8 +30,42 @@ const notSupported = (): never => {
  * data without an apply. Reads pass through; mutations are blocked (Preview never
  * writes). All content endpoints still enforce masking and permissions server-side.
  */
-export function createPreviewDataClient(pages: readonly ComposedPageDefinition[]): AdminRuntimeDataClient {
+export function createPreviewDataClient(
+  pages: readonly ComposedPageDefinition[],
+  fieldNameById: ReadonlyMap<string, string> = new Map(),
+): AdminRuntimeDataClient {
   const pageById = new Map(pages.map((page) => [page.id, page]));
+
+  const referenceKey = (reference: ComposedFieldReference, row: Readonly<Record<string, unknown>>): unknown => {
+    if (reference.kind === "system") return reference.field === "id" ? undefined : undefined;
+    const name = fieldNameById.get(reference.fieldId);
+    return name === undefined ? undefined : row[name];
+  };
+
+  const aggregateRows = (
+    items: readonly DocumentRecordDto[],
+    dataSource: DocumentQueryDataSource,
+  ): ComposedAggregateResultDto => {
+    const aggregate = dataSource.aggregate!;
+    const acc = new Map<string, { group: string | number | boolean | null; count: number; sum: number }>();
+    for (const item of items) {
+      const raw = referenceKey(aggregate.groupBy, item.data);
+      const group = raw === null || typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" ? raw : String(raw ?? "");
+      const key = group === null ? " null" : `${typeof group}:${String(group)}`;
+      const entry = acc.get(key) ?? { group, count: 0, sum: 0 };
+      entry.count += 1;
+      if (aggregate.measure.op !== "count") {
+        const value = referenceKey(aggregate.measure.field, item.data);
+        if (typeof value === "number" && Number.isFinite(value)) entry.sum += value;
+      }
+      acc.set(key, entry);
+    }
+    const groups = [...acc.values()].map(({ group, count, sum }) => ({
+      group,
+      value: aggregate.measure.op === "count" ? count : aggregate.measure.op === "sum" ? sum : count === 0 ? 0 : sum / count,
+    })).sort((a, b) => b.value - a.value);
+    return { groups, truncated: false };
+  };
 
   const toRow = (record: DocumentRecordDto): { readonly id: string; readonly data: Readonly<Record<string, unknown>> } => ({
     id: record.id,
@@ -54,6 +89,19 @@ export function createPreviewDataClient(pages: readonly ComposedPageDefinition[]
         hasNextPage: result.hasNextPage,
         ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
       };
+    },
+    aggregateComposed: async (pageId, dataSourceId, input): Promise<ComposedAggregateResultDto> => {
+      const page = pageById.get(pageId);
+      const dataSource = page?.dataSources.find((source) => source.id === dataSourceId);
+      if (dataSource?.aggregate === undefined) return { groups: [], truncated: false };
+      // Preview aggregates client-side over authorized+masked rows the content API
+      // returns (the runtime route does this server-side over authorized documents).
+      const request = resolvePreviewQuery(
+        dataSource,
+        (input.parameters ?? {}) as Readonly<Record<string, PreviewQueryParameterValue>>,
+      );
+      const result = await xecmsClient.documents.query(dataSource.collectionId, { ...request, limit: 100 });
+      return aggregateRows(result.items, dataSource);
     },
     getComposedDocument: async (_pageId, _componentId, input): Promise<ComposedDocumentDto | null> => {
       try {

@@ -490,6 +490,44 @@ describe("DocumentApplicationService lifecycle", () => {
       items: [{ id: "doc_1", data: { title: "Post 1" } }],
     });
   });
+
+  it("aggregate() counts ONLY authorized documents (slG1 — no DB-level leak)", async () => {
+    const schemaFixture = mutableSchema({
+      ...baseCollection,
+      hierarchy: { enabled: true, permissionInheritance: true },
+    });
+    const store = new MemoryDocumentStore();
+    const service = new DocumentApplicationService(schemaFixture.store, store, runtime());
+    // 5 posts, two distinct titles: A (docs 1,3,5), B (docs 2,4).
+    const titles = ["A", "B", "A", "B", "A"];
+    for (let index = 0; index < titles.length; index += 1) {
+      await service.create(actor, "posts", { title: titles[index]! }, {
+        parentId: null, position: index, expectedVersion: index,
+      });
+    }
+    // Hide doc_3 and doc_5 (both title "A") from this actor.
+    const restricted: ActorContext = {
+      ...actor,
+      subjectId: "subject_restricted",
+      authorization: {
+        require: async () => undefined,
+        filterReadableData: async ({ resourceId, data }) => {
+          if (resourceId.endsWith(":doc_5") || resourceId.endsWith(":doc_3")) {
+            throw new ApplicationError("ACCESS_DENIED", 403, "hidden");
+          }
+          return data;
+        },
+        assertWritableData: async () => undefined,
+      },
+    };
+    const result = await service.aggregate(restricted, "posts", {
+      aggregate: { groupBy: { kind: "data", fieldId: "fld_title" }, measure: { op: "count" } },
+    });
+    // A has 3 rows but 2 are hidden → only 1 counted; B's 2 are both visible.
+    const byGroup = new Map(result.groups.map((entry) => [entry.group, entry.value]));
+    expect(byGroup.get("A")).toBe(1);
+    expect(byGroup.get("B")).toBe(2);
+  });
 });
 
 class MemoryDocumentStore implements DocumentStore {

@@ -1,5 +1,7 @@
 import type {
   AdminAppRuntimeDto,
+  ComposedAggregateRequest,
+  ComposedAggregateResultDto,
   ComposedDocumentDto,
   ComposedDocumentRequest,
   ComposedQueryRequest,
@@ -40,6 +42,12 @@ export interface AdminRuntimeDataClient {
     input: ComposedQueryRequest,
     signal?: AbortSignal,
   ): Promise<ComposedQueryResultDto>;
+  aggregateComposed(
+    pageId: string,
+    dataSourceId: string,
+    input: ComposedAggregateRequest,
+    signal?: AbortSignal,
+  ): Promise<ComposedAggregateResultDto>;
   getComposedDocument(
     pageId: string,
     componentId: string,
@@ -103,6 +111,10 @@ export function createAdminRuntimeDataClient(runtime: AdminAppRuntimeDto): Admin
     ),
     queryComposed: (pageId, dataSourceId, input, signal) => request(
       `${runtimePrefix}/pages/${encodeURIComponent(pageId)}/data-sources/${encodeURIComponent(dataSourceId)}/query`,
+      { method: "POST", body: JSON.stringify(input), ...(signal === undefined ? {} : { signal }) },
+    ),
+    aggregateComposed: (pageId, dataSourceId, input, signal) => request(
+      `${runtimePrefix}/pages/${encodeURIComponent(pageId)}/data-sources/${encodeURIComponent(dataSourceId)}/aggregate`,
       { method: "POST", body: JSON.stringify(input), ...(signal === undefined ? {} : { signal }) },
     ),
     getComposedDocument: (pageId, componentId, input, signal) => request(

@@ -8,6 +8,7 @@ const BLOCK_LABELS = {
     cards: "카드 목록",
     detail: "상세",
     field: "단일 필드",
+    chart: "차트",
     "input-form": "입력폼",
     "item-actions": "항목 작업",
 };
@@ -55,6 +56,7 @@ function buildAtoms(blockId, input) {
         case "cards": return outputBlock(blockId, "cards", input, at);
         case "detail": return outputBlock(blockId, "detail", input, at);
         case "field": return fieldBlock(blockId, input, at);
+        case "chart": return chartBlock(blockId, input, at);
         case "input-form": return inputFormBlock(blockId, input, at);
         case "item-actions": return itemActionsBlock(blockId, input, at);
     }
@@ -213,6 +215,30 @@ function fieldBlock(blockId, input, at) {
     };
     return { components: [component], state: [], dataSources: [], connections: [] };
 }
+/**
+ * A chart (slG2): a chart component fed by an on-load AGGREGATE Data Source. The
+ * default measure is a count grouped by the first field; the inspector edits the
+ * group field and measure. The aggregate result ({group,value}[]) flows into the
+ * chart's data port.
+ */
+function chartBlock(blockId, input, at) {
+    const groupFieldId = input.searchFieldId ?? input.fields[0]?.fieldId;
+    const component = {
+        id: `${blockId}_chart`, kind: "core.output.chart", placement: place(at, 0, 0, 28, 20),
+        props: { label: "차트", measureLabel: "건수" },
+    };
+    const dataSources = [{
+            id: `${blockId}_agg`, type: "document-query", collectionId: input.collectionId, trigger: "on-load",
+            fields: [], limit: 20,
+            ...(groupFieldId === undefined ? {} : {
+                aggregate: { groupBy: { kind: "data", fieldId: groupFieldId }, measure: { op: "count" } },
+            }),
+        }];
+    const connections = groupFieldId === undefined ? [] : [
+        conn(`${blockId}_c_data`, ds(`${blockId}_agg`, "rows"), comp(`${blockId}_chart`, "data")),
+    ];
+    return { components: [component], state: [], dataSources, connections };
+}
 /** Edit/Delete buttons acting on a selected document (target set by a link). */
 function itemActionsBlock(blockId, input, at) {
     const stateId = `${blockId}_state_target`;
@@ -285,7 +311,7 @@ export function describeBlocks(page) {
 }
 const ALL_KINDS = [
     "search", "date-search", "select-search", "number-search", "multi-search",
-    "list", "cards", "detail", "field", "input-form", "item-actions",
+    "list", "cards", "detail", "field", "chart", "input-form", "item-actions",
 ];
 function inferKind(components) {
     // The stamped `_blockKind` (set by buildBlock) is authoritative.
@@ -297,6 +323,8 @@ function inferKind(components) {
     }
     // Fallback for hand-built/legacy blocks: infer from components present.
     const kinds = new Set(components.map((component) => component.kind));
+    if (kinds.has("core.output.chart"))
+        return "chart";
     if (kinds.has("core.output.table"))
         return "list";
     if (kinds.has("core.output.cards"))
@@ -326,9 +354,10 @@ function anchorFor(kind, components) {
         : kind === "cards" ? "core.output.cards"
             : kind === "detail" ? "core.output.detail"
                 : kind === "field" ? "core.output.field"
-                    : kind === "input-form" ? "core.form"
-                        : kind === "select-search" ? "core.input.select"
-                            : kind === "item-actions" ? "core.button" : "core.input.text";
+                    : kind === "chart" ? "core.output.chart"
+                        : kind === "input-form" ? "core.form"
+                            : kind === "select-search" ? "core.input.select"
+                                : kind === "item-actions" ? "core.button" : "core.input.text";
     return components.find((component) => component.kind === wanted);
 }
 function collectionOf(page, blockId, components) {
@@ -366,9 +395,14 @@ export function blockFields(page, block) {
     const source = page.dataSources.find((entry) => blockIdOf(entry.id) === block.id);
     return (source?.fields ?? []).map((fieldId) => ({ fieldId }));
 }
-/** The (first) filter field a search block filters on, if any. */
+/** The (first) filter field a search block filters on — or a chart's group-by field. */
 export function blockSearchField(page, block) {
     const source = page.dataSources.find((entry) => blockIdOf(entry.id) === block.id);
+    // A chart block's "search field" is its aggregation group-by field.
+    if (block.kind === "chart") {
+        const groupBy = source?.aggregate?.groupBy;
+        return groupBy?.kind === "data" ? groupBy.fieldId : undefined;
+    }
     const filter = source?.filter;
     if (filter === undefined)
         return undefined;

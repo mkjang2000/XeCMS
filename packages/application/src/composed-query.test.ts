@@ -112,4 +112,19 @@ describe("resolveComposedQuery", () => {
       filters: [{ value: "Bob" }, { operator: "isNotNull" }],
     });
   });
+
+  it("passes an aggregate definition through unchanged (slG1)", () => {
+    const input = resolveComposedQuery({
+      dataSource: dataSource({
+        aggregate: { groupBy: { kind: "data", fieldId: "fld_customer_name" }, measure: { op: "count" } },
+      }),
+      parameters: { param_name: "Alice" },
+    });
+    expect(input.aggregate).toEqual({
+      groupBy: { kind: "data", fieldId: "fld_customer_name" },
+      measure: { op: "count" },
+    });
+    // The parameterized filter is still resolved alongside the aggregate.
+    expect(input.filter).toMatchObject({ value: "Alice" });
+  });
 });

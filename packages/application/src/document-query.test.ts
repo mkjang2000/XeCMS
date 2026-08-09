@@ -3,6 +3,7 @@ import { asCollectionId, asFieldId, type CollectionDefinition } from "@xecms/sch
 import { ApplicationError } from "./errors.js";
 import {
   encodeDocumentQueryCursor,
+  normalizeDocumentAggregate,
   normalizeDocumentQuery,
   type DocumentQueryFilter,
 } from "./document-query.js";
@@ -182,6 +183,52 @@ describe("Document Query Contract", () => {
         }],
       }),
       "DOCUMENT_QUERY_CURSOR_INVALID",
+    );
+  });
+});
+
+describe("normalizeDocumentAggregate (slG1)", () => {
+  it("normalizes a count grouped by a text field", () => {
+    const spec = normalizeDocumentAggregate(collection, {
+      aggregate: { groupBy: { kind: "data", fieldId: "fld_title" }, measure: { op: "count" } },
+    });
+    expect(spec.groupBy).toEqual({ kind: "data", fieldId: "fld_title" });
+    expect(spec.measure).toEqual({ op: "count" });
+  });
+
+  it("normalizes sum/avg over a numeric field (and carries the filter)", () => {
+    const spec = normalizeDocumentAggregate(collection, {
+      filter: { type: "condition", field: { kind: "data", fieldId: "fld_featured" }, operator: "eq", value: true },
+      aggregate: { groupBy: { kind: "system", field: "createdAt" }, measure: { op: "sum", field: { kind: "data", fieldId: "fld_score" } } },
+    });
+    expect(spec.measure).toEqual({ op: "sum", field: { kind: "data", fieldId: "fld_score" } });
+    expect(spec.filter).toMatchObject({ type: "condition", value: true });
+  });
+
+  it("rejects sum/avg over a non-numeric field", () => {
+    expectApplicationCode(
+      () => normalizeDocumentAggregate(collection, {
+        aggregate: { groupBy: { kind: "data", fieldId: "fld_title" }, measure: { op: "sum", field: { kind: "data", fieldId: "fld_title" } } },
+      }),
+      "DOCUMENT_QUERY_INVALID",
+    );
+  });
+
+  it("rejects grouping by a non-scalar (json) field", () => {
+    expectApplicationCode(
+      () => normalizeDocumentAggregate(collection, {
+        aggregate: { groupBy: { kind: "data", fieldId: "fld_metadata" }, measure: { op: "count" } },
+      }),
+      "DOCUMENT_QUERY_FIELD_UNSUPPORTED",
+    );
+  });
+
+  it("rejects an unknown group-by field", () => {
+    expectApplicationCode(
+      () => normalizeDocumentAggregate(collection, {
+        aggregate: { groupBy: { kind: "data", fieldId: "fld_missing" }, measure: { op: "count" } },
+      }),
+      "DOCUMENT_QUERY_FIELD_UNKNOWN",
     );
   });
 });

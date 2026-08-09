@@ -48,8 +48,13 @@ import {
   type DocumentLifecycleHookRunner,
 } from "./hooks.js";
 import {
+  normalizeDocumentAggregate,
   normalizeDocumentQuery,
+  type DocumentAggregateGroup,
+  type DocumentQueryFieldReference,
   type DocumentQueryInput,
+  type DocumentQueryMeasure,
+  type DocumentQueryScalar,
   type NormalizedDocumentQuery,
 } from "./document-query.js";
 
@@ -91,6 +96,12 @@ export interface DocumentQueryPage {
   readonly items: readonly DocumentRecord[];
   readonly hasNextPage: boolean;
   readonly nextCursor?: string;
+}
+
+export interface DocumentAggregateResult {
+  readonly groups: readonly DocumentAggregateGroup[];
+  /** True when the scan hit its bound before every matching document was aggregated. */
+  readonly truncated: boolean;
 }
 
 export interface DocumentQueryStoreItem {
@@ -379,6 +390,78 @@ export class DocumentApplicationService {
         limit: batchLimit,
       });
     }
+  }
+
+  /**
+   * Group-by aggregation (slG1). Aggregates over ONLY the documents the actor can
+   * read: it scans the same authorized document stream `query` uses, then groups
+   * and reduces in memory. This is why aggregation is NOT a raw DB `GROUP BY` — a
+   * SQL-level count would include documents the actor cannot individually read and
+   * leak their existence through counts/sums/group labels. Sensitive-Field
+   * exclusion is enforced separately at the response boundary (the route).
+   */
+  public async aggregate(
+    actor: ActorContext,
+    collectionId: string,
+    input: DocumentQueryInput,
+  ): Promise<DocumentAggregateResult> {
+    const { collection } = await this.resolveCollection(collectionId);
+    const resourceId = realmCollectionResourceId(actorRealmId(actor), String(collection.id));
+    await assertCapability(actor, "document:read", { action: "content.list", resourceId });
+    const spec = normalizeDocumentAggregate(collection, input);
+    if (spec.state === "deleted") {
+      await assertCapability(actor, "document:delete", { action: "content.delete", resourceId });
+    }
+    const fieldNameById = new Map(collection.fields.map((field) => [String(field.id), field.name]));
+    const groupKey = fieldAccessor(spec.groupBy, fieldNameById);
+    const measureValue = spec.measure.op === "count"
+      ? undefined
+      : fieldAccessor(spec.measure.field, fieldNameById);
+
+    // Accumulate per group: count + running sum (avg = sum/count at the end).
+    const acc = new Map<string, { readonly group: DocumentQueryScalar; count: number; sum: number }>();
+    let truncated = false;
+    let scanned = 0;
+    const batchLimit = 100;
+    const maximumCandidates = 5_000;
+    let current = normalizeDocumentQuery(collection, {
+      ...(spec.filter === undefined ? {} : { filter: spec.filter }),
+      state: spec.state,
+      limit: batchLimit,
+    });
+    scan: while (true) {
+      const result = await this.documents.queryDocuments(collection, current);
+      for (const candidate of result.items) {
+        scanned += 1;
+        const document = await this.readableDocumentOrNull(
+          actor,
+          authorizationResourceId(actor, collection, candidate.document.id),
+          candidate.document,
+        );
+        if (document !== null) accumulate(acc, spec.measure, groupKey(document), measureValue?.(document));
+        if (scanned >= maximumCandidates) { truncated = true; break scan; }
+      }
+      if (!result.hasNextPage) break;
+      const endCursor = result.items.at(-1)?.cursor;
+      if (endCursor === undefined) break;
+      current = normalizeDocumentQuery(collection, {
+        ...(spec.filter === undefined ? {} : { filter: spec.filter }),
+        state: spec.state,
+        cursor: endCursor,
+        limit: batchLimit,
+      });
+    }
+
+    const groups = [...acc.values()]
+      .map(({ group, count, sum }): DocumentAggregateGroup => ({
+        group,
+        value: spec.measure.op === "count" ? count
+          : spec.measure.op === "sum" ? sum
+            : count === 0 ? 0 : sum / count,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, spec.limit);
+    return { groups, truncated: truncated || acc.size > spec.limit };
   }
 
   public async get(
@@ -1355,6 +1438,47 @@ function documentWriteIntegrity(
     }
     throw error;
   }
+}
+
+/** Builds a reader for a Field/system reference over an authorized DocumentRecord (slG1). */
+function fieldAccessor(
+  reference: DocumentQueryFieldReference,
+  fieldNameById: ReadonlyMap<string, string>,
+): (document: DocumentRecord) => DocumentQueryScalar {
+  if (reference.kind === "system") {
+    const field = reference.field;
+    return (document) => {
+      const value = field === "id" ? document.id
+        : field === "createdAt" ? document.createdAt
+          : field === "updatedAt" ? document.updatedAt
+            : document.version;
+      return scalarOrNull(value);
+    };
+  }
+  const name = fieldNameById.get(reference.fieldId);
+  return (document) => (name === undefined ? null : scalarOrNull(document.data[name]));
+}
+
+function scalarOrNull(value: unknown): DocumentQueryScalar {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return value === undefined ? null : String(value);
+}
+
+/** Folds one document into the group accumulator (slG1). */
+function accumulate(
+  acc: Map<string, { readonly group: DocumentQueryScalar; count: number; sum: number }>,
+  measure: DocumentQueryMeasure,
+  group: DocumentQueryScalar,
+  measureValue: DocumentQueryScalar | undefined,
+): void {
+  const key = group === null ? " null" : `${typeof group}:${String(group)}`;
+  const entry = acc.get(key) ?? { group, count: 0, sum: 0 };
+  entry.count += 1;
+  if (measure.op !== "count" && typeof measureValue === "number" && Number.isFinite(measureValue)) {
+    entry.sum += measureValue;
+  }
+  acc.set(key, entry);
 }
 
 function aggregateToRecord(aggregate: DocumentAggregate, actor: ActorContext): DocumentRecord {

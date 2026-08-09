@@ -39,6 +39,7 @@ const KIND_HELP: Partial<Readonly<Record<FormBlock["kind"], string>>> = {
   cards: "여러 행을 카드로 보여줍니다. 검색폼에 연결하면 검색 결과를 표시합니다.",
   detail: "한 행의 상세를 보여줍니다. 검색폼·목록에 연결하면 선택한 행을 표시합니다.",
   field: "한 필드 값을 크게 보여줍니다. 목록·검색폼에 연결하세요.",
+  chart: "선택한 필드로 묶어 건수를 막대그래프로 보여줍니다. 화면을 열면 자동으로 집계합니다.",
   "input-form": "새 행을 입력해 저장합니다.",
   "item-actions": "선택한 행을 수정하거나 삭제합니다. 목록에 연결해 대상을 지정하세요.",
 };
@@ -105,9 +106,20 @@ export function FormBlockPanel({ page, block, collections, onChange, onDuplicate
         </label>
       ) : null}
 
+      {block.kind === "chart" ? (
+        <label className={styles.dataField}>
+          <span>묶을 필드 (이 값별로 건수 집계)</span>
+          <select value={searchFieldId ?? ""} onChange={(event) => apply(fields, collectionId, event.target.value || undefined)}>
+            <option value="">선택…</option>
+            {(collection?.fields ?? []).map((field) => <option key={field.id} value={field.id}>{field.label ?? field.name}</option>)}
+          </select>
+          <p className={styles.inspectorEmpty}>선택한 필드의 값별로 몇 건인지 막대그래프로 보여줍니다.</p>
+        </label>
+      ) : null}
+
       {block.kind === "item-actions" ? (
         <p className={styles.inspectorEmpty}>이 폼은 목록에 연결한 뒤, 선택된 행을 수정·삭제합니다. 필드 설정은 필요 없습니다.</p>
-      ) : (
+      ) : block.kind === "chart" ? null : (
         <div className={styles.dataField}>
           <span>{block.kind === "input-form" ? "입력 필드" : block.kind === "field" ? "표시할 필드(1개)" : "표시 필드"}</span>
           <div className={styles.checkList}>

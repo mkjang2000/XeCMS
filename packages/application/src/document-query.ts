@@ -40,6 +40,21 @@ export interface DocumentQuerySort {
   readonly direction: "asc" | "desc";
 }
 
+export type DocumentQueryMeasure =
+  | { readonly op: "count" }
+  | { readonly op: "sum" | "avg"; readonly field: DocumentQueryFieldReference };
+
+/**
+ * A group-by aggregation (slG1). Rows are grouped by `groupBy` and reduced to a
+ * single numeric `measure` per group. Only scalar stored/system fields may group;
+ * sum/avg require a numeric field. Sensitive/masked Field exclusion is enforced at
+ * the response boundary (the route), which knows the mask rules the engine does not.
+ */
+export interface DocumentQueryAggregate {
+  readonly groupBy: DocumentQueryFieldReference;
+  readonly measure: DocumentQueryMeasure;
+}
+
 export interface DocumentQueryInput {
   readonly cursor?: string;
   readonly limit?: number;
@@ -47,7 +62,25 @@ export interface DocumentQueryInput {
   readonly fields?: readonly string[];
   readonly filter?: DocumentQueryFilter;
   readonly sort?: readonly DocumentQuerySort[];
+  readonly aggregate?: DocumentQueryAggregate;
 }
+
+export interface NormalizedDocumentAggregate {
+  readonly state: DocumentQueryState;
+  readonly filter?: DocumentQueryFilter;
+  readonly groupBy: DocumentQueryFieldReference;
+  readonly measure: DocumentQueryMeasure;
+  /** Cap on the number of groups returned (guards a runaway GROUP BY). */
+  readonly limit: number;
+}
+
+/** One aggregated group: the group key value and its numeric measure. */
+export interface DocumentAggregateGroup {
+  readonly group: DocumentQueryScalar;
+  readonly value: number;
+}
+
+const MAX_AGGREGATE_GROUPS = 200;
 
 export interface NormalizedDocumentQuery {
   readonly limit: number;
@@ -117,6 +150,63 @@ export function normalizeDocumentQuery(
     fingerprint,
     ...(cursorValues === undefined ? {} : { cursorValues }),
   };
+}
+
+/**
+ * Normalizes a group-by aggregation (slG1). Validates that `groupBy` is a scalar
+ * stored/system field and that a sum/avg measure targets a numeric field; a
+ * `count` measure needs no field. The filter is reused verbatim from the query
+ * engine. Fails closed on anything unsupported.
+ */
+export function normalizeDocumentAggregate(
+  collection: CollectionDefinition,
+  input: DocumentQueryInput,
+): NormalizedDocumentAggregate {
+  if (input.aggregate === undefined) queryInvalid("aggregate is required.");
+  const state = input.state ?? "active";
+  if (state !== "active" && state !== "deleted") queryInvalid("state must be 'active' or 'deleted'.");
+  const fieldById = new Map(collection.fields.map((field) => [String(field.id), field]));
+  const filter = input.filter === undefined
+    ? undefined
+    : normalizeFilter(input.filter, fieldById, 1, { value: 0 });
+  const groupBy = normalizeFieldReference(input.aggregate.groupBy, fieldById, "sort");
+  assertFieldGroupable(groupBy, fieldById);
+  const measure = normalizeMeasure(input.aggregate.measure, fieldById);
+  return {
+    state,
+    ...(filter === undefined ? {} : { filter }),
+    groupBy,
+    measure,
+    limit: MAX_AGGREGATE_GROUPS,
+  };
+}
+
+function assertFieldGroupable(
+  reference: DocumentQueryFieldReference,
+  fieldById: ReadonlyMap<string, FieldDefinition>,
+): void {
+  if (reference.kind === "system") return; // id/createdAt/updatedAt/version all group fine.
+  const field = fieldById.get(reference.fieldId)!;
+  if (!isScalarStoredField(field)) queryFieldUnsupported(reference.fieldId, field.type, "group by");
+}
+
+function normalizeMeasure(
+  input: DocumentQueryMeasure,
+  fieldById: ReadonlyMap<string, FieldDefinition>,
+): DocumentQueryMeasure {
+  if (!input || typeof input !== "object") queryInvalid("aggregate measure must be an object.");
+  if (input.op === "count") return Object.freeze({ op: "count" });
+  if (input.op !== "sum" && input.op !== "avg") queryInvalid("aggregate measure op must be 'count', 'sum', or 'avg'.");
+  const field = normalizeFieldReference(input.field, fieldById, "sort");
+  // sum/avg only make sense on a numeric column.
+  const numeric = field.kind === "system"
+    ? systemFieldValueType(field.field) === "number"
+    : fieldValueType(fieldById.get(field.fieldId)!) === "number";
+  if (!numeric) {
+    const label = field.kind === "system" ? field.field : field.fieldId;
+    queryInvalid(`aggregate '${input.op}' requires a numeric field, but '${label}' is not numeric.`);
+  }
+  return Object.freeze({ op: input.op, field });
 }
 
 export function encodeDocumentQueryCursor(

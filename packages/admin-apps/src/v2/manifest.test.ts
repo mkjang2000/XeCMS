@@ -136,6 +136,26 @@ describe("Admin App Manifest V2 (Composed Page) contract", () => {
     expect(() => decodeAdminAppManifestV2(badOp as never)).toThrow(AdminAppManifestDecodeError);
   });
 
+  it("round-trips an aggregate Data Source (slG1) and rejects an unknown measure op", () => {
+    const manifest = clone();
+    const page = composedPage(manifest);
+    page.dataSources.push({
+      id: "agg_by_name", type: "document-query", collectionId: "col_customers", trigger: "on-load",
+      fields: [], limit: 20,
+      aggregate: { groupBy: { kind: "data", fieldId: "fld_customer_name" }, measure: { op: "count" } },
+    } as never);
+    const decoded = decodeAdminAppManifestV2(manifest);
+    const reparsed = decodeAdminAppManifestV2(JSON.parse(serializeManifestValue(decoded)));
+    expect(reparsed).toEqual(decoded);
+
+    const bad = clone();
+    composedPage(bad).dataSources.push({
+      id: "agg_bad", type: "document-query", collectionId: "col_customers", trigger: "on-load", fields: [], limit: 20,
+      aggregate: { groupBy: { kind: "data", fieldId: "fld_customer_name" }, measure: { op: "median" } },
+    } as never);
+    expect(() => decodeAdminAppManifestV2(bad as never)).toThrow(AdminAppManifestDecodeError);
+  });
+
   it("dispatches by formatVersion", () => {
     expect(isComposedPageManifest(decodeAdminAppManifestAny(minimalComposedPageManifest))).toBe(true);
     expect(isComposedPageManifest(decodeAdminAppManifestAny(minimalBackofficeManifest))).toBe(false);

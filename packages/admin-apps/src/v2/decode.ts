@@ -26,6 +26,8 @@ import type {
   AdminAppManifestV2,
   AdminPageDefinitionV2,
   AppPresentationDefinition,
+  ComposedAggregateDefinition,
+  ComposedAggregateMeasure,
   ComponentDefinition,
   ComposedEffectDefinition,
   ComposedFieldReference,
@@ -186,7 +188,7 @@ function decodeDataSource(input: unknown, path: Path): DataSourceDefinition {
     fail("UNKNOWN_DATA_SOURCE_TYPE", `Unknown data source type '${String(value["type"])}'.`, [...path, "type"]);
   }
   exact(value, [
-    "id", "type", "collectionId", "trigger", "debounceMs", "fields", "parameters", "filter", "sort", "limit",
+    "id", "type", "collectionId", "trigger", "debounceMs", "fields", "parameters", "filter", "sort", "limit", "aggregate",
   ], path);
   return {
     id: text(required(value, "id", path), [...path, "id"]),
@@ -203,7 +205,28 @@ function decodeDataSource(input: unknown, path: Path): DataSourceDefinition {
     ...(has(value, "filter") ? { filter: decodeFilter(value["filter"], [...path, "filter"]) } : {}),
     ...(has(value, "sort") ? { sort: decodeSorts(value["sort"], [...path, "sort"]) } : {}),
     limit: integer(required(value, "limit", path), [...path, "limit"]),
+    ...(has(value, "aggregate") ? { aggregate: decodeAggregate(value["aggregate"], [...path, "aggregate"]) } : {}),
   };
+}
+
+function decodeAggregate(input: unknown, path: Path): ComposedAggregateDefinition {
+  const value = object(input, path);
+  exact(value, ["groupBy", "measure"], path);
+  return {
+    groupBy: decodeFieldReference(required(value, "groupBy", path), [...path, "groupBy"]),
+    measure: decodeMeasure(required(value, "measure", path), [...path, "measure"]),
+  };
+}
+
+function decodeMeasure(input: unknown, path: Path): ComposedAggregateMeasure {
+  const value = object(input, path);
+  const op = choice(required(value, "op", path), ["count", "sum", "avg"] as const, [...path, "op"]);
+  if (op === "count") {
+    exact(value, ["op"], path);
+    return { op: "count" };
+  }
+  exact(value, ["op", "field"], path);
+  return { op, field: decodeFieldReference(required(value, "field", path), [...path, "field"]) };
 }
 
 function decodeParameter(input: unknown, path: Path): DataSourceParameterDefinition {

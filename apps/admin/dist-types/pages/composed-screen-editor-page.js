@@ -25,7 +25,7 @@ const MENU_WIDTH = 240;
 /** Palette groups the form blocks the user can add, in user-facing categories. */
 const PALETTE_GROUPS = [
     { title: "검색", kinds: ["search", "date-search", "select-search", "number-search", "multi-search"] },
-    { title: "출력", kinds: ["list", "cards", "detail", "field"] },
+    { title: "출력", kinds: ["list", "cards", "detail", "field", "chart"] },
     { title: "입력·작업", kinds: ["input-form", "item-actions"] },
 ];
 export function ComposedScreenEditorPage() {

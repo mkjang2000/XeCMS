@@ -33,6 +33,7 @@ export function LivePreviewCell({ component, collections }) {
 /** A no-op data client: preview shows empty/placeholder states, never live data. */
 const PREVIEW_CLIENT = {
     queryComposed: () => Promise.resolve({ items: [], hasNextPage: false }),
+    aggregateComposed: () => Promise.resolve({ groups: [], truncated: false }),
     getComposedDocument: () => Promise.resolve(null),
     get: () => Promise.reject(new Error("preview")),
     delete: () => Promise.resolve(),

@@ -249,6 +249,16 @@
    soft tint reads in both light/dark without relying on color alone. */
 .composedRowHighlight { background: var(--xe-color-danger-soft, #fdecec); box-shadow: inset 3px 0 0 0 var(--xe-color-danger, #c4322a); }
 .composedRowHighlight:hover { background: var(--xe-color-danger-soft, #fdecec); }
+/* slG2 chart output */
+.composedChart { display: flex; flex-direction: column; gap: 0.5rem; margin: 0; height: 100%; }
+.composedChartHead { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.85rem; font-weight: 650; color: var(--xe-color-text-strong, #161d2d); }
+.composedChartToggle { padding: 0.2rem 0.55rem; font-size: 0.72rem; color: var(--xe-color-text-muted, #687286); border: 1px solid var(--xe-color-border, #e3e6ee); border-radius: 999px; background: var(--xe-color-surface, #fff); cursor: pointer; }
+.composedChartToggle[aria-pressed="true"] { color: var(--xe-color-primary, #5865e8); border-color: var(--xe-color-primary, #5865e8); }
+.composedChartNote { color: var(--xe-color-text-muted, #687286); font-size: 0.72rem; }
+.composedChartTable { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.composedChartTable th { text-align: left; color: var(--xe-color-text-muted, #687286); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--xe-color-border, #e3e6ee); }
+.composedChartTable td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--xe-color-border, #eee); }
+.composedChartTable td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .composedBadge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--xe-color-surface-muted, #eef); font-size: 0.75rem; }
 .composedLongText { display: block; white-space: pre-wrap; word-break: break-word; }
 .adaptiveHeader { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

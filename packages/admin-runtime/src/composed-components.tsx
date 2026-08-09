@@ -1,6 +1,7 @@
 import { Component, useState, type ReactNode } from "react";
 import type { ComponentDefinition, RuleCondition } from "@xecms/admin-apps";
 
+import { ChartOutput } from "./composed-chart.js";
 import { evaluateCondition } from "./composed-effects.js";
 import { formatFieldValue, type FormattedValue, type OutputFormat } from "./composed-format.js";
 import { useComposedRuntime, type ComposedRuntimeContextValue } from "./composed-runtime.js";
@@ -30,6 +31,7 @@ const REGISTRY: Readonly<Record<string, ComposedComponent>> = {
   "core.output.cards": CardListOutput,
   "core.output.field": FieldValueOutput,
   "core.output.detail": DetailOutput,
+  "core.output.chart": ChartOutput,
   "core.layout.title": TitleComponent,
   "core.layout.divider": DividerComponent,
 };

@@ -36,18 +36,29 @@ export interface DetailState {
   readonly error?: string;
 }
 
+/** Result of an aggregate Data Source (slG1): grouped {group, value} rows. */
+export interface AggregateState {
+  readonly status: "idle" | "loading" | "success" | "error";
+  readonly groups: readonly { readonly group: string | number | boolean | null; readonly value: number }[];
+  readonly truncated: boolean;
+  readonly error?: string;
+}
+
 export interface ActionState {
   readonly status: "idle" | "running" | "success" | "error";
   readonly message?: string;
 }
 
 const IDLE: DataSourceState = { status: "idle", rows: [], hasNextPage: false };
+const IDLE_AGGREGATE: AggregateState = { status: "idle", groups: [], truncated: false };
 
 export interface ComposedRuntimeContextValue {
   readonly stateValue: (stateId: string) => unknown;
   readonly setInputValue: (componentId: string, value: unknown) => void;
   readonly runFromComponent: (componentId: string) => void;
   readonly dataSourceForOutput: (componentId: string) => DataSourceState | undefined;
+  /** Aggregate result (slG1) of the Data Source feeding a chart/summary output. */
+  readonly aggregateForOutput: (componentId: string) => AggregateState | undefined;
   readonly nextPage: (componentId: string) => void;
   /**
    * Records a table row selection into connected state: the document id (master →
@@ -98,7 +109,7 @@ export function useComposedRuntime(): ComposedRuntimeContextValue {
 /** Drives Page State, connection execution, and Data Source results at runtime. */
 export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, navigate, access, plugins, children }: {
   readonly page: ComposedPageDefinition;
-  readonly client: Pick<AdminRuntimeDataClient, "queryComposed" | "getComposedDocument" | "get" | "delete" | "create" | "update">;
+  readonly client: Pick<AdminRuntimeDataClient, "queryComposed" | "aggregateComposed" | "getComposedDocument" | "get" | "delete" | "create" | "update">;
   /** fieldId (fld_*) -> Field name, used to read masked row data by column fieldId. */
   readonly fieldNames: ReadonlyMap<string, string>;
   /** fieldId (fld_*) -> Schema type, used to pick a default output format. */
@@ -116,6 +127,7 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     () => new Map(page.state.map((entry) => [entry.id, entry.initialValue])),
   );
   const [sources, setSources] = useState<ReadonlyMap<string, DataSourceState>>(new Map());
+  const [aggregates, setAggregates] = useState<ReadonlyMap<string, AggregateState>>(new Map());
   const [details, setDetails] = useState<ReadonlyMap<string, DetailState>>(new Map());
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
   // Form components collect their own field values (componentId -> {fieldName: value}).
@@ -129,7 +141,36 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
   const debounces = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const detailAborts = useRef(new Map<string, AbortController>());
 
+  // Data Sources with an `aggregate` return grouped {group,value}, not rows.
+  const aggregateSourceIds = useMemo(
+    () => new Set(page.dataSources.filter((source) => source.aggregate !== undefined).map((source) => source.id)),
+    [page.dataSources],
+  );
+
+  const executeAggregate = useCallback((dataSourceId: string): void => {
+    aborts.current.get(dataSourceId)?.abort();
+    const controller = new AbortController();
+    aborts.current.set(dataSourceId, controller);
+    const parameters = collectParameters(graph, dataSourceId, stateRef.current);
+    setAggregates((prev) => new Map(prev).set(dataSourceId, { ...(prev.get(dataSourceId) ?? IDLE_AGGREGATE), status: "loading" }));
+    void client.aggregateComposed(page.id, dataSourceId, {
+      parameters: parameters as Readonly<Record<string, never>>,
+    }, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      setAggregates((prev) => new Map(prev).set(dataSourceId, {
+        status: "success", groups: result.groups, truncated: result.truncated,
+      }));
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setAggregates((prev) => new Map(prev).set(dataSourceId, {
+        status: "error", groups: [], truncated: false,
+        error: error instanceof Error ? error.message : "집계에 실패했습니다.",
+      }));
+    });
+  }, [client, graph, page.id]);
+
   const execute = useCallback((dataSourceId: string, cursor?: string): void => {
+    if (aggregateSourceIds.has(dataSourceId)) { executeAggregate(dataSourceId); return; }
     aborts.current.get(dataSourceId)?.abort();
     const controller = new AbortController();
     aborts.current.set(dataSourceId, controller);
@@ -153,7 +194,7 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
         error: error instanceof Error ? error.message : "조회에 실패했습니다.",
       }));
     });
-  }, [client, graph, page.id]);
+  }, [client, graph, page.id, aggregateSourceIds, executeAggregate]);
 
   /**
    * Runs a Data Source and resolves with its rows — used by the `await-query`
@@ -505,6 +546,10 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
       const sourceId = rowsSourceFor(graph, componentId);
       return sourceId === undefined ? undefined : (sources.get(sourceId) ?? IDLE);
     },
+    aggregateForOutput: (componentId) => {
+      const sourceId = rowsSourceFor(graph, componentId);
+      return sourceId === undefined ? undefined : (aggregates.get(sourceId) ?? IDLE_AGGREGATE);
+    },
     nextPage: (componentId) => {
       const sourceId = rowsSourceFor(graph, componentId);
       if (sourceId === undefined) return;
@@ -527,7 +572,7 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     setFormFieldValue,
     formFieldValue,
     pluginComponent: (kind) => plugins?.get(kind),
-  }), [state, sources, details, graph, setInputValue, runFromComponent, execute, selectRow, setAdaptiveValue, fieldNames, fieldTypes, runComponentEvent, canRunAction, actionState, setFormFieldValue, formFieldValue, plugins]);
+  }), [state, sources, aggregates, details, graph, setInputValue, runFromComponent, execute, selectRow, setAdaptiveValue, fieldNames, fieldTypes, runComponentEvent, canRunAction, actionState, setFormFieldValue, formFieldValue, plugins]);
 
   return <ComposedRuntimeContext.Provider value={value}>{children}</ComposedRuntimeContext.Provider>;
 }
