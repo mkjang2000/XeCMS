@@ -1,8 +1,13 @@
 {
   "name": "@xecms/ui",
-  "private": true,
   "version": "0.5.0",
+  "description": "Accessible UI primitives and theme for XeCMS.",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "packages/ui" },
+  "homepage": "https://github.com/mkjang2000/XeCMS#readme",
+  "bugs": { "url": "https://github.com/mkjang2000/XeCMS/issues" },
+  "engines": { "node": ">=22.22.0" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "type": "module",
   "exports": {
     ".": {
@@ -11,16 +16,22 @@
     },
     "./theme.css": "./src/theme.css"
   },
-  "files": ["dist", "src/*.css"],
+  "files": [
+    "dist",
+    "src/*.css",
+    "!dist/**/*.test.*",
+    "!dist/**/*.integration.test.*",
+    "!dist/.tsbuildinfo"
+  ],
   "peerDependencies": {
     "react": ">=19.0.0",
     "react-dom": ">=19.0.0"
   },
   "dependencies": {
-    "react-aria-components": "^1.19.0"
+    "react-aria-components": "^1.20.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4"
   }
 }

@@ -1,8 +1,13 @@
 {
   "name": "@xecms/admin-app",
-  "private": true,
   "version": "0.5.0",
+  "description": "Production Admin Studio bundle for XeCMS.",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "apps/admin" },
+  "homepage": "https://github.com/mkjang2000/XeCMS#readme",
+  "bugs": { "url": "https://github.com/mkjang2000/XeCMS/issues" },
+  "engines": { "node": ">=22.22.0" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "type": "module",
   "files": [
     "dist"
@@ -18,26 +23,26 @@
     "@blocknote/react": "^0.52.1",
     "@mantine/core": "^8.3.18",
     "@mantine/hooks": "^8.3.18",
-    "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-table": "^8.21.3",
     "@xecms/admin": "workspace:*",
-    "@xecms/admin-runtime": "workspace:*",
     "@xecms/admin-apps": "workspace:*",
+    "@xecms/admin-runtime": "workspace:*",
     "@xecms/client": "workspace:*",
     "@xecms/schema": "workspace:*",
     "@xecms/ui": "workspace:*",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-hook-form": "^7.81.0",
-    "react-router": "^8.2.0"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-hook-form": "^7.85.0",
+    "react-router": "^8.3.0"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.3",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "jsdom": "^26.1.0",
-    "vite": "^8.1.4"
+    "vite": "^8.2.1"
   }
 }

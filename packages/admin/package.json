@@ -1,8 +1,13 @@
 {
   "name": "@xecms/admin",
-  "private": true,
   "version": "0.5.0",
+  "description": "Shared React components for the XeCMS Admin Studio.",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "packages/admin" },
+  "homepage": "https://github.com/mkjang2000/XeCMS#readme",
+  "bugs": { "url": "https://github.com/mkjang2000/XeCMS/issues" },
+  "engines": { "node": ">=22.22.0" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "type": "module",
   "exports": {
     ".": {
@@ -10,17 +15,23 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src/*.css"],
+  "files": [
+    "dist",
+    "src/*.css",
+    "!dist/**/*.test.*",
+    "!dist/**/*.integration.test.*",
+    "!dist/.tsbuildinfo"
+  ],
   "dependencies": {
     "@xecms/ui": "workspace:*",
-    "react": "^19.2.7"
+    "react": "^19.2.8"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "jsdom": "^26.1.0",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.8"
   }
 }

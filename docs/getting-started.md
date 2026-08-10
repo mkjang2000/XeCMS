@@ -4,21 +4,21 @@ XeCMS 서버를 설치하고, 최초 Owner 계정을 만들고, 첫 API 요청�
 
 ## 요구 사항
 
-- **Node.js** 22.13 이상
+- **Node.js** 22.22 이상
 - **pnpm** 10 (`corepack enable`로 활성화)
 - **PostgreSQL** 16 이상 (Docker Compose 제공)
 
-## 1. 소스 저장소 설치
-
-현재 `@xecms/*` 패키지의 공개 Registry 배포 전에는 clone한 저장소나 GitHub Codespaces에서
-의존성을 설치한다.
+## 1. 프로젝트 생성
 
 ```bash
-pnpm install --frozen-lockfile
+corepack enable
+pnpm create xecms my-cms
+cd my-cms
+pnpm install
 ```
 
-패키지 공개 후에는 `pnpm create xecms my-cms`로 독립 프로젝트를 생성하고 다음 starter 중
-하나를 선택할 수 있다.
+기본 starter는 `minimal`이다. 생성 명령에 `--starter blog` 또는 `--starter community`를
+추가해 다음 starter 중 하나를 선택할 수 있다.
 
 | Starter | 용도 |
 | --- | --- |
@@ -28,11 +28,8 @@ pnpm install --frozen-lockfile
 
 ## 2. 환경 설정
 
-`.env.example`을 복사해 `.env`를 만들고 값을 채웁니다.
-
-```bash
-cp .env.example .env
-```
+생성된 프로젝트에는 `.env.example`과 로컬 개발용 `.env`가 함께 들어 있습니다. `.env`의
+session secret은 프로젝트마다 무작위로 생성되며, 다른 환경으로 복사하지 않습니다.
 
 최소 필수 값:
 
@@ -48,23 +45,23 @@ cp .env.example .env
 로컬 PostgreSQL이 없다면 제공된 Compose로 띄웁니다.
 
 ```bash
-pnpm db:up           # PostgreSQL 시작 및 readiness 대기
+docker compose up -d --wait # PostgreSQL 시작 및 readiness 대기
 pnpm migrate         # 스키마 마이그레이션 적용 (forward-only)
-pnpm dev             # API + Admin Studio 개발 서버
+pnpm dev             # API + 설치된 Admin Studio 실행
 ```
 
 실행 후 사용할 수 있는 주소:
 
 | 용도 | 주소 |
 | --- | --- |
-| Admin Studio | <http://127.0.0.1:5173/admin> |
+| Admin Studio | <http://127.0.0.1:3100/admin> |
 | REST API | <http://127.0.0.1:3100/api> |
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
 
-`pnpm dev`는 소스 변경을 감지하는 API 서버와 Vite Admin 서버를 함께 실행한다. 이 명령은
-개발 전용이며 프로덕션 배포에는 사용하지 않는다. 빌드 산출물을 production 모드로 실행하는
-절차는 [빌드 및 배포](./deployment.md)를 참고한다.
+생성된 프로젝트의 `pnpm dev`는 개발 환경 설정으로 API와 npm에 포함된 Admin Studio를 함께
+실행한다. XeCMS 자체 소스 변경을 감지하는 watch/Vite 환경은 [개발 및 검증](./development.md)의
+저장소 개발 절차를 사용한다. production 모드 실행은 [빌드 및 배포](./deployment.md)를 참고한다.
 
 ## 4. 최초 설정 완료하기
 

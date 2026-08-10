@@ -14,7 +14,7 @@ import {
   placementStyle,
   type LayoutProfile,
 } from "./composed-geometry.js";
-import styles from "./runtime.module.css";
+import styles from "../src/runtime.module.css";
 
 export interface ComposedPageProps {
   readonly runtime: AdminAppRuntimeDto;

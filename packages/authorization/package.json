@@ -1,8 +1,13 @@
 {
   "name": "@xecms/authorization",
-  "private": true,
   "version": "0.5.0",
+  "description": "Authorization primitives and policy evaluation for XeCMS.",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "packages/authorization" },
+  "homepage": "https://github.com/mkjang2000/XeCMS#readme",
+  "bugs": { "url": "https://github.com/mkjang2000/XeCMS/issues" },
+  "engines": { "node": ">=22.22.0" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "type": "module",
   "exports": {
     ".": {
@@ -10,5 +15,5 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"]
+  "files": ["dist", "!dist/**/*.test.*", "!dist/**/*.integration.test.*", "!dist/.tsbuildinfo"]
 }

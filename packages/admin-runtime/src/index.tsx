@@ -30,7 +30,7 @@ import {
   createAdminRuntimeDataClient,
   type AdminRuntimeDataClient,
 } from "./api.js";
-import styles from "./runtime.module.css";
+import styles from "../src/runtime.module.css";
 
 export * from "./api.js";
 export type { PluginComponentRegistry, PluginComponentRenderer } from "./composed-runtime.js";

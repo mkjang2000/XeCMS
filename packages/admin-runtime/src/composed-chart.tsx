@@ -2,7 +2,7 @@ import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import type { ComponentDefinition } from "@xecms/admin-apps";
 
 import { useComposedRuntime } from "./composed-runtime.js";
-import styles from "./runtime.module.css";
+import styles from "../src/runtime.module.css";
 
 /**
  * Chart output for an aggregate Data Source (slG2). Renders grouped {group,value}

@@ -42,32 +42,35 @@ PostgreSQL을 공식 저장소로 사용하며 Schema, Migration, REST API, 관�
 
 ### 요구 사항
 
-- Node.js 22.13 이상
+- Node.js 22.22 이상
 - pnpm 10 (`corepack enable`)
 - PostgreSQL 16 이상 (Docker Compose 제공)
 
 ```bash
-pnpm install --frozen-lockfile
-cp .env.example .env
-pnpm db:up
+corepack enable
+pnpm create xecms my-cms
+cd my-cms
+pnpm install
+docker compose up -d --wait
 pnpm migrate
 pnpm dev
 ```
 
-현재 공개 Registry 배포 전에는 clone한 저장소나 GitHub Codespaces에서 위 명령을 사용한다.
-`pnpm create xecms my-cms`를 사용하는 독립 프로젝트 생성 절차는 패키지 공개 후 제공한다.
+Starter를 바로 선택하려면 생성 명령 뒤에 `--starter minimal`, `--starter blog` 또는
+`--starter community`를 붙인다. 생성된 `.env`에는 로컬 개발용 PostgreSQL 설정과 무작위
+session secret이 들어가며, 운영 배포 전에는 반드시 운영 값으로 교체한다.
 
 실행 후 다음 주소를 사용할 수 있다.
 
 | 용도 | 주소 |
 | --- | --- |
-| CMS Studio | <http://127.0.0.1:5173/admin/setup> |
+| CMS Studio | <http://127.0.0.1:3100/admin/setup> |
 | REST API | <http://127.0.0.1:3100/api> |
 | Liveness | <http://127.0.0.1:3100/api/live> |
 | Readiness | <http://127.0.0.1:3100/api/ready> |
 
-`pnpm dev`는 API 서버와 Vite 기반 Admin 개발 서버를 함께 실행한다. 프로덕션과 같은 단일
-서버 실행은 개발 서버와 절차가 다르며, 전체 빌드 후 `pnpm start`를 사용한다.
+생성된 프로젝트의 `pnpm dev`는 개발 환경 설정으로 API와 설치된 Admin Studio를 함께
+실행한다. 프로덕션에서는 환경 값을 교체하고 Schema를 검증한 뒤 `pnpm start`를 사용한다.
 
 ```bash
 pnpm build
@@ -163,7 +166,7 @@ Project scaffold는 다음 starter를 제공한다.
 | `community` | 인증 가능한 Members Realm과 Posts |
 
 Admin setup이 대화형 템플릿 선택의 기본 경로다. CLI의 starter 옵션은 자동화와 기존 프로젝트
-호환성을 위해 유지하며, 패키지 공개 후 `pnpm create xecms`로 독립 프로젝트를 생성할 수 있다.
+호환성을 위해 유지하며, `pnpm create xecms`로 독립 프로젝트를 생성할 수 있다.
 
 주요 CLI 계약은 다음과 같다.
 
@@ -183,6 +186,22 @@ Migration은 forward-only다. Upgrade와 백업·복구 절차는 [운영 가이
 다룬다. 전체 문서는 [문서 인덱스](./docs/README.md)에서 확인할 수 있다.
 
 ## 개발과 검증
+
+저장소 자체를 개발할 때는 clone 후 로컬 환경을 준비한다.
+
+```bash
+git clone https://github.com/mkjang2000/XeCMS.git
+cd XeCMS
+corepack enable
+pnpm install --frozen-lockfile
+cp .env.example .env
+pnpm db:up
+pnpm migrate
+pnpm dev
+```
+
+이 경로의 `pnpm dev`는 API watch 서버와 Vite Admin 개발 서버를 함께 실행하며 Admin 주소는
+<http://127.0.0.1:5173/admin/setup>이다.
 
 일상적인 변경은 빠른 정적·단위 검증으로 확인한다.
 
@@ -213,7 +232,7 @@ pnpm verify          # 최종 release gate
 - untrusted Plugin sandbox, marketplace와 hot reload
 - PostgreSQL 이외의 공식 Database Adapter
 - 외부 Object Storage, PITR/WAL과 zero-downtime migration orchestration
-- 완전한 OIDC/SAML 제품화와 Plugin/Container Registry 자동 배포
+- 완전한 OIDC/SAML 제품화, Plugin marketplace와 Container Registry 자동 배포
 
 ## 문서
 
@@ -222,11 +241,12 @@ pnpm verify          # 최종 release gate
 - [REST API](./docs/rest-api.md) · [TypeScript SDK](./docs/typescript-sdk.md) · [Schema](./docs/schema.md)
 - [빌드 및 배포](./docs/deployment.md) · [개발 및 검증](./docs/development.md)
 - [운영 가이드](./docs/operations.md) · [확장 개발](./docs/extending.md)
+- [기여 가이드](./CONTRIBUTING.md) · [보안 정책](./SECURITY.md)
 
 ## 라이선스
 
 XeCMS는 [Apache License 2.0](./LICENSE)에 따라 배포한다. 프로젝트에 포함된 외부 구성요소의
 라이선스와 고지는 [Third-Party Notices](./THIRD_PARTY_NOTICES.md)를 참고한다.
 
-> **배포 상태**: `@xecms/*` 패키지와 공식 컨테이너 이미지의 공개 Registry 배포는 아직
-> 진행되지 않았다. 배포 전까지는 이 저장소를 clone한 뒤 위 빠른 시작 절차로 실행한다.
+`create-xecms`와 실행에 필요한 `@xecms/*` 패키지는 npm의 public registry에 배포한다.
+공식 컨테이너 이미지는 아직 제공하지 않는다.

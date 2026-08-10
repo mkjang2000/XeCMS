@@ -1,7 +1,7 @@
 # 빌드 및 배포
 
-XeCMS 소스 저장소를 production용으로 빌드하고 실행하는 절차를 설명합니다. 공개 Registry가
-배포되기 전까지는 이 저장소를 배포 호스트에서 빌드하는 방식을 기준으로 합니다.
+`pnpm create xecms`로 생성한 프로젝트를 production에서 실행하는 절차를 설명합니다.
+XeCMS 저장소 자체를 배포하는 경우의 빌드 차이도 함께 다룹니다.
 
 ## 1. 프로덕션 빌드
 
@@ -10,7 +10,10 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-`pnpm build`는 한 번에 다음 산출물을 만듭니다.
+생성된 프로젝트에서 `pnpm build`는 canonical Schema를 검증하고 TypeScript 타입을 다시
+생성합니다. 서버와 Admin Studio는 설치된 npm 패키지에 이미 production 산출물로 포함됩니다.
+
+XeCMS 소스 저장소에서 `pnpm build`를 실행하면 다음 산출물을 모두 새로 만듭니다.
 
 | 산출물 | 내용 |
 | --- | --- |
@@ -19,16 +22,18 @@ pnpm build
 | `apps/admin/dist` | 서버가 `/admin`에서 제공할 정적 Admin 번들 |
 | `examples/example-plugin/dist` | 기본 Trusted Plugin 예제 |
 
-`pnpm start`는 소스를 컴파일하지 않습니다. 위 산출물이 없는 새 checkout에서는 먼저
-`pnpm build`를 실행해야 합니다.
+`pnpm start`는 소스를 컴파일하거나 Schema 타입을 갱신하지 않으므로 항상 검증된
+`pnpm build` 뒤에 실행합니다.
 
 ## 2. 프로덕션 환경 설정
 
 예제 파일을 별도 production 환경 파일로 복사합니다.
 
 ```bash
-cp .env.production.example .env.production
+cp .env.example .env.production
 ```
+
+XeCMS 소스 저장소를 직접 배포한다면 `.env.production.example`을 사용합니다.
 
 최소한 다음 값은 배포 환경에 맞게 변경해야 합니다.
 
@@ -60,9 +65,9 @@ XECMS_ENV_FILE=.env.production pnpm migrate
 XECMS_ENV_FILE=.env.production pnpm start
 ```
 
-`pnpm start`는 `NODE_ENV=production`을 강제하고, 빌드된 API 서버가 `apps/admin/dist`도 함께
-제공합니다. 기본 URL은 `http://127.0.0.1:3100/admin/`입니다. 프로세스 관리자는 `SIGTERM`을
-보내 정상 종료를 기다려야 합니다.
+`pnpm start`는 `NODE_ENV=production`을 강제하고, API 서버가 `@xecms/admin-app`의 production
+번들을 함께 제공합니다. 기본 URL은 `http://127.0.0.1:3100/admin/`입니다. 프로세스 관리자는
+`SIGTERM`을 보내 정상 종료를 기다려야 합니다.
 
 인터넷에 직접 Node.js 포트를 노출하지 말고 TLS를 종료하는 Reverse Proxy 또는
 로드밸런서 뒤에서 실행하세요. Proxy의 공개 주소는 `XECMS_ADMIN_ORIGINS`와 정확히 일치해야
@@ -89,7 +94,7 @@ XECMS_ENV_FILE=.env.production pnpm doctor
 Upgrade 순서는 다음과 같습니다.
 
 1. 현재 버전에서 DB와 미디어 백업 생성
-2. 새 소스 checkout에서 `pnpm install --frozen-lockfile && pnpm build`
+2. 새 release의 패키지 버전과 lockfile을 반영한 뒤 `pnpm install --frozen-lockfile && pnpm build`
 3. `XECMS_ENV_FILE=.env.production pnpm migrate`
 4. 새 프로세스 시작 후 readiness와 `pnpm doctor` 확인
 5. 이상이 없을 때 이전 프로세스 종료

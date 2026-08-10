@@ -5,7 +5,7 @@ import { ChartOutput } from "./composed-chart.js";
 import { evaluateCondition } from "./composed-effects.js";
 import { formatFieldValue, type FormattedValue, type OutputFormat } from "./composed-format.js";
 import { useComposedRuntime, type ComposedRuntimeContextValue } from "./composed-runtime.js";
-import styles from "./runtime.module.css";
+import styles from "../src/runtime.module.css";
 
 export interface ComposedComponentProps {
   readonly component: ComponentDefinition;
