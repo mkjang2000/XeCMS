@@ -37,6 +37,22 @@ XeCMS 저장소에서 사용하는 공개 개발 명령은 기능을 기준으�
 pnpm exec playwright install chromium
 ```
 
+`test:database`는 개발용 `.env`와 `DATABASE_URL`을 사용하지 않습니다. 기본 대상은
+Compose의 테스트 DB(`127.0.0.1:55432/xecms_e2e`)입니다. 다른 격리 DB를 사용할 때는
+`XECMS_TEST_DATABASE_URL`을 명시하세요. backup/restore 테스트에는 해당 PostgreSQL
+컨테이너 이름을 `XECMS_E2E_DB_SERVICE`로 지정합니다.
+
+```bash
+docker compose --profile e2e up --detach --wait postgres-e2e
+pnpm build:packages
+pnpm test:database
+docker compose --profile e2e down --volumes --remove-orphans
+```
+
+CI는 PR과 main 변경에서 빠른 검사, 격리 PostgreSQL 회귀, 전체 release 검증을 실행합니다.
+릴리스 게시와 수동 실행도 동일한 검증을 수행하며, 브라우저 실패 자료는 artifact로 남깁니다.
+`dist/`와 `dist-types/`는 빌드 생성물로 Git 추적에서 제외합니다.
+
 ## E2E 선택 실행
 
 전체 E2E는 기능별로 격리된 suite를 순차 실행합니다. 특정 기능만 확인하려면 `--suite`를

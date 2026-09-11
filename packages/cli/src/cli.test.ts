@@ -22,10 +22,12 @@ describe("XeCMS CLI scaffold",()=>{
   });
   it("documents the Plugin drift recovery command and rejects unknown actions",async()=>{
     // The server refuses to boot on manifest drift, which locks Admin Studio;
-    // `plugin sync` is the only recovery path, so it must be discoverable.
+    // Both manifest sync and database-only disable must be discoverable.
     const output:string[]=[];
     expect(await main(["help"],{log:value=>output.push(value),error:()=>undefined})).toBe(0);
     expect(output.join("\n")).toContain("plugin sync [--apply]");
+    expect(output.join("\n")).toContain("plugin inspect [--json]");
+    expect(output.join("\n")).toContain("plugin disable <id> --offline");
     expect(output.join("\n")).toContain("start");
     expect(output.join("\n")).toContain("XECMS_ENV_FILE");
     const root=await temp();await scaffold(root,"minimal");

@@ -32,7 +32,7 @@ describe.runIf(RUN).sequential("C5 doctor, backup and empty restore",()=>{
   it("recovers a boot-blocking Plugin manifest drift from the CLI",async()=>{
     // Manifest drift makes buildServer throw, so Admin Studio — where a
     // reinstall plan would normally be applied — is unreachable. `plugin sync`
-    // is the only way out, and it must refuse when migrations also moved.
+    // can realign the manifest, and must refuse when migrations also moved.
     const schema=`xecms_c5_pluginsync_${randomUUID().replaceAll("-","")}`;
     const root=await projectRoot("blog"),database=new PostgresDatabase({connectionString:DATABASE_URL,schema,maxConnections:3});
     const q=(name:string)=>qualifiedName(schema,name);

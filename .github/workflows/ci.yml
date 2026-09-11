@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -28,3 +31,50 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify:quick
       - run: pnpm audit --audit-level=high
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:packages
+      - run: docker compose --profile e2e up --detach --wait postgres-e2e
+      - run: pnpm test:database
+        env:
+          XECMS_TEST_DATABASE_URL: postgresql://xecms:xecms@127.0.0.1:55432/xecms_e2e
+          XECMS_E2E_DB_SERVICE: xecms-postgres-e2e-1
+      - if: always()
+        run: docker compose --profile e2e down --volumes --remove-orphans
+
+  release-verification:
+    needs: [verify, database]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm verify
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

@@ -69,7 +69,86 @@ describe("EventWorkerService", () => {
   it("caps exponential retry delay at five minutes", () => {
     expect([1, 2, 3, 10, 30].map(retryDelayMs)).toEqual([1_000, 2_000, 4_000, 300_000, 300_000]);
   });
+
+  it("drains the active handler once and leaves the remaining claims for lease recovery", async () => {
+    const store = new MemoryEventWorkerStore([event, { ...event, id: "evt_2" }]);
+    const entered = deferred();
+    const gate = deferred();
+    const handle = vi.fn(async () => { entered.resolve(); await gate.promise; });
+    const worker = service(store, handle);
+    const run = worker.runOnce();
+    await entered.promise;
+
+    const stopped = worker.stop();
+    expect(worker.stop()).toBe(stopped);
+    await expect(worker.runOnce()).rejects.toMatchObject({ code: "WORKER_STOPPED" });
+    let drained = false;
+    void stopped.then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    gate.resolve();
+    await stopped;
+    await expect(run).resolves.toMatchObject({ claimed: 2, succeeded: 1 });
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect((await worker.list({ page: 1, pageSize: 20 })).items.map(({ status }) => status))
+      .toEqual(["succeeded", "processing"]);
+  });
+
+  it("does not claim after shutdown starts during fan-out", async () => {
+    const store = new MemoryEventWorkerStore([event]);
+    const worker = service(store, vi.fn());
+    const run = worker.runOnce();
+    await worker.stop();
+    await expect(run).resolves.toMatchObject({ claimed: 0 });
+    expect(store.claimCalls).toBe(0);
+  });
+
+  it.each([false, true])("reports a drain deadline and ignores late handler settlement (failed=%s)", async (fail) => {
+    vi.useFakeTimers();
+    try {
+      const store = new MemoryEventWorkerStore([event]);
+      const entered = deferred();
+      const gate = deferred();
+      const worker = service(store, async () => {
+        entered.resolve();
+        await gate.promise;
+        if (fail) throw new Error("late failure");
+      });
+      const run = worker.runOnce();
+      await entered.promise;
+      const stopped = worker.stop(25);
+      const rejected = expect(stopped).rejects.toMatchObject({ code: "WORKER_DRAIN_TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(25);
+      await rejected;
+      gate.resolve();
+      await run;
+      expect((await worker.list({ page: 1, pageSize: 20 })).items[0]?.status).toBe("processing");
+      expect(worker.stop()).toBe(stopped);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("propagates an active store failure to the drain caller", async () => {
+    const store = new MemoryEventWorkerStore([event]);
+    const gate = deferred();
+    const failure = new Error("database unavailable");
+    vi.spyOn(store, "fanOut").mockImplementation(async () => { await gate.promise; throw failure; });
+    const worker = service(store, vi.fn());
+    const run = worker.runOnce();
+    const stopped = worker.stop();
+    const assertions = [expect(run).rejects.toBe(failure), expect(stopped).rejects.toBe(failure)];
+    gate.resolve();
+    await Promise.all(assertions);
+  });
 });
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 function service(store: MemoryEventWorkerStore, handle: (event: DurableEvent, context: { idempotencyKey: string; deliveryId: string }) => Promise<void> | void, maxAttempts = 8): EventWorkerService {
   let tick = 0;

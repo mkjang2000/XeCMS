@@ -94,6 +94,9 @@ export interface EventWorkerRuntime {
 
 export class EventWorkerService {
   private running: Promise<EventWorkerCycleResult> | undefined;
+  private stopped = false;
+  private abandoned = false;
+  private stopping: Promise<void> | undefined;
 
   public constructor(
     private readonly store: EventWorkerStore,
@@ -111,8 +114,37 @@ export class EventWorkerService {
   }
 
   public runOnce(): Promise<EventWorkerCycleResult> {
+    if (this.stopped) {
+      return Promise.reject(new ApplicationError("WORKER_STOPPED", 503, "The event worker is stopping."));
+    }
     this.running ??= this.executeCycle().finally(() => { this.running = undefined; });
     return this.running;
+  }
+
+  /** Stop claiming work and wait for the active delivery before releasing its store. */
+  public stop(timeoutMs = 30_000): Promise<void> {
+    if (this.stopping !== undefined) return this.stopping;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
+      return Promise.reject(new TypeError("Worker drain timeout must be a non-negative safe integer."));
+    }
+    this.stopped = true;
+    const running = this.running;
+    this.stopping = running === undefined ? Promise.resolve() : new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        // The handler cannot be cancelled. Leave its delivery leased for retry and
+        // prevent a late completion from writing to an already closed store.
+        this.abandoned = true;
+        reject(new ApplicationError("WORKER_DRAIN_TIMEOUT", 503, `The event worker did not drain within ${timeoutMs} ms.`));
+      }, timeoutMs);
+      running.then(() => {
+        clearTimeout(timer);
+        resolve();
+      }, (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    return this.stopping;
   }
 
   public list(input: Parameters<EventWorkerStore["list"]>[0]): Promise<EventDeliveryPage> {
@@ -137,6 +169,7 @@ export class EventWorkerService {
       this.handlers.map(({ id, topics }) => ({ id, topics })),
       now,
     );
+    if (this.stopped) return { fannedOut, claimed: 0, succeeded: 0, failed: 0, dead: 0 };
     const lockedUntil = new Date(Date.parse(now) + this.runtime.leaseMs).toISOString();
     const deliveries = await this.store.claim({
       workerId: this.runtime.workerId,
@@ -149,6 +182,7 @@ export class EventWorkerService {
     let failed = 0;
     let dead = 0;
     for (const delivery of deliveries) {
+      if (this.stopped) break;
       const handler = this.handlers.find(({ id }) => id === delivery.handlerId);
       if (handler === undefined) {
         await this.recordFailure(delivery, new Error(`Handler '${delivery.handlerId}' is not registered.`));
@@ -161,9 +195,11 @@ export class EventWorkerService {
           deliveryId: delivery.id,
           idempotencyKey: `xecms:event:${delivery.eventId}:handler:${handler.id}`,
         });
+        if (this.abandoned) break;
         await this.store.succeed({ deliveryId: delivery.id, workerId: this.runtime.workerId, now: this.runtime.now() });
         succeeded += 1;
       } catch (error: unknown) {
+        if (this.abandoned) break;
         await this.recordFailure(delivery, error);
         failed += 1;
         if (delivery.attempts >= delivery.maxAttempts) dead += 1;

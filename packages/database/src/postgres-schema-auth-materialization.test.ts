@@ -209,7 +209,7 @@ describe.runIf(RUN)("Schema auth and Content Realm atomic materialization", () =
     });
   });
 
-  it("rolls back the schema revision, physical table, config and Realm on a late failure", async () => {
+  it.each([1, 4])("rolls back and records a late schema failure with a %i-connection pool", async (maxConnections) => {
     await withDatabase(async ({ database, schema, realms }) => {
       const realm = await createRealm(realms, "rlm_atomic_rollback", "community");
       await initializePolicy(database.pool, schema, realm.id);
@@ -245,7 +245,7 @@ describe.runIf(RUN)("Schema auth and Content Realm atomic materialization", () =
         `SELECT status, error_code FROM ${qualifiedName(schema, "_xecms_migration_runs")}`,
       );
       expect(failedRun.rows).toEqual([{ status: "failed", error_code: "P0001" }]);
-    });
+    }, maxConnections);
   });
 
   it("does not materialize Realm state when schema revision CAS is stale", async () => {
@@ -284,9 +284,10 @@ describe.runIf(RUN)("Schema auth and Content Realm atomic materialization", () =
       readonly schema: string;
       readonly realms: PostgresIdentityRealmStore;
     }) => Promise<void>,
+    maxConnections = 4,
   ): Promise<void> {
     const schema = `xecms_schema_auth_${randomUUID().replaceAll("-", "_")}`;
-    const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections: 4 });
+    const database = new PostgresDatabase({ connectionString: DATABASE_URL, schema, maxConnections });
     try {
       await database.migrate();
       await database.createInitialOwner({

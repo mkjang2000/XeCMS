@@ -15,6 +15,9 @@ xecms schema validate [file]
 xecms schema export [file]
 xecms generate types [--source file|active] [--output file]
 xecms doctor [--json]
+xecms plugin inspect [--json]
+xecms plugin disable <id> --offline [--expected-revision <n>]
+xecms plugin sync [--apply]
 xecms backup create <directory>
 xecms backup restore <directory> --confirm-empty
 xecms version
@@ -56,6 +59,41 @@ xecms doctor --json   # 자동화용 JSON
 | `backup-tools` | `pg_dump`/`pg_restore`/`tar` 실행 가능 여부 |
 
 전체 상태는 `healthy` / `degraded` / `unhealthy`로 요약됩니다.
+
+## Plugin 시작 실패 복구
+
+활성 Plugin의 패키지 누락, manifest·migration 불일치, health 실패로 서버가 시작되지
+않으면 서버를 중지하고 DB 자격 증명이 설정된 프로젝트에서 다음 명령을 사용합니다.
+
+```bash
+xecms plugin inspect --json
+xecms plugin disable example-greeter --offline --expected-revision 2
+xecms start
+```
+
+`inspect`와 `disable --offline`은 서버나 Plugin 패키지를 로드하지 않습니다. `inspect`는
+저장된 상태, revision, manifest digest, migration ID·순서·checksum을 검사합니다.
+실행 패키지의 존재와 health는 검사하지 않으며 Plugin config도 출력하지 않습니다.
+`--expected-revision`에 조회한 revision을 지정하면 조회 이후 변경된 Plugin을 덮어쓰지 않습니다.
+비활성화는 다음 서버 시작에 반영되고 config, Plugin 데이터, migration 이력을 보존합니다.
+표시된 활성 의존 Plugin도 확인하고 필요한 항목을 각각 비활성화하세요. 해당 Plugin 기능과
+필드를 사용하는 화면은 패키지와 이력을 복구하여 다시 활성화할 때까지 사용할 수 없습니다.
+
+패키지는 정상이고 manifest만 변경된 경우 기존 동기화 명령을 사용할 수 있습니다.
+
+```bash
+xecms plugin sync
+xecms plugin sync --apply
+```
+
+미리보기는 조회용이며 `--apply`가 실행 시점의 상태를 transaction에서 다시 검증합니다.
+digest가 같아도 migration 이력이 다르면 갱신하지 않습니다. schema 변경이 필요한 이력을
+동기화로 덮어쓰지 말고 일치하는 패키지·이력을 복구한 후 lifecycle plan을 사용하세요.
+sync와 offline disable은 revision을 증가시키고 감사 로그와 outbox를 함께 기록합니다.
+실패하면 해당 transaction을 rollback하며 기존 Admin preview는 revision 충돌로 거부됩니다.
+DB 자격 증명에 의한 복구는 `cli:offline-recovery`와 실제 DB `session_user`/`current_user`,
+변경 전후 version으로 기록되고 애플리케이션 사용자 identity를 가장하지 않습니다.
+동일 상태에 대한 재실행은 revision이나 감사를 중복 생성하지 않습니다.
 
 ## 백업과 복구
 

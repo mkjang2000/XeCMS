@@ -1,6 +1,6 @@
 import type { PolicySnapshot } from "@xecms/authorization";
 
-import { realmCollectionResourcePrefix, realmDocumentResourcePrefix } from "./authorization.js";
+import { realmCollectionResourcePrefix, realmDocumentResourcePrefix } from "./authorization/identifiers.js";
 import type { CollectionAction, RealmCollectionEntitlement } from "./realm-collection-entitlements.js";
 
 /**

@@ -25,6 +25,7 @@ export * from "./postgres-sites.js";
 export * from "./postgres-unified-audit.js";
 export * from "./postgres-retention.js";
 export * from "./postgres-plugins.js";
+export * from "./postgres-plugin-recovery.js";
 export * from "./local-media-storage.js";
 export * from "./media-migration.js";
 export * from "./postgres-media.js";
