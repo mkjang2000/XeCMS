@@ -13,7 +13,9 @@ import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DisplayModeProvider } from "../display-mode.js";
-import { AccessBindingsPage, AccessRolesPage, AccessSimulatorPage } from "./access-pages.js";
+import { AccessBindingsPage } from "./access/bindings-page.js";
+import { AccessRolesPage } from "./access/roles-page.js";
+import { AccessSimulatorPage } from "./access/simulator-page.js";
 
 const policy: AuthorizationPolicy = {
   realmId: "system",

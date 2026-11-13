@@ -1,7 +1,26 @@
-import { PostgresDatabase, PostgresPluginRecoveryStore } from "@xecms/database";
+import { PostgresDatabase, PostgresPluginRecoveryStore, type PluginSyncReport } from "@xecms/database";
+import type { XeCmsPluginModule } from "@xecms/plugin-sdk";
 import type { CliIo } from "./cli.js";
 import { cliError, type LoadedProject } from "./config.js";
-import { syncPluginManifests } from "./plugin-sync.js";
+
+export type { PluginSyncEntry, PluginSyncReport } from "@xecms/database";
+
+/** Every apply validates a fresh transactional snapshot. */
+export async function syncPluginManifests(
+  project: LoadedProject,
+  modules: readonly XeCmsPluginModule[],
+  apply: boolean,
+): Promise<PluginSyncReport> {
+  const database = new PostgresDatabase({ connectionString: project.databaseUrl, schema: project.config.databaseSchema, maxConnections: 3 });
+  try {
+    return await new PostgresPluginRecoveryStore(database.pool, database.schema).sync("wrk_default", modules, apply);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "PLUGIN_REVISION_CONFLICT") throw error;
+    throw cliError("PLUGIN_SYNC_FAILED", `Plugin manifest sync failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    await database.close();
+  }
+}
 
 export async function runPluginCommand(project: LoadedProject, args: string[], io: CliIo): Promise<number> {
   const action = args.shift();

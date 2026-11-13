@@ -4,16 +4,15 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { CORE_MIGRATION_IDS,PostgresDatabase,qualifiedName,quoteIdentifier } from "@xecms/database";
 import { pluginManifestDigest,type XeCmsPluginManifestV1 } from "@xecms/plugin-sdk";
-import { serializeSchema } from "@xecms/schema";
+import { serializeSchema,starterSchema } from "@xecms/schema";
 import { buildServer } from "@xecms/server";
 import examplePlugin from "@xecms/example-plugin";
 const TEST_PLUGIN_MODULES = [examplePlugin];
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
 import { createBackup,restoreBackup } from "./backup.js";
 import { doctor } from "./doctor.js";
-import { syncPluginManifests } from "./plugin-sync.js";
+import { syncPluginManifests } from "./plugin-commands.js";
 import { scaffold } from "./scaffold.js";
-import { starterSchema } from "./starters.js";
 import type { LoadedProject } from "./config.js";
 import { loadServerConfig } from "@xecms/server";
 

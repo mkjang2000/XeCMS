@@ -1,4 +1,44 @@
 {
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@xecms/application": [
+        "./packages/application/src/index.ts"
+      ],
+      "@xecms/contracts": [
+        "./packages/contracts/src/index.ts"
+      ],
+      "@xecms/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@xecms/database": [
+        "./packages/database/src/index.ts"
+      ],
+      "@xecms/schema": [
+        "./packages/schema/src/index.ts"
+      ],
+      "@xecms/authorization": [
+        "./packages/authorization/src/index.ts"
+      ],
+      "@xecms/plugin-sdk": [
+        "./packages/plugin-sdk/src/index.ts"
+      ]
+    }
+  },
   "files": [],
   "references": [
     {
@@ -39,6 +79,9 @@
     },
     {
       "path": "./apps/admin"
+    },
+    {
+      "path": "./examples/domain-prototype"
     }
   ]
 }

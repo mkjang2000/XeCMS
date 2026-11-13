@@ -1,6 +1,5 @@
 import { qualifiedName } from "../identifiers.js";
 import { DEFAULT_WORKSPACE_ID, SYSTEM_REALM_ID } from "../migrate.js";
-import { type IdentityRow, type SessionRow, identityFromRow } from "./auth-records.js";
 import { mapDatabaseError, instant, normalizeUsername, lockWorkspace } from "./shared.js";
 import {
   ApplicationError,
@@ -9,6 +8,30 @@ import {
   type StoredSession,
 } from "@xecms/application";
 import { type Pool } from "pg";
+
+interface IdentityRow {
+  readonly id: string;
+  readonly workspace_id: string;
+  readonly username: string;
+  readonly password_hash: string;
+  readonly is_owner: boolean;
+  readonly password_change_required: boolean;
+}
+
+interface SessionRow extends IdentityRow {
+  readonly expires_at: Date | string;
+}
+
+function identityFromRow(row: IdentityRow): IdentityRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    username: row.username,
+    passwordHash: row.password_hash,
+    isOwner: row.is_owner,
+    passwordChangeRequired: row.password_change_required,
+  };
+}
 
 export class PostgresAuthStore implements AuthStore {
   public constructor(private readonly pool: Pool, private readonly schema: string) {}

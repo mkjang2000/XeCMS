@@ -1,14 +1,13 @@
 import { readFile,writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { PostgresDatabase,qualifiedName } from "@xecms/database";
-import { generateTypeScriptTypes,parseSchema,serializeSchema } from "@xecms/schema";
+import { generateTypeScriptTypes,isStarterName,parseSchema,serializeSchema } from "@xecms/schema";
 import { createBackup,restoreBackup } from "./backup.js";
 import { cliError,loadProject } from "./config.js";
 import { doctor } from "./doctor.js";
 import { runPluginCommand } from "./plugin-commands.js";
 import { scaffold } from "./scaffold.js";
 import { runServerCommand } from "./server-command.js";
-import { isStarterName } from "./starters.js";
 
 export interface CliIo{log(value:string):void;error(value:string):void}
 const defaultIo:CliIo={log:value=>console.log(value),error:value=>console.error(value)};

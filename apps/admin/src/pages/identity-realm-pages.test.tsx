@@ -13,7 +13,9 @@ import { userEvent } from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DisplayModeProvider, type DisplayMode } from "../display-mode.js";
-import { IdentityRealmDetailPage, IdentityRealmListPage, RealmEntitlementMatrixPage } from "./identity-realm-pages.js";
+import { IdentityRealmDetailPage } from "./identity-realms/detail-page.js";
+import { IdentityRealmListPage } from "./identity-realms/list-page.js";
+import { RealmEntitlementMatrixPage } from "./identity-realms/entitlement-matrix-page.js";
 
 Object.defineProperty(globalThis, "CSS", {
   configurable: true,

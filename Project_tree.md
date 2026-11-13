@@ -10,9 +10,9 @@
 - Package Manager: pnpm 10.30.1 workspace
 - Database: PostgreSQL 16 이상 (프로젝트 문서 기준)
 - Main Entry Points: `packages/cli/src/bin.ts`, `apps/server/src/main.ts`, `apps/admin/src/main.tsx`
-- Build Commands: `pnpm build` (엔진), `pnpm build:all` (엔진·예제)
+- Build Commands: `pnpm build` (전체 패키지·예제·관리 UI)
 - Run Commands: `pnpm dev` / `pnpm start`
-- Test Commands: `pnpm check` (엔진), `pnpm check:all`, `pnpm test:database:all`, `pnpm verify` (전체)
+- Test Commands: `pnpm check`, `pnpm test:database`, `pnpm verify` (DB·브라우저 포함)
 - Release Preparation: `pnpm release:pack --output <directory>`, `pnpm release:check-install <directory>` (엔진 15개 패키지, npm 미게시)
 
 ## Related Repositories
@@ -82,7 +82,7 @@ XeCMS/
 ├── docs/                                 # 사용자·개발자 공개 문서
 ├── .github/workflows/ci.yml               # quick/audit, 격리 DB, 전체 release/브라우저 검증
 ├── package.json / pnpm-workspace.yaml / pnpm-lock.yaml
-├── tsconfig{,.all}.json                  # 엔진 / 엔진·예제 TypeScript 빌드 경계
+├── tsconfig.json                        # 공통 컴파일 옵션·개발 소스 경로·전체 빌드 순서
 ├── vitest.config.ts / playwright.config.ts
 ├── docker-compose.yml                    # PostgreSQL 개발/테스트 서비스
 └── xecms.config.json / .env*.example       # 프로젝트 설정과 환경 변수 예시
@@ -119,14 +119,14 @@ CLI → 설정 로드 → server / database / schema / 운영 도구
   호환 facade다. `postgres/`의 adapter가 기존 pool과 transaction 경계로 실제 기능을 수행한다.
   다른 기능은 `postgres-*.ts`로 분리되어 있다. `migrate.ts`가 core migration을 조립한다.
 - **확장:** `plugin-sdk`, application `plugins.ts`, database `postgres-plugins.ts`,
-  server `plugin-routes.ts`, CLI `plugin-commands.ts`/`plugin-sync.ts`가 설치·실행·복구를 담당한다.
+  server `plugin-routes.ts`, CLI `plugin-commands.ts`가 설치·실행·복구를 담당한다.
   offline inspect/disable은 Plugin code를 로딩하지 않으며 복구 변경은 revision·감사·outbox와 함께 커밋한다.
 - **선택 서버 확장:** `server-extensions.ts`의 공개 host context를 사용한다. 빌더의 화면 모델·저장소·API는
   별도 AppBuilder 저장소가 소유하며 엔진은 빌더 패키지를 import하지 않는다. 설정으로 선택하는
   서버 확장과 기존 DB 기반 Plugin lifecycle은 별개이며 둘 다 trusted code다.
-- **검증:** `scripts/check-*-boundaries.mjs`가 package 의존성을 검사하고,
-  `check-engine-isolation.mjs`가 빌더/예제의 엔진 production 의존 유입을 차단한다.
-  `run-postgres-tests.mjs`와 `run-e2e.mjs`가 엔진의 DB/release 검증을 실행한다.
+- **검증:** `scripts/check-package-boundaries.mjs`가 domain/package 규칙과
+  빌더·예제의 엔진 production 의존 유입 및 관리 UI 번들을 함께 검사한다.
+  `run-postgres-tests.mjs`가 DB 회귀와 선택 benchmark를 실행하고, `run-e2e.mjs`가 release/브라우저 검증을 담당한다.
 
 ## Architecture Notes
 
@@ -142,6 +142,8 @@ CLI → 설정 로드 → server / database / schema / 운영 도구
 - 개발 기록은 XeCMS-Docs의 devdocs, 공개 사용·배포 문서는 이 저장소 docs에서 관리한다.
   내부 개발 기록을 이 저장소에 복제하거나 공개 패키지에 포함하지 않는다.
 - TypeScript project reference 빌드와 Vite 번들 빌드가 분리되어 있다.
+- 루트 TypeScript 설정은 하나다. 패키지별 설정은 독립 배포의 출력 경로·빌드 순서·JSX 차이만 유지한다.
+  중복된 `:all` 명령과 앱별 Vitest 설정은 루트 명령에 통합했다.
 - 빌더를 등록한 구성에서 `/admin/apps`, `/admin-apps/:appId/screens`, `/apps/:appKey/*`를 제공한다.
   이 route·SPA·관련 E2E는 별도 AppBuilder 저장소에서 소유한다.
 - 권한 facade 내부는 단일 policy context와 entitlement cache를 공유한다. API/권한 불변식을

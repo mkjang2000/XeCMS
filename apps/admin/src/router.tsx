@@ -195,71 +195,71 @@ export function createAdminRouter(api: AdminApi, queryClient: QueryClient) {
         },
         {
           path: "realms",
-          lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).IdentityRealmListPage }),
+          lazy: async () => ({ Component: (await import("./pages/identity-realms/list-page.js")).IdentityRealmListPage }),
         },
         {
           path: "realms/entitlements",
-          lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).RealmEntitlementMatrixPage }),
+          lazy: async () => ({ Component: (await import("./pages/identity-realms/entitlement-matrix-page.js")).RealmEntitlementMatrixPage }),
         },
         {
           path: "realms/:realmId",
-          lazy: async () => ({ Component: (await import("./pages/identity-realm-pages.js")).IdentityRealmDetailPage }),
+          lazy: async () => ({ Component: (await import("./pages/identity-realms/detail-page.js")).IdentityRealmDetailPage }),
         },
         {
           path: "realms/:realmId/access",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessIndexRedirect }),
+          lazy: async () => ({ Component: (await import("./pages/access/index-redirect.js")).AccessIndexRedirect }),
         },
         {
           path: "realms/:realmId/access/grades",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessGradesPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/grades-page.js")).AccessGradesPage }),
         },
         {
           path: "realms/:realmId/access/members",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessMembersPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/members-page.js")).AccessMembersPage }),
         },
         {
           path: "realms/:realmId/access/roles",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessRolesPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/roles-page.js")).AccessRolesPage }),
         },
         {
           path: "realms/:realmId/access/bindings",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessBindingsPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/bindings-page.js")).AccessBindingsPage }),
         },
         {
           path: "realms/:realmId/access/simulator",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessSimulatorPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/simulator-page.js")).AccessSimulatorPage }),
         },
         {
           path: "realms/:realmId/access/audit",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessAuditPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/audit-page.js")).AccessAuditPage }),
         },
         {
           path: "access",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessIndexRedirect }),
+          lazy: async () => ({ Component: (await import("./pages/access/index-redirect.js")).AccessIndexRedirect }),
         },
         {
           path: "access/grades",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessGradesPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/grades-page.js")).AccessGradesPage }),
         },
         {
           path: "access/members",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessMembersPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/members-page.js")).AccessMembersPage }),
         },
         {
           path: "access/roles",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessRolesPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/roles-page.js")).AccessRolesPage }),
         },
         {
           path: "access/bindings",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessBindingsPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/bindings-page.js")).AccessBindingsPage }),
         },
         {
           path: "access/simulator",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessSimulatorPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/simulator-page.js")).AccessSimulatorPage }),
         },
         {
           path: "access/audit",
-          lazy: async () => ({ Component: (await import("./pages/access-pages.js")).AccessAuditPage }),
+          lazy: async () => ({ Component: (await import("./pages/access/audit-page.js")).AccessAuditPage }),
         },
       ],
     },

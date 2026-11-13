@@ -9,6 +9,7 @@ import {
   SCHEMA_NAME_PATTERN,
   schemaIssuePathToFormPath,
   toAdminApiError,
+  UnsavedChangesGuard,
   useAdminApi,
   type CollectionDetail,
   type CollectionDraftInput,
@@ -25,7 +26,6 @@ import {
   useDisplayMode,
 } from "../display-mode.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
-import { UnsavedChangesGuard } from "../components/unsaved-guard.js";
 import { queryKeys } from "../queries.js";
 
 interface SchemaFieldValues {

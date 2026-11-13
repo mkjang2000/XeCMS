@@ -45,9 +45,9 @@ jobs:
           node-version: 22.22.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build:all
+      - run: pnpm build
       - run: docker compose --profile e2e up --detach --wait postgres-e2e
-      - run: pnpm test:database:all
+      - run: pnpm test:database
         env:
           XECMS_TEST_DATABASE_URL: postgresql://xecms:xecms@127.0.0.1:55432/xecms_e2e
           XECMS_E2E_DB_SERVICE: xecms-postgres-e2e-1

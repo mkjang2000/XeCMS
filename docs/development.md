@@ -9,9 +9,8 @@
 | 명령 | 용도 | 외부 서비스 |
 | --- | --- | --- |
 | `pnpm dev` | 엔진 API와 Vite CMS Studio 실행 | PostgreSQL |
-| `pnpm build` | 엔진 패키지, 서버와 CMS Studio production 빌드 | 없음 |
+| `pnpm build` | 전체 패키지·예제와 CMS Studio production 빌드 | 없음 |
 | `pnpm start` | 빌드 산출물을 production 모드로 실행 | PostgreSQL |
-| `pnpm build:all` | 엔진과 예제 전체 빌드 | 없음 |
 | `pnpm clean` | 빌드 결과·테스트 보고서·도구 캐시 정리 | 없음 |
 | `pnpm migrate` | forward-only DB 마이그레이션 적용 | PostgreSQL |
 | `pnpm db:up` | 로컬 Compose PostgreSQL 시작 | Docker |
@@ -28,13 +27,11 @@ scaffold가 지정한 엔진 패키지만 설치하며, production 의존성에�
 
 | 명령 | 검증 범위 | 권장 시점 |
 | --- | --- | --- |
-| `pnpm test:unit` | 엔진 Vitest 단위 테스트 | 구현 중 |
-| `pnpm typecheck` | 엔진 TypeScript project reference | 구현 중 |
-| `pnpm check` | 경계·엔진 격리·문서·타입·엔진 단위 테스트 | 엔진 변경 시 |
-| `pnpm check:all` | 엔진과 예제 전체 정적·단위 검증 | PR 전 |
+| `pnpm test` | Vitest 단위 테스트 | 구현 중 |
+| `pnpm typecheck` | 전체 TypeScript project reference | 구현 중 |
+| `pnpm check` | 경계·엔진 격리·문서·전체 타입·단위 테스트 | 변경 시·PR 전 |
 | `pnpm verify:quick` | 엔진 `check` + source resolution + 빌드 | 엔진 변경 시 |
 | `pnpm test:database` | 엔진 PostgreSQL 조건부 통합·회귀 테스트 | 엔진 DB 변경 시 |
-| `pnpm test:database:all` | 엔진 PostgreSQL 회귀 (`test:database`와 동일) | 전체 DB 검증 시 |
 | `pnpm test:e2e` | 엔진 Chromium 사용자 여정 | 엔진 UI/API 변경 시 |
 | `pnpm verify` | 전체 정적·단위, 배포 tarball, DB, backup/restore, 엔진 E2E | 릴리스 전 |
 | `pnpm release:pack --output <directory>` | 공개 패키지 전체 tarball·버전·파일·라이선스 검사 | 빌드 후 배포 준비 |
@@ -63,6 +60,11 @@ docker compose --project-name xecms-engine-tests --profile e2e down --volumes --
 위 명령은 개발 DB와 다른 Compose project를 사용합니다. 기본 개발 project를 대상으로
 `down --volumes`를 실행하면 개발 데이터 볼륨도 삭제되므로 테스트 정리에 사용하지 않습니다.
 
+TypeScript 공통 옵션, 개발용 소스 경로와 전체 빌드 순서는 루트 `tsconfig.json` 한 곳에서
+관리합니다. 패키지별 `tsconfig.json`은 각 패키지의 출력 경로, JSX 옵션과 빌드 의존 관계만
+정합니다. 별도의 `base`·`dev`·`all` 설정이나 `:all` 명령은 사용하지 않습니다.
+서버 통합 테스트도 루트 `test:database`에서 발견·실행하며 앱별 Vitest 설정은 없습니다.
+
 CI는 PR과 main 변경에서 엔진 검사, 격리 PostgreSQL 회귀, 전체 release 검증을 실행합니다.
 릴리스 게시와 수동 실행도 동일한 검증을 수행하며, 브라우저 실패 자료는 artifact로 남깁니다.
 `dist/`와 `dist-types/`는 빌드 생성물로 Git 추적에서 제외합니다.
@@ -86,7 +88,7 @@ npm 배포 패키지에는 테스트와 테스트 전용 보조 파일을 포함
 묶고, 저장소 밖의 임시 소비 프로젝트에 설치하여 생성기·Schema·엔진 실행을 검증합니다.
 
 ```bash
-pnpm build:all
+pnpm build
 pnpm release:pack --output ./dist/releases/0.6.0
 pnpm release:check-install ./dist/releases/0.6.0
 ```

@@ -189,11 +189,10 @@ try {
   if (releaseMode) {
     await run(pnpm, ["clean"]);
   }
-  await run(pnpm, [releaseMode ? "build:all" : "build"], {
+  await run(pnpm, ["build"], {
     ...baseEnvironment,
     NODE_ENV: "production",
   });
-  if (!releaseMode && suitesToRun.some(suite => suite.examplePlugin)) await run(pnpm, ["exec", "tsc", "-b", "examples/example-plugin"]);
   if (releaseMode) {
     await run(pnpm, ["check:prototype"]);
     await run(pnpm, ["release:pack", "--output", packRoot]);
@@ -212,7 +211,7 @@ try {
     "postgres-e2e",
   ]);
   if (releaseMode) {
-    await run(pnpm, ["test:database:all"]);
+    await run(pnpm, ["test:database"]);
   }
 
   for (const suite of suitesToRun) {

@@ -3,4 +3,4 @@ export * from "./cli.js";
 export * from "./config.js";
 export * from "./doctor.js";
 export * from "./scaffold.js";
-export * from "./starters.js";
+export { isStarterName, starterSchema, type StarterName } from "@xecms/schema";

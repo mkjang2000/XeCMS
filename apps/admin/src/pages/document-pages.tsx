@@ -16,6 +16,7 @@ import {
   documentPublishActionLabel,
   parsePageParameter,
   toAdminApiError,
+  UnsavedChangesGuard,
   useAdminApi,
   type CollectionDetail,
   type CollectionField,
@@ -36,7 +37,6 @@ import { DocumentPagination } from "../components/document-pagination.js";
 import { DocumentStatus } from "../components/document-status.js";
 import { Icon } from "../components/icon.js";
 import { Page, PageHeader } from "../components/page.js";
-import { UnsavedChangesGuard } from "../components/unsaved-guard.js";
 import {
   decideDocumentFormSync,
   documentTitle,

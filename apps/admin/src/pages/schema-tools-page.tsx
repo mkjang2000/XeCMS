@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Callout, TextAreaField } from "@xecms/ui";
-import { toAdminApiError, useAdminApi } from "@xecms/admin";
+import { toAdminApiError, UnsavedChangesGuard, useAdminApi } from "@xecms/admin";
 import styles from "../app.module.css";
 import { LoadError, PageLoading } from "../components/async-state.js";
 import { Page, PageHeader, SectionHeader } from "../components/page.js";
-import { UnsavedChangesGuard } from "../components/unsaved-guard.js";
 import { queryKeys } from "../queries.js";
 
 function downloadText(fileName: string, source: string, mimeType: string) {

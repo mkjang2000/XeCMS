@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2).filter(value => value !== "--");
 if (args.length !== 2 || args[0] !== "--output") {
-  throw new Error("Usage: pnpm release:pack --output <empty-directory>. Build with pnpm build:all first.");
+  throw new Error("Usage: pnpm release:pack --output <empty-directory>. Build with pnpm build first.");
 }
 const output = resolve(args[1]);
 await mkdir(output, { recursive: true });
