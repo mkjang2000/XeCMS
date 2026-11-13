@@ -2,6 +2,8 @@
 
 `pnpm create xecms`로 생성한 프로젝트를 production에서 실행하는 절차를 설명합니다.
 XeCMS 저장소 자체를 배포하는 경우의 빌드 차이도 함께 다룹니다.
+기본 배포에는 엔진과 CMS Studio만 포함됩니다. ERP 등 별도 업무 애플리케이션은
+공개 API/SDK를 사용하며 업무 화면 빌더를 설치할 필요가 없습니다.
 
 ## 1. 프로덕션 빌드
 
@@ -20,10 +22,42 @@ XeCMS 소스 저장소에서 `pnpm build`를 실행하면 다음 산출물을 �
 | `packages/*/dist` | Core, SDK, CLI 등 TypeScript 패키지 |
 | `apps/server/dist` | Node.js API 서버 |
 | `apps/admin/dist` | 서버가 `/admin`에서 제공할 정적 Admin 번들 |
-| `examples/example-plugin/dist` | 기본 Trusted Plugin 예제 |
+
+업무 화면 빌더의 번들과 차트 라이브러리는 기본 Admin 빌드에 포함하지 않습니다.
+Plugin 예제도 기본 서버 catalog에서 자동 로드하지 않습니다.
 
 `pnpm start`는 소스를 컴파일하거나 Schema 타입을 갱신하지 않으므로 항상 검증된
 `pnpm build` 뒤에 실행합니다.
+
+### 선택 빌더 배포
+
+빌더 소스·빌드·실행은 [별도 저장소](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder)에서 관리합니다.
+엔진 저장소의 빌드와 실행에는 빌더 코드가 포함되지 않습니다.
+빌더 UI asset은 `/extensions/app-builder/`에서 제공되고, 기존 `/admin/apps`,
+`/admin-apps/:appId/screens`, `/apps/:appKey/*` 주소는 선택 확장이 등록합니다.
+엔진만 실행할 때 이 경로와 빌더 API는 제공하지 않습니다.
+
+소비 프로젝트에서 선택 패키지를 설치한 후에는 `xecms.config.json`에 등록합니다.
+다음은 설정 일부이며, 나머지 기존 엔진 설정은 유지합니다.
+
+```json
+{
+  "extensions": ["@xecms/app-builder-server"],
+  "plugins": []
+}
+```
+
+`extensions`는 서버 시작 시 등록하는 trusted 서버 확장 목록입니다. `plugins`는
+기존 Plugin SDK의 catalog에 제공하는 모듈 목록이며 설치·활성화는 Plugin 관리 UI에서 수행합니다.
+모듈은 소비 프로젝트의 `node_modules` 또는 프로젝트 기준 상대 경로에서 찾습니다.
+목록이 비어 있으면 해당 모듈을 import하지 않습니다. 누락되거나 잘못된 명시 패키지는 시작 오류로 처리합니다.
+
+CLI를 사용하지 않고 `apps/server/dist/main.js`를 직접 실행하는 경우에는
+`XECMS_SERVER_EXTENSIONS`와 `XECMS_PLUGINS`에 같은 목록을 JSON 배열로 전달합니다.
+CLI에서는 설정 파일의 목록이 환경변수보다 우선합니다. 새 scaffold는 두 목록을 빈 배열로 생성합니다.
+
+기존 빌더를 사용한 DB에서 엔진만 실행해도 빌더 데이터를 삭제하지 않습니다.
+빌더를 다시 사용할 때는 호환되는 확장과 UI 패키지를 함께 배포하세요.
 
 ## 2. 프로덕션 환경 설정
 

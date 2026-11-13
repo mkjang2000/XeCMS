@@ -1,6 +1,6 @@
 {
   "name": "@xecms/schema",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Canonical schema model, parser and generator for XeCMS.",
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "packages/schema" },

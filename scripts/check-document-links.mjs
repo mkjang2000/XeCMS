@@ -1,7 +1,8 @@
 import { access, readdir, readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
-const documents = [new URL("README.md", root)];
+const documents = ["README.md", "README.en.md", "CHANGELOG.md"]
+  .map(path => new URL(path, root));
 const docsDirectory = new URL("docs/", root);
 
 for (const entry of await readdir(docsDirectory, { withFileTypes: true })) {

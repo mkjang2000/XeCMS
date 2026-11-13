@@ -5,3 +5,5 @@ export * from "./document-lifecycle.js";
 export * from "./field-registry.js";
 export * from "./pagination.js";
 export * from "./schema-validation.js";
+
+export { UnsavedChangesGuard } from "./unsaved-guard.js";

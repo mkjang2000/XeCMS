@@ -1,5 +1,10 @@
 # TypeScript SDK
 
+`@xecms/client`는 엔진 API만 제공하며 업무 화면 빌더에 의존하지 않습니다.
+빌더 전용 `adminApps` API와 DTO는 선택 패키지 `@xecms/app-builder-client`로 이동했습니다.
+기존 빌더 연동 코드는 `withAppBuilder(engineClient).adminApps` 또는
+`createAppBuilderClient()`를 사용하세요. 콘텐츠·인증 등 기존 엔진 API는 그대로 유지됩니다.
+
 `@xecms/client`는 REST API를 감싸는 타입 안전 클라이언트입니다. 응답·요청 타입은
 `@xecms/contracts`에서 재노출되므로 별도 설치 없이 사용할 수 있습니다.
 

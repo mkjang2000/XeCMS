@@ -12,8 +12,26 @@ TypeScript APIs, Realm-based authorization, and plugins.
 PostgreSQL is the official data store. Schema, migrations, REST APIs, the administrative UI, and
 authorization decisions all share one model.
 
-> The current version is **0.5.0**. The MVP feature set and full verification pipeline are complete,
-> including per-Realm content access ceilings and delegated cross-Realm user administration.
+> Source version **0.6.0** is being prepared and has not been published to npm. The latest npm release is 0.5.0.
+> Version 0.6.0 provides the engine and CMS Studio by default, with the business-screen builder as an optional extension.
+> See the [migration notes](./CHANGELOG.md) (Korean) when upgrading from 0.5.x.
+
+## Choose a configuration
+
+The default installation and `pnpm build`, `pnpm dev`, and `pnpm start` provide the
+**engine and its administrative UI**. Applications such as an ERP can use the REST API
+or TypeScript SDK without installing or running the business-screen builder.
+
+| Area | Location | Responsibility |
+| --- | --- | --- |
+| Engine and CMS Studio | `apps/`, `packages/` | Schema, content, identity, authorization, operations, and their management UI |
+| Business-screen builder | [XeCMS-Plugin-AppBuilder](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder) | Optional extension in its own repository |
+| Public documentation | `docs/` | Installation, usage, API, and operations |
+| Development documentation | [XeCMS-Docs](https://github.com/mkjang2000/XeCMS-Docs) | Private internal designs, analysis, and verification records |
+
+The builder is an optional extension under development. See its
+[usage and migration guide](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder) (Korean).
+The example Plugin also requires explicit registration and is not part of the default server.
 
 ## Language support
 
@@ -53,6 +71,9 @@ Applications define their own content languages and localization policies.
   extensions, and a safe lifecycle.
 
 ## Quick start
+
+The npm commands below install the currently published release. The 0.6.0 configuration
+described here will become available through npm after that release is published.
 
 ### Requirements
 
@@ -239,7 +260,7 @@ upgrades, real backup/restore, and isolated Chromium user journeys.
 ```bash
 pnpm exec playwright install chromium
 pnpm test:database   # PostgreSQL integration tests
-pnpm test:e2e        # Complete browser user journeys
+pnpm test:e2e        # Engine browser user journeys
 pnpm verify          # Final release gate
 ```
 
@@ -248,7 +269,7 @@ and selective execution options.
 
 ## Current scope
 
-Version 0.5.0 is the MVP stabilization release. The following are intentionally out of scope:
+Version 0.6.0 separates the engine from the optional builder. The following are intentionally out of scope:
 
 - Full SaaS multi-tenancy with multiple Workspaces
 - Explicit Deny rules and an arbitrary JavaScript policy language

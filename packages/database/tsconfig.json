@@ -7,12 +7,23 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "references": [
-    { "path": "../admin-apps" },
-    { "path": "../schema" },
-    { "path": "../core" },
-    { "path": "../application" },
-    { "path": "../plugin-sdk" },
-    { "path": "../../examples/example-plugin" }
+    {
+      "path": "../schema"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../application"
+    },
+    {
+      "path": "../plugin-sdk"
+    },
+    {
+      "path": "../../examples/example-plugin"
+    }
   ],
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

@@ -7,8 +7,11 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "references": [
-    { "path": "../admin-apps" },
-    { "path": "../schema" }
+    {
+      "path": "../schema"
+    }
   ],
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

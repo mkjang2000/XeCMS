@@ -2,6 +2,9 @@
 
 XeCMS 서버를 설치하고, 최초 Owner 계정을 만들고, 첫 API 요청을 보내는 과정을 안내합니다.
 
+이 문서는 배포 준비 중인 0.6.0 소스를 기준으로 한다. 현재 npm 최신 버전은 0.5.0이며,
+아래 생성 명령에 0.6.0의 구성 분리가 반영되는 시점은 새 릴리스 게시 이후다.
+
 ## 요구 사항
 
 - **Node.js** 22.22 이상
@@ -16,6 +19,10 @@ pnpm create xecms my-cms
 cd my-cms
 pnpm install
 ```
+
+생성되는 프로젝트는 엔진과 CMS Studio만 설치한다. 업무 화면 빌더는 필요한 경우에만
+[별도 설치](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder)한다. 기존 0.5.x 프로젝트는
+[업그레이드 안내](../CHANGELOG.md)를 먼저 확인한다.
 
 기본 starter는 `minimal`이다. 생성 명령에 `--starter blog` 또는 `--starter community`를
 추가해 다음 starter 중 하나를 선택할 수 있다.

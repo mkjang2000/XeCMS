@@ -12,8 +12,26 @@ TypeScript API, Realm 권한 모델과 Plugin으로 확장할 수 있다.
 PostgreSQL을 공식 저장소로 사용하며 Schema, Migration, REST API, 관리 UI와 권한 판정이
 하나의 모델을 공유한다.
 
-> 현재 버전은 **0.5.0**이다. MVP 기능과 전체 검증 체계가 완성되어 있으며, Realm별 콘텐츠
-> 접근 상한과 교차 Realm 사용자 관리 위임까지 포함한다.
+> 소스 버전 **0.6.0**은 배포 준비 중이며 아직 npm에 게시하지 않았다. npm 최신 버전은 0.5.0이다.
+> 0.6.0은 엔진과 CMS Studio를 기본 구성으로 제공하고 업무 화면 빌더를 선택 확장으로 분리한다.
+> 0.5.x에서 전환할 때는 [변경 사항](./CHANGELOG.md)을 확인한다.
+
+## 구성 선택
+
+기본 설치와 `pnpm build`, `pnpm dev`, `pnpm start`는 **엔진과 엔진 관리 UI**를 제공한다.
+ERP 등 별도 애플리케이션은 이 구성의 REST API 또는 TypeScript SDK를 사용하면 된다.
+업무 화면 빌더를 설치하거나 실행할 필요가 없다.
+
+| 영역 | 위치 | 역할 |
+| --- | --- | --- |
+| 엔진과 CMS Studio | `apps/`, `packages/` | Schema·콘텐츠·인증·권한·운영과 이를 관리하는 UI |
+| 업무 화면 빌더 | [XeCMS-Plugin-AppBuilder](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder) | 별도 저장소의 선택 확장 |
+| 공개 문서 | `docs/` | 설치·사용·API·운영 안내 |
+| 개발 문서 | [XeCMS-Docs](https://github.com/mkjang2000/XeCMS-Docs) | 비공개 내부 설계·분석·검증 기록 |
+
+빌더는 개발 중인 선택 확장이다. 사용 방법과 기존 빌더 환경의 전환은
+[업무 화면 빌더](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder)를 참고한다.
+예제 Plugin도 기본 서버에 포함하지 않으며 필요한 프로젝트에서 명시적으로 등록한다.
 
 ## 언어 지원
 
@@ -53,6 +71,9 @@ PostgreSQL을 공식 저장소로 사용하며 Schema, Migration, REST API, 관�
   안전한 lifecycle을 제공한다.
 
 ## 빠른 시작
+
+아래 npm 명령은 현재 게시된 버전을 설치한다. 이 문서의 0.6.0 구성 분리는 새 릴리스가
+게시된 뒤 npm 설치에 반영된다.
 
 ### 요구 사항
 
@@ -231,7 +252,7 @@ Chromium 사용자 여정을 모두 실행한다.
 ```bash
 pnpm exec playwright install chromium
 pnpm test:database   # PostgreSQL 통합 테스트
-pnpm test:e2e        # 전체 브라우저 사용자 여정
+pnpm test:e2e        # 엔진 브라우저 사용자 여정
 pnpm verify          # 최종 release gate
 ```
 
@@ -239,7 +260,7 @@ pnpm verify          # 최종 release gate
 
 ## 현재 범위
 
-0.5.0은 MVP 안정화 릴리스다. 다음 항목은 의도적으로 현재 범위에서 제외한다.
+0.6.0은 엔진과 선택 빌더를 분리한 릴리스다. 다음 항목은 의도적으로 현재 범위에서 제외한다.
 
 - 여러 Workspace를 제공하는 완전한 SaaS multi-tenancy
 - 명시적 Deny와 임의 JavaScript policy language
@@ -250,6 +271,7 @@ pnpm verify          # 최종 release gate
 
 ## 문서
 
+- [변경 사항과 업그레이드](./CHANGELOG.md)
 - [문서 인덱스](./docs/README.md)
 - [시작하기](./docs/getting-started.md) · [핵심 개념](./docs/concepts.md) · [인증](./docs/authentication.md)
 - [REST API](./docs/rest-api.md) · [TypeScript SDK](./docs/typescript-sdk.md) · [Schema](./docs/schema.md)

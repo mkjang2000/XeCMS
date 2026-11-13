@@ -48,11 +48,12 @@ const databaseUrl =
   process.env.XECMS_E2E_RUNNER_DATABASE_URL ??
   `postgresql://xecms:xecms@127.0.0.1:${databasePort}/xecms_e2e`;
 const runId = `${process.pid}_${Date.now()}`;
+if (releaseMode && commandLineSuiteNames.length > 0) throw new Error("--release always runs all engine suites; omit --suite.");
 const selectedSuiteNames = new Set(
-  [
+  (releaseMode ? [] : [
     ...(process.env.XECMS_E2E_SUITES ?? "").split(","),
     ...commandLineSuiteNames,
-  ].map((name) => name.trim()).filter(Boolean),
+  ]).map((name) => name.trim()).filter(Boolean),
 );
 const baseEnvironment = {
   ...process.env,
@@ -78,6 +79,8 @@ const baseEnvironment = {
   XECMS_MEDIA_MAX_UPLOAD_BYTES: "1048576",
   XECMS_MEDIA_ALLOWED_MIME_TYPES: "image/png,image/jpeg",
   XECMS_E2E_DB_SERVICE: databaseServiceName,
+  XECMS_SERVER_EXTENSIONS: "[]",
+  XECMS_PLUGINS: "[]",
 };
 
 function run(command, arguments_, environment = baseEnvironment) {
@@ -107,6 +110,7 @@ async function runBrowserSuite({
   specs,
   seeded = true,
   ownerPassword = "Admin-test-only-2026!",
+  examplePlugin = false,
   environment = {},
 }) {
   const suiteMediaRoot = join(mediaRoot, name);
@@ -118,6 +122,8 @@ async function runBrowserSuite({
     XECMS_MEDIA_STORAGE_ROOT: suiteMediaRoot,
     XECMS_E2E_AUTO_BOOTSTRAP: String(seeded),
     XECMS_E2E_OWNER_PASSWORD: ownerPassword,
+    XECMS_PLUGINS: examplePlugin
+      ? JSON.stringify([fileURLToPath(new URL("examples/example-plugin/dist/index.js", rootDirectory))]) : "[]",
     ...environment,
   });
 }
@@ -159,6 +165,7 @@ const browserSuites = [
   },
   {
     name: "plugins",
+    examplePlugin: true,
     specs: ["tests/e2e/m4c4-plugins.spec.ts"],
   },
   {
@@ -166,20 +173,13 @@ const browserSuites = [
     specs: ["tests/e2e/m4c5-productization.spec.ts"],
     environment: { XECMS_E2E_DISPLAY_MODE: "" },
   },
-  {
-    name: "admin-app-blocks",
-    specs: ["tests/e2e/admin-app-blocks.spec.ts"],
-  },
-  {
-    name: "admin-apps",
-    specs: ["tests/e2e/admin-apps.spec.ts"],
-  },
 ];
 const knownSuiteNames = new Set(browserSuites.map(({ name }) => name));
 const unknownSuiteNames = [...selectedSuiteNames].filter((name) => !knownSuiteNames.has(name));
 if (unknownSuiteNames.length > 0) {
   throw new Error(`Unknown E2E suite '${unknownSuiteNames[0]}'.`);
 }
+const suitesToRun = browserSuites.filter(suite => selectedSuiteNames.size === 0 || selectedSuiteNames.has(suite.name));
 const mediaRoot = await mkdtemp(join(tmpdir(), "xecms-e2e-media-"));
 const packRoot = await mkdtemp(join(tmpdir(), "xecms-release-pack-"));
 
@@ -189,19 +189,14 @@ try {
   if (releaseMode) {
     await run(pnpm, ["clean"]);
   }
-  await run(pnpm, ["build"], {
+  await run(pnpm, [releaseMode ? "build:all" : "build"], {
     ...baseEnvironment,
     NODE_ENV: "production",
   });
+  if (!releaseMode && suitesToRun.some(suite => suite.examplePlugin)) await run(pnpm, ["exec", "tsc", "-b", "examples/example-plugin"]);
   if (releaseMode) {
     await run(pnpm, ["check:prototype"]);
-    await run(pnpm, [
-      "--filter",
-      "@xecms/cli",
-      "pack",
-      "--pack-destination",
-      packRoot,
-    ]);
+    await run(pnpm, ["release:pack", "--output", packRoot]);
   }
 
   databaseStarted = true;
@@ -217,16 +212,10 @@ try {
     "postgres-e2e",
   ]);
   if (releaseMode) {
-    await run(pnpm, ["test:database"]);
+    await run(pnpm, ["test:database:all"]);
   }
 
-  for (const suite of browserSuites) {
-    if (
-      selectedSuiteNames.size > 0 &&
-      !selectedSuiteNames.has(suite.name)
-    ) {
-      continue;
-    }
+  for (const suite of suitesToRun) {
     await runBrowserSuite(suite);
   }
 } finally {

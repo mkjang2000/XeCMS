@@ -22,12 +22,12 @@ import {
 } from "../display-mode.js";
 import styles from "../app-shell.module.css";
 import { queryKeys } from "../queries.js";
+import { ExtensionNavigation } from "../components/extension-navigation.js";
 
 export const navigationAccessChecks = [
   permissionCheck("nav.content.list", "content.list", systemResources.content),
   permissionCheck("nav.content.schema", "schema.read", systemResources.schema),
   permissionCheck("nav.schema", "schema.read", systemResources.schema),
-  permissionCheck("nav.admin-apps", "admin-app.read", systemResources.workspace),
   permissionCheck("nav.media", "media.read", systemResources.workspace),
   permissionCheck("nav.users", "identity.read", systemResources.authorization),
   permissionCheck("nav.realms", "identity.read", systemResources.authorization),
@@ -53,7 +53,6 @@ export const navigationItems: readonly {
   { to: "/admin/content", icon: "content", label: "콘텐츠", group: "content", minimum: "basic", access: ["nav.content.list", "nav.content.schema"], requireAll: true },
   { to: "/admin/media", icon: "media", label: "미디어", group: "content", minimum: "basic", access: ["nav.media"] },
   { to: "/admin/schema", icon: "schema", label: "스키마", group: "content", minimum: "basic", access: ["nav.schema"] },
-  { to: "/admin/apps", icon: "workspace", label: "운영 앱", group: "content", minimum: "basic", access: ["nav.admin-apps"] },
   { to: "/admin/users", icon: "identity", label: "사용자", group: "people", minimum: "basic", access: ["nav.users"] },
   { to: "/admin/realms", icon: "identity", label: "사용자 공간", group: "people", minimum: "basic", access: ["nav.realms"] },
   { to: "/admin/access", icon: "shield", label: "권한", group: "people", minimum: "basic", access: ["nav.access"] },
@@ -162,6 +161,7 @@ export function AppShell() {
               </section>
             );
           })}
+          <ExtensionNavigation />
         </nav>
         <div className={styles.sidebarFooter}>
           <div className={styles.account}>

@@ -129,6 +129,10 @@ xecms backup restore ./backups/2026-07-19 --confirm-empty
 
 ## 마이그레이션과 Upgrade
 
+0.5.x에서 0.6.0으로 전환할 때는 [릴리스별 업그레이드 안내](../CHANGELOG.md)를 따른다.
+`backup restore`는 동일 major/minor 버전의 백업만 허용한다. 0.5.x 백업은 기존 0.5.x
+환경에서 먼저 복원한 뒤 패키지를 갱신한다.
+
 ```bash
 xecms migrate
 ```

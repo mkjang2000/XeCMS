@@ -1,7 +1,8 @@
 import { buildServer } from "./server.js";
 import { listenServer } from "./server-lifecycle.js";
+import { loadServerModules } from "./server-module-loader.js";
 
-const server = await buildServer();
+const server = await buildServer(await loadServerModules());
 
 const shutdown = async (): Promise<void> => {
   try {

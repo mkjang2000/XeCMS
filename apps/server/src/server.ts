@@ -2,13 +2,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import cookie from "@fastify/cookie";
-import examplePlugin from "@xecms/example-plugin";
 import fastifyStatic from "@fastify/static";
 import {
   ApplicationError,
-  AdminAppApplicationService,
-  AdminAppRuntimeApplicationService,
-  CatalogAdminAppDependencyResolver,
   AuthorizationApplicationService,
   AuthApplicationService,
   BasicMediaTypeInspector,
@@ -37,7 +33,6 @@ import {
   SYSTEM_AUTHORIZATION_REALM_ID,
   SYSTEM_AUTHORIZATION_RESOURCE_ID,
   SYSTEM_WORKSPACE_RESOURCE_ID,
-  createCoreMaskPolicyRegistry,
   realmAuthorizationRootResourceId,
   type AuthorizationPolicyManagementActor,
   type ActorContext,
@@ -61,7 +56,6 @@ import {
   PostgresAuthorizationStore,
   PostgresRealmCollectionEntitlementStore,
   PostgresRealmManagementDelegationStore,
-  PostgresAdminAppStore,
   PostgresContentHierarchyStore,
   PostgresIdentityRealmStore,
   PostgresIdentityAdministrationStore,
@@ -89,8 +83,6 @@ import { registerJobRoutes } from "./job-routes.js";
 import { registerSiteRoutes } from "./site-routes.js";
 import { registerOperationsRoutes } from "./operations-routes.js";
 import { registerPluginRoutes } from "./plugin-routes.js";
-import { registerAdminAppRoutes } from "./admin-app-routes.js";
-import { registerAdminAppRuntimeRoutes } from "./admin-app-runtime-routes.js";
 import { LoginRateLimiter } from "./rate-limit.js";
 import { createApplicationRuntime, createSecurityRuntime } from "./security.js";
 import { parseDocumentQueryRequest } from "./document-query-request.js";
@@ -143,7 +135,8 @@ import { registerMediaRoutes } from "./media-routes.js";
 import { registerDocumentRoutes } from "./document-routes.js";
 import { createSchemaProjectionCoordinator } from "./schema-projection.js";
 import { createRealmProfileSchemaCommands } from "./realm-profile-schema.js";
-import { createAdminRuntimeAuthenticator } from "./admin-runtime-authentication.js";
+import { createAudienceAuthenticator } from "./audience-authentication.js";
+import { extensionAcceptsRawBody, registerServerExtensions, validateServerExtensions, type ServerExtension } from "./server-extensions.js";
 import { createContentHierarchyRuntime } from "./content-hierarchy-runtime.js";
 
 function pluginExtensionIds(module: XeCmsPluginModule): ReadonlySet<string> {
@@ -165,6 +158,7 @@ export interface BuildServerOptions {
   readonly logger?: boolean;
   readonly plugins?: readonly XeCmsPluginModule[];
   readonly shutdownTimeoutMs?: number;
+  readonly extensions?: readonly ServerExtension[];
 }
 
 export interface XeCmsServer {
@@ -179,9 +173,10 @@ export interface XeCmsServer {
  * about installed Plugins without a running server (the CLI recovery path for
  * manifest drift) sees exactly the catalogue the server would load.
  */
-export const DEFAULT_PLUGIN_MODULES: readonly XeCmsPluginModule[] = [examplePlugin];
+export const DEFAULT_PLUGIN_MODULES: readonly XeCmsPluginModule[] = [];
 
 export async function buildServer(options: BuildServerOptions = {}): Promise<XeCmsServer> {
+  validateServerExtensions(options.extensions ?? []);
   const config = options.config ?? loadServerConfig();
   const database =
     options.database ??
@@ -208,6 +203,7 @@ async function assembleServer(
   database: PostgresDatabase,
   lifecycle: ServerLifecycle,
 ): Promise<XeCmsServer> {
+  const extensions = options.extensions ?? [];
   const pluginModules = options.plugins ?? [...DEFAULT_PLUGIN_MODULES];
   const pluginCatalog = new PluginCatalog(pluginModules);
   await database.migrate();
@@ -254,55 +250,6 @@ async function assembleServer(
   const entitlementStore = new PostgresRealmCollectionEntitlementStore(database.pool, database.schema);
   const delegationStore = new PostgresRealmManagementDelegationStore(database.pool, database.schema);
   const crossRealmManagementService = new CrossRealmManagementService(delegationStore);
-  const adminAppStore = new PostgresAdminAppStore(database.pool, database.schema);
-  const adminAppDependencyResolver = new CatalogAdminAppDependencyResolver({
-      getActiveSchema: async (workspaceId) => {
-        if (workspaceId !== DEFAULT_WORKSPACE_ID) return null;
-        const active = await database.getActiveSchema();
-        return active === null ? null : {
-          revisionId: active.revisionId, hash: active.hash, schema: active.schema,
-        };
-      },
-      getRealm: async (workspaceId, realmId) => {
-        const realm = await identityRealmStore.getRealmById(realmId);
-        return realm === null || realm.workspaceId !== workspaceId ? null : realm;
-      },
-      getAuthorization: async (workspaceId, realmId) => {
-        const realm = await identityRealmStore.getRealmById(realmId);
-        if (realm === null || realm.workspaceId !== workspaceId) return null;
-        const policy = await authorizationStore.loadPolicy(realmId);
-        return policy === null ? null : {
-          realmId,
-          revision: policy.revision,
-          permissionKeys: new Set(policy.permissions.map(({ key }) => key)),
-          resourceIds: new Set(policy.resources.map(({ id }) => id)),
-        };
-      },
-      getPlugin: async (workspaceId, pluginId) => {
-        if (!pluginCatalog.has(pluginId)) return null;
-        const module = pluginCatalog.get(pluginId);
-        const installed = await pluginStore.get(workspaceId, pluginId);
-        return {
-          id: pluginId,
-          version: module.manifest.version,
-          manifestDigest: pluginManifestDigest(module.manifest),
-          ...(installed === null ? {} : { installedManifestDigest: installed.manifestDigest }),
-          installed: installed !== null,
-          enabled: installed?.desiredState === "enabled",
-          runtimeLoaded: loadedPluginIds.has(pluginId),
-          extensionIds: pluginExtensionIds(module),
-        };
-      },
-    });
-  const adminApps = new AdminAppApplicationService(
-    adminAppStore,
-    adminAppDependencyResolver,
-    {
-      now: () => new Date().toISOString(),
-      newAppId: () => `aap_${randomUUID()}`,
-      newRevisionId: () => `aar_${randomUUID()}`,
-    },
-  );
   const unifiedAudit = new UnifiedAuditService(
     new PostgresUnifiedAuditStore(database.pool, database.schema),
   );
@@ -329,11 +276,6 @@ async function assembleServer(
     newAuditId: () => `audit_${randomUUID()}`,
     newId: (prefix) => `${prefix}_${randomUUID()}`,
   }, entitlementStore);
-  const adminAppRuntime = new AdminAppRuntimeApplicationService(
-    adminAppStore,
-    adminAppDependencyResolver,
-    () => new Date().toISOString(),
-  );
   const realmAuthorization = new ContentRealmAuthorizationProvisioner(authorization);
   const hierarchyStore = new PostgresContentHierarchyStore(database.pool, database.schema);
   const ensureAuthorizationPolicy = async (owner: {
@@ -594,13 +536,22 @@ async function assembleServer(
     genReqId: () => randomUUID(),
   });
   lifecycle.attachApp(app);
+  // Awaited extension plugins can finalize existing route contexts. Install
+  // the shared formatter before any registration so they inherit it too.
+  app.setErrorHandler(async (error, request, reply) => {
+    const problem = problemDetails(error instanceof Error ? error : new Error("Unknown error"), request.id);
+    if (problem.status >= 500) {
+      request.log.error({ err: error, requestId: request.id }, "request failed");
+    }
+    reply.type("application/problem+json").code(problem.status).send(problem);
+  });
   if (config.disableAdminOrigins) {
     app.log.warn("Admin Origin validation is disabled for this development process.");
   }
   await app.register(cookie);
   app.addContentTypeParser("*", (request, payload, done) => {
-    const runtimeMediaUpload = /^\/api\/admin-apps\/runtime\/[^/]+\/media(?:\?|$)/.test(request.url);
-    if ((request.url.startsWith("/api/media") || runtimeMediaUpload) && request.method === "POST") {
+    const extensionStream = extensionAcceptsRawBody(extensions, request.method, request.url);
+    if ((request.url.startsWith("/api/media") && request.method === "POST") || extensionStream) {
       done(null, payload);
       return;
     }
@@ -756,41 +707,37 @@ async function assembleServer(
       await auth.reauthenticate({identityId:authenticated.session.identity.id,username:authenticated.session.identity.username,password});
     },
   });
-  registerAdminAppRoutes({
-    app,
-    adminApps,
-    requireActor: async (request, csrf) =>
-      (await requireActor(request, auth, authorization, config, csrf)).actor,
+  await registerServerExtensions(extensions, {
+    app, workspaceId: DEFAULT_WORKSPACE_ID, database, authorization,
+    requireActor: async (request, csrf) => (await requireActor(request, auth, authorization, config, csrf)).actor,
     reauthenticate: async (request, actor, password) => {
       const authenticated = await requireSession(request, auth, config, false);
       if (authenticated.session.identity.id !== actor.identityId) {
-        throw new ApplicationError(
-          "SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH",
-          403,
-          "The reauthentication challenge does not match the System session.",
-        );
+        throw new ApplicationError("SYSTEM_REAUTHENTICATION_CONTEXT_MISMATCH", 403,
+          "The reauthentication challenge does not match the System session.");
       }
-      await auth.reauthenticate({
-        identityId: authenticated.session.identity.id,
-        username: authenticated.session.identity.username,
-        password,
-      });
+      await auth.reauthenticate({ identityId: authenticated.session.identity.id,
+        username: authenticated.session.identity.username, password });
     },
-  });
-  registerAdminAppRuntimeRoutes({
-    app,
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    runtime: adminAppRuntime,
-    authorization,
-    maskPolicies: createCoreMaskPolicyRegistry(),
-    authenticate: createAdminRuntimeAuthenticator({
+    authenticateAudience: createAudienceAuthenticator({
       auth, config, authorization, identityRealmStore, contentRealmAuthentication,
     }),
     getActiveSchema: async () => {
       const active = await database.getActiveSchema();
-      return active === null ? null : { revisionId: active.revisionId, schema: active.schema };
+      return active === null ? null : { revisionId: active.revisionId, hash: active.hash, schema: active.schema };
     },
-    data: {
+    getPlugin: async (workspaceId, pluginId) => {
+      if (!pluginCatalog.has(pluginId)) return null;
+      const module = pluginCatalog.get(pluginId);
+      const installed = await pluginStore.get(workspaceId, pluginId);
+      return {
+        id: pluginId, version: module.manifest.version, manifestDigest: pluginManifestDigest(module.manifest),
+        ...(installed === null ? {} : { installedManifestDigest: installed.manifestDigest }),
+        installed: installed !== null, enabled: installed?.desiredState === "enabled",
+        runtimeLoaded: loadedPluginIds.has(pluginId), extensionIds: pluginExtensionIds(module),
+      };
+    },
+    content: {
       tree: (actor, collectionId) => treeDto(actor, collectionId, { kind: "all" }),
       query: async (actor, collectionId, input) => {
         const page = await documents.query(actor, collectionId, input);
@@ -817,7 +764,7 @@ async function assembleServer(
       move: (actor, collectionId, documentId, body) =>
         moveHierarchyDocument(actor, collectionId, documentId, body),
       listMedia: async (actor) => {
-        await requireRuntimeMediaPermission(actor, "media.read");
+        await requireExtensionMediaPermission(actor, "media.read");
         const [records, consistency] = await Promise.all([
           media.list(actor.workspaceId),
           media.checkConsistency(actor.workspaceId),
@@ -826,7 +773,7 @@ async function assembleServer(
         return { items: records.map((record) => mediaRecordDto(record, missing.has(record.id))) };
       },
       uploadMedia: async (actor, input) => {
-        await requireRuntimeMediaPermission(actor, "media.upload");
+        await requireExtensionMediaPermission(actor, "media.upload");
         const encodedFileName = singleHeader(input.encodedFileName, "x-file-name");
         let originalFileName: string;
         try {
@@ -1607,7 +1554,7 @@ async function assembleServer(
     applySchemaWithProjection
   });
 
-  async function requireRuntimeMediaPermission(actor: ActorContext, action: "media.read" | "media.upload"): Promise<void> {
+  async function requireExtensionMediaPermission(actor: ActorContext, action: "media.read" | "media.upload"): Promise<void> {
     if (actor.authorization === undefined) {
       throw new ApplicationError("ACCESS_DENIED", 403, `The '${action}' permission is required.`);
     }
@@ -1764,14 +1711,6 @@ async function assembleServer(
     reply.code(404).send("Not Found");
   });
 
-  app.setErrorHandler(async (error, request, reply) => {
-    const problem = problemDetails(error instanceof Error ? error : new Error("Unknown error"), request.id);
-    if (problem.status >= 500) {
-      request.log.error({ err: error, requestId: request.id }, "request failed");
-    }
-    reply.type("application/problem+json").code(problem.status).send(problem);
-  });
-
   if (existsSync(join(config.adminDist, "index.html"))) {
     await app.register(fastifyStatic, {
       root: config.adminDist,
@@ -1781,10 +1720,7 @@ async function assembleServer(
     });
     app.get("/", async (_request, reply) => reply.redirect("/admin/"));
     app.get("/admin", async (_request, reply) => reply.redirect("/admin/"));
-    app.get("/admin-apps/:appId/screens", async (_request, reply) => reply.sendFile("index.html"));
     app.get("/admin/*", async (_request, reply) => reply.sendFile("index.html"));
-    app.get("/apps/:appKey", async (_request, reply) => reply.sendFile("index.html"));
-    app.get("/apps/:appKey/*", async (_request, reply) => reply.sendFile("index.html"));
     app.get("/community/:realmKey", async (_request, reply) => reply.sendFile("index.html"));
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@xecms/plugin-sdk",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Trusted plugin contracts and helpers for XeCMS.",
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "packages/plugin-sdk" },

@@ -55,7 +55,20 @@ describe("backup restore input validation", () => {
     await writeManifest(backup, {
       ...baseManifest(project, await sha256(resolve(backup, "database.dump")),
         await sha256(resolve(backup, "media.tar.gz"))),
-      xecmsVersion: "0.5.1",
+      xecmsVersion: "0.6.1",
+    });
+
+    await expect(restoreBackup(project, backup, true)).rejects.toMatchObject({
+      code: "BACKUP_VERSION_UNSUPPORTED",
+    });
+  });
+
+  it("requires restoring a 0.5 backup with its matching release before upgrading", async () => {
+    const { project, backup } = await fixture();
+    await writeManifest(backup, {
+      ...baseManifest(project, await sha256(resolve(backup, "database.dump")),
+        await sha256(resolve(backup, "media.tar.gz"))),
+      xecmsVersion: "0.5.0",
     });
 
     await expect(restoreBackup(project, backup, true)).rejects.toMatchObject({
@@ -109,7 +122,7 @@ function baseManifest(project: LoadedProject, databaseHash: string, mediaHash: s
   return {
     format: "xecms.backup",
     formatVersion: 1,
-    xecmsVersion: "0.5.0",
+    xecmsVersion: "0.6.0",
     createdAt: "2026-07-16T00:00:00.000Z",
     databaseSchema: project.config.databaseSchema,
     activeSchemaHash: null,

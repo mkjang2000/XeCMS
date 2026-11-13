@@ -32,7 +32,7 @@ describe.runIf(RUN)("CLI Plugin startup recovery", () => {
     const module = definePlugin({
       manifest: {
         manifestVersion: 1, id: "recovery-probe", packageName: "@test/recovery-probe", version: "1.0.0", displayName: "Recovery Probe",
-        compatibility: { core: ">=0.5.0 <0.6.0", admin: ">=0.5.0 <0.6.0", sdk: "1.x" },
+        compatibility: { core: ">=0.6.0 <0.7.0", admin: ">=0.6.0 <0.7.0", sdk: "1.x" },
         serverEntry: "server", migrations: [{ id: "0001_probe", checksum: "probe-v1" }],
       },
       server: { health, migrations: [{ id: "0001_probe", checksum: "probe-v1", up: async () => undefined }] },

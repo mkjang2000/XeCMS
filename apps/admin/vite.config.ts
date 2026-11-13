@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 export default defineConfig(({ command }) => ({
   plugins: [react()],
   // Production is mounted below /admin/, while the development server must
-  // also serve the separate /apps/:appKey and /community/:realmKey shells.
+  // also serve the separate /community/:realmKey shell.
   base: command === "serve" ? "/" : "/admin/",
   resolve: {
     alias: [
@@ -20,14 +20,6 @@ export default defineConfig(({ command }) => ({
       {
         find: /^@xecms\/admin$/,
         replacement: fileURLToPath(new URL("../../packages/admin/src/index.ts", import.meta.url)),
-      },
-      {
-        find: /^@xecms\/admin-runtime$/,
-        replacement: fileURLToPath(new URL("../../packages/admin-runtime/src/index.tsx", import.meta.url)),
-      },
-      {
-        find: /^@xecms\/admin-apps$/,
-        replacement: fileURLToPath(new URL("../../packages/admin-apps/src/index.ts", import.meta.url)),
       },
       {
         find: /^@xecms\/client$/,

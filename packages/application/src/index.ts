@@ -1,6 +1,4 @@
 export * from "./auth.js";
-export * from "./admin-apps.js";
-export * from "./admin-app-dependencies.js";
 export * from "./authorization.js";
 export * from "./documents.js";
 export * from "./document-query.js";
@@ -20,7 +18,6 @@ export * from "./mask-policies.js";
 export * from "./output-protection.js";
 export * from "./document-projection.js";
 export * from "./masked-query-guard.js";
-export * from "./composed-query.js";
 export * from "./relations.js";
 export * from "./realm-authorization-provisioning.js";
 export * from "./realm-collection-entitlements.js";

@@ -5,6 +5,11 @@ TypeScript SDK로 연동하고, Plugin으로 확장하기 위한 공식 문서�
 
 프로젝트 개요는 [저장소 README](../README.md)를 참고하세요.
 
+기본 구성은 엔진과 CMS Studio입니다. 별도 ERP나 서비스 화면은 공개 API/SDK를 사용하면 됩니다.
+업무 화면 빌더는 [선택 확장](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder)이며 기본 설치에 필요하지 않습니다.
+내부 개발 설계·분석·작업 기록은 비공개 [XeCMS-Docs](https://github.com/mkjang2000/XeCMS-Docs)에서 관리합니다.
+이곳의 공개 사용 문서는 엔진과 함께 유지합니다.
+
 ## 처음이신가요?
 
 1. [시작하기](./getting-started.md) — 설치, 최초 Owner 설정, 첫 요청까지

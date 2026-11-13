@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const rootDirectory = new URL("../", import.meta.url);
+if (process.argv.length > 2) throw new Error("Usage: node scripts/dev.mjs");
 const environmentFile = new URL(process.env.XECMS_ENV_FILE ?? ".env", rootDirectory);
 
 if (existsSync(environmentFile)) {
@@ -20,6 +21,8 @@ const environment = {
   XECMS_PORT: port,
   XECMS_ADMIN_HOST: adminHost,
   XECMS_ADMIN_PORT: adminPort,
+  XECMS_SERVER_EXTENSIONS: process.env.XECMS_SERVER_EXTENSIONS ?? "[]",
+  XECMS_PLUGINS: process.env.XECMS_PLUGINS ?? "[]",
   XECMS_SERVER_URL: process.env.XECMS_SERVER_URL ?? `http://${host}:${port}`,
   XECMS_ADMIN_DIST:
     process.env.XECMS_ADMIN_DIST ??

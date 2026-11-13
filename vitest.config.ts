@@ -10,5 +10,6 @@ export default defineConfig({
       "apps/**/*.test.{ts,tsx}",
       "examples/**/*.test.{ts,tsx}",
     ],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/dist-types/**"],
   },
 });

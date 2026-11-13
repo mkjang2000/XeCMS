@@ -4,6 +4,7 @@ import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+if (process.argv.length > 2) throw new Error("Usage: node scripts/run-postgres-tests.mjs");
 // Tests must never inherit the application's database from a developer .env.
 const databaseUrl = process.env.XECMS_TEST_DATABASE_URL
   ?? process.env.XECMS_E2E_DATABASE_URL

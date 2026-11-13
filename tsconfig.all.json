@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    },
+    {
+      "path": "./examples/domain-prototype"
+    },
+    {
+      "path": "./examples/example-plugin"
+    }
+  ]
+}

@@ -1,22 +1,44 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/schema" },
-    { "path": "./packages/core" },
-    { "path": "./packages/authorization" },
-    { "path": "./packages/contracts" },
-    { "path": "./packages/application" },
-    { "path": "./packages/database" },
-    { "path": "./packages/client" },
-    { "path": "./packages/ui" },
-    { "path": "./packages/admin" },
-    { "path": "./packages/admin-apps" },
-    { "path": "./packages/admin-runtime" },
-    { "path": "./packages/plugin-sdk" },
-    { "path": "./packages/cli" },
-    { "path": "./apps/server" },
-    { "path": "./apps/admin" },
-    { "path": "./examples/domain-prototype" },
-    { "path": "./examples/example-plugin" }
+    {
+      "path": "./packages/schema"
+    },
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/authorization"
+    },
+    {
+      "path": "./packages/contracts"
+    },
+    {
+      "path": "./packages/application"
+    },
+    {
+      "path": "./packages/database"
+    },
+    {
+      "path": "./packages/client"
+    },
+    {
+      "path": "./packages/ui"
+    },
+    {
+      "path": "./packages/admin"
+    },
+    {
+      "path": "./packages/plugin-sdk"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
+      "path": "./apps/server"
+    },
+    {
+      "path": "./apps/admin"
+    }
   ]
 }

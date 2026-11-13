@@ -5,14 +5,25 @@
     "rootDir": "src",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "references": [
-    { "path": "../admin-apps" },
-    { "path": "../authorization" },
-    { "path": "../schema" },
-    { "path": "../core" },
-    { "path": "../plugin-sdk" }
+    {
+      "path": "../authorization"
+    },
+    {
+      "path": "../schema"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../plugin-sdk"
+    }
   ],
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

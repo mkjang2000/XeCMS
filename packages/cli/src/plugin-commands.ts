@@ -8,8 +8,11 @@ export async function runPluginCommand(project: LoadedProject, args: string[], i
   if (action === "sync") {
     const apply = takeFlag(args, "--apply");
     assertNoArgs(args);
-    const { DEFAULT_PLUGIN_MODULES } = await import("@xecms/server");
-    const report = await syncPluginManifests(project, DEFAULT_PLUGIN_MODULES, apply);
+    const { loadServerModules } = await import("@xecms/server");
+    const { plugins } = await loadServerModules({ root: project.root, extensions: [],
+      ...(project.config.plugins === undefined ? {} : { plugins: project.config.plugins }),
+    });
+    const report = await syncPluginManifests(project, plugins, apply);
     for (const entry of report.entries) io.log(`${entry.status.toUpperCase()} ${entry.pluginId} revision=${entry.revision}${entry.reason ? `: ${entry.reason}` : ""}`);
     const drifted = report.entries.filter(entry => entry.status === "drifted");
     const blocked = report.entries.filter(entry => entry.status === "blocked" || entry.status === "missing-package");

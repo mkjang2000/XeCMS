@@ -2,6 +2,9 @@
 
 XeCMS 프로젝트를 만드는 공식 CLI 진입점입니다.
 
+0.6.x는 엔진과 CMS Studio를 기본 설치합니다. 업무 화면 빌더는 필요한 프로젝트에서
+별도 확장으로 추가합니다.
+
 ```bash
 pnpm create xecms my-cms
 cd my-cms

@@ -16,7 +16,7 @@ import { workspaceSettingsDto } from "./response-presenters.js";
 import { workspaceSettingsInput } from "./request-input.js";
 import type { RequestActorResolver } from "./request-authentication.js";
 
-const XECMS_VERSION = "0.5.0";
+const XECMS_VERSION = "0.6.0";
 
 interface Options {
   readonly app: FastifyInstance;

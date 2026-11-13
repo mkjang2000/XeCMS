@@ -1,13 +1,24 @@
 {
   "name": "@xecms/server",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Fastify API server and runtime for XeCMS.",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "apps/server" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mkjang2000/XeCMS.git",
+    "directory": "apps/server"
+  },
   "homepage": "https://github.com/mkjang2000/XeCMS#readme",
-  "bugs": { "url": "https://github.com/mkjang2000/XeCMS/issues" },
-  "engines": { "node": ">=22.22.0" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "bugs": {
+    "url": "https://github.com/mkjang2000/XeCMS/issues"
+  },
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -33,17 +44,16 @@
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
     "@fastify/static": "^10.1.3",
-    "@xecms/admin-apps": "workspace:*",
     "@xecms/application": "workspace:*",
     "@xecms/contracts": "workspace:*",
     "@xecms/database": "workspace:*",
-    "@xecms/example-plugin": "workspace:*",
     "@xecms/plugin-sdk": "workspace:*",
     "@xecms/schema": "workspace:*",
     "fastify": "^5.11.3"
   },
   "devDependencies": {
     "tsx": "^4.23.11",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@xecms/example-plugin": "workspace:*"
   }
 }

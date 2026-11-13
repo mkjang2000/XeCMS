@@ -1,6 +1,7 @@
 # @xecms/contracts
 
-XeCMS 서버와 클라이언트가 공유하는 전송 계약을 제공합니다.
+XeCMS 엔진 서버와 클라이언트가 공유하는 전송 계약을 제공합니다.
+업무 화면의 manifest와 빌더 DTO는 선택 패키지 `@xecms/app-builder-client`에 속합니다.
 
 ```bash
 pnpm add @xecms/contracts

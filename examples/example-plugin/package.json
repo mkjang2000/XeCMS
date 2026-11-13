@@ -1,7 +1,7 @@
 {
   "name": "@xecms/example-plugin",
-  "version": "1.0.0",
-  "description": "Reference trusted plugin bundled with XeCMS.",
+  "version": "2.0.0",
+  "description": "Optional reference trusted plugin for XeCMS.",
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/mkjang2000/XeCMS.git", "directory": "examples/example-plugin" },
   "homepage": "https://github.com/mkjang2000/XeCMS#readme",

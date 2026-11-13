@@ -5,11 +5,12 @@ const root = new URL("../", import.meta.url);
 const rules = [
   {
     directory: "packages/application",
-    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/authorization", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk"]),
+    allowedXeCms: new Set(["@xecms/authorization", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk"]),
   },
   {
     directory: "packages/database",
-    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/application", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk", "@xecms/example-plugin"]),
+    allowedXeCms: new Set(["@xecms/application", "@xecms/core", "@xecms/schema", "@xecms/plugin-sdk"]),
+    allowedTestXeCms: new Set(["@xecms/example-plugin"]),
   },
   {
     directory: "packages/plugin-sdk",
@@ -18,6 +19,7 @@ const rules = [
   {
     directory: "packages/cli",
     allowedXeCms: new Set(["@xecms/database", "@xecms/plugin-sdk", "@xecms/schema", "@xecms/server"]),
+    allowedTestXeCms: new Set(["@xecms/example-plugin"]),
   },
   {
     directory: "examples/example-plugin",
@@ -25,7 +27,7 @@ const rules = [
   },
   {
     directory: "packages/contracts",
-    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/schema"]),
+    allowedXeCms: new Set(["@xecms/schema"]),
   },
   {
     directory: "packages/client",
@@ -40,19 +42,9 @@ const rules = [
     allowedXeCms: new Set(["@xecms/ui"]),
   },
   {
-    directory: "packages/admin-apps",
-    allowedXeCms: new Set(),
-  },
-  {
-    directory: "packages/admin-runtime",
-    allowedXeCms: new Set(["@xecms/admin-apps", "@xecms/contracts", "@xecms/ui"]),
-  },
-  {
     directory: "apps/admin",
     allowedXeCms: new Set([
       "@xecms/admin",
-      "@xecms/admin-apps",
-      "@xecms/admin-runtime",
       "@xecms/client",
       "@xecms/schema",
       "@xecms/ui",
@@ -61,15 +53,14 @@ const rules = [
   {
     directory: "apps/server",
     allowedXeCms: new Set([
-      "@xecms/admin-apps",
       "@xecms/application",
       "@xecms/contracts",
       "@xecms/core",
       "@xecms/database",
-      "@xecms/example-plugin",
       "@xecms/plugin-sdk",
       "@xecms/schema",
     ]),
+    allowedTestXeCms: new Set(["@xecms/example-plugin"]),
   },
 ];
 
@@ -80,19 +71,21 @@ for (const rule of rules) {
   for (const file of await walk(sourceDirectory)) {
     if (!new Set([".ts", ".tsx"]).has(extname(file.pathname))) continue;
     const source = await readFile(file, "utf8");
+    const isTest = /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file.pathname);
     const imports = [
       ...source.matchAll(/(?:from\s+|import\s*\()(["'])([^"']+)\1/g),
     ].map((match) => match[2]);
 
     for (const specifier of imports) {
-      // Compare by package name so subpath exports (e.g. "@xecms/admin-runtime/geometry")
+      // Compare by package name so subpath exports (e.g. "@xecms/ui/theme.css")
       // resolve to the same boundary rule as the package root.
       const packageName = specifier?.startsWith("@xecms/")
         ? specifier.split("/").slice(0, 2).join("/")
         : specifier;
       if (
         packageName?.startsWith("@xecms/") &&
-        !rule.allowedXeCms.has(packageName)
+        !rule.allowedXeCms.has(packageName) &&
+        !(isTest && rule.allowedTestXeCms?.has(packageName))
       ) {
         violations.push(
           `${relative(root.pathname, file.pathname)} imports '${specifier}', which crosses its package boundary.`,

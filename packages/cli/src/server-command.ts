@@ -14,8 +14,12 @@ export async function runServerCommand(project: LoadedProject, command: "dev" | 
   process.env["XECMS_DB_SCHEMA"] ??= project.config.databaseSchema;
   process.env["XECMS_MEDIA_STORAGE_ROOT"] ??= resolve(project.root, project.config.mediaStorageRoot);
   process.env["XECMS_ADMIN_DIST"] ??= resolve(project.root, project.config.adminDist);
-  const { buildServer, listenServer } = await import("@xecms/server");
-  const server = await buildServer();
+  const { buildServer, listenServer, loadServerModules } = await import("@xecms/server");
+  const modules = await loadServerModules({ root: project.root,
+    ...(project.config.extensions === undefined ? {} : { extensions: project.config.extensions }),
+    ...(project.config.plugins === undefined ? {} : { plugins: project.config.plugins }),
+  });
+  const server = await buildServer(modules);
   return waitForServerShutdown(server, listenServer, io, () => {
     io.log(`XeCMS ${command === "start" ? "production server" : "development server"} is running at http://${server.config.host}:${server.config.port}/admin/`);
   });
