@@ -113,7 +113,7 @@ export function AdminAppCreatePage() {
       </select><small>App과 인증 세션, 권한은 선택한 Realm에 귀속됩니다. 다른 Realm의 Auth Collection은 포함할 수 없습니다.</small></label>
       <fieldset className={styles.collectionPicker}><legend>App 유형</legend>
         <label><input type="radio" name="app-kind" checked={appKind === "generated"} onChange={() => setAppKind("generated")} /><span><strong>Generated (V1)</strong><small>Schema 기반 목록·생성·편집·상세 화면을 자동 구성</small></span></label>
-        <label><input type="radio" name="app-kind" checked={appKind === "composed"} onChange={() => setAppKind("composed")} /><span><strong>Composed (V2)</strong><small>빈 화면에서 드래그로 직접 구성하는 Composed Page</small></span></label>
+        <label><input type="radio" name="app-kind" checked={appKind === "composed"} onChange={() => setAppKind("composed")} /><span><strong>Composed (V2)</strong><small>CMS 데이터로 검색·목록·입력 폼·차트 구성</small></span></label>
       </fieldset>
       {appKind === "composed" ? null : <fieldset className={styles.collectionPicker}><legend>포함할 Collection</legend>
         {eligibleCollections.length === 0 ? <p>이 Realm에서 사용할 수 있는 Collection이 없어 빈 대시보드 App으로 시작합니다.</p> : eligibleCollections.map((collection) => <label key={collection.id}>
@@ -241,7 +241,7 @@ export function AdminAppBuilderPage() {
       {composedView === "canvas" ? (
         <div className={styles.builderCard}>
           <div className={styles.composedPageBar}>
-            <div><strong>Composed 화면</strong><span className={styles.help}>{composed.pages.filter((page) => page.type === "composed-page").length}개 화면. 실제 App 비율의 전용 편집기에서 드래그로 구성합니다.</span></div>
+            <div><strong>Composed 화면</strong><span className={styles.help}>{composed.pages.filter((page) => page.type === "composed-page").length}개 화면. 전용 편집기에서 데이터·블록·동작을 구성합니다.</span></div>
             <Button onPress={() => void run(async () => { if (dirty) await save(); navigate(`/admin-apps/${appId}/screens`); })} isDisabled={pending}>화면 편집 열기 ↗</Button>
           </div>
           <div className={styles.pageSummary}>{composed.pages.filter((page) => page.type === "composed-page").map((page) => <article key={page.id}><span>{page.screenNo}</span><strong>{page.title}</strong><code>{(page as ComposedPageDefinition).components.length} components</code></article>)}</div>
@@ -563,6 +563,7 @@ export function buildComposedManifest(input: {
       dataSources: [],
       components: [],
       connections: [],
+      authoring: { version: 1, blocks: [] },
     }],
     startPageId: "pg-screen-1",
   };

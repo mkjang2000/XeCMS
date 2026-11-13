@@ -167,6 +167,10 @@ const browserSuites = [
     environment: { XECMS_E2E_DISPLAY_MODE: "" },
   },
   {
+    name: "admin-app-blocks",
+    specs: ["tests/e2e/admin-app-blocks.spec.ts"],
+  },
+  {
     name: "admin-apps",
     specs: ["tests/e2e/admin-apps.spec.ts"],
   },

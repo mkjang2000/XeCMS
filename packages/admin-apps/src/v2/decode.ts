@@ -1,3 +1,4 @@
+import { decodePageAuthoring } from "../authoring/decode.js";
 import {
   bool,
   choice,
@@ -120,11 +121,12 @@ function decodePageV2(input: unknown, path: Path): AdminPageDefinitionV2 {
 function decodeComposedPage(value: UnknownRecord, path: Path): ComposedPageDefinition {
   exact(value, [
     "id", "type", "screenNo", "title", "menuLabel", "layout",
-    "state", "dataSources", "components", "connections", "events",
+    "state", "dataSources", "components", "connections", "events", "authoring",
   ], path);
   return {
     id: text(required(value, "id", path), [...path, "id"]),
     type: literal(required(value, "type", path), "composed-page", [...path, "type"]),
+    ...(has(value, "authoring") ? { authoring: decodePageAuthoring(value["authoring"], [...path, "authoring"]) } : {}),
     screenNo: text(required(value, "screenNo", path), [...path, "screenNo"]),
     title: text(required(value, "title", path), [...path, "title"]),
     menuLabel: text(required(value, "menuLabel", path), [...path, "menuLabel"]),

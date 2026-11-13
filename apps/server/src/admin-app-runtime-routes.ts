@@ -104,7 +104,7 @@ interface Options {
       actor: ActorContext,
       collectionId: string,
       documentId: string,
-    ) => Promise<{ readonly id: string; readonly data: Readonly<Record<string, unknown>> } | null>;
+    ) => Promise<{ readonly id: string; readonly version?: number; readonly data: Readonly<Record<string, unknown>> } | null>;
     readonly previewMove: (
       actor: ActorContext,
       collectionId: string,
@@ -368,12 +368,17 @@ export function registerAdminAppRuntimeRoutes(options: Options): void {
       const document = await options.data.getDocument(identity.actor, collectionId, documentId);
       reply.header("cache-control", "private, no-store");
       if (document === null) return null;
-      const rules = fieldProtectionRules(detailFieldSummaries(collections, component, collectionId));
+      const summaries = detailFieldSummaries(collections, component, collectionId);
+      const rules = fieldProtectionRules(summaries);
+      const data = component.kind === "core.form"
+        ? Object.fromEntries(summaries.filter((field) => Object.hasOwn(document.data, field.name)).map((field) => [field.name, document.data[field.name]]))
+        : document.data;
       return {
         id: document.id,
+        ...(document.version === undefined ? {} : { version: document.version }),
         data: projectDocumentData({
           registry: options.maskPolicies,
-          data: document.data,
+          data,
           pageAllowed: true,
           pageUnmasked: access.pageUnmasked[page.id] === true,
           rules,
@@ -501,7 +506,7 @@ function resolveDetailComponent(
   );
   if (page === undefined) runtimeNotFound();
   const component = page.components.find((candidate) => candidate.id === componentId);
-  if (component === undefined || component.kind !== "core.output.detail") runtimeNotFound();
+  if (component === undefined || (component.kind !== "core.output.detail" && component.kind !== "core.form")) runtimeNotFound();
   return { page, component };
 }
 

@@ -1,3 +1,4 @@
+import { validateAuthoredPage } from "../authoring/validate.js";
 import { AdminAppManifestValidationError, type AdminAppIssue } from "../errors.js";
 import type {
   ComponentDefinition,
@@ -76,6 +77,7 @@ function validateComposedPage(
   path: Path,
   screenNumbers: Set<string>,
 ): void {
+  issues.push(...validateAuthoredPage(page).map((issue) => ({ ...issue, path: [...path, ...issue.path] })));
   nodeId(issues, page.id, [...path, "id"], "Page id");
   if (!SCREEN_NO.test(page.screenNo)) {
     add(issues, "INVALID_SCREEN_NO", `screenNo '${page.screenNo}' must be 1-32 chars of [A-Za-z0-9_-].`, [...path, "screenNo"]);

@@ -277,6 +277,10 @@ function FormComponent({ component }: ComposedComponentProps) {
     ? (component.props["fields"] as readonly FormFieldProp[])
     : [];
   const title = textProp(component, "label", "입력");
+  const status = runtime.formStatus?.(component.id);
+  if (status === "empty") return <div className={styles.composedEmpty}>수정할 항목을 목록에서 선택하세요.</div>;
+  if (status === "loading") return <div className={styles.composedEmpty}>항목을 불러오는 중…</div>;
+  if (status === "error") return <div role="alert">{runtime.formError?.(component.id) ?? "조회에 실패했습니다."}</div>;
   const running = runtime.actionState.status === "running";
 
   return (

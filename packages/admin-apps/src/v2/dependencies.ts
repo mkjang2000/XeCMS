@@ -121,6 +121,14 @@ function collectNavigation(item: AdminNavigationItem, sets: Sets): void {
 }
 
 function collectComposedPage(page: ComposedPageDefinition, sets: Sets): void {
+  for (const block of page.authoring?.blocks ?? []) {
+    sets.collectionIds.add(block.collectionId);
+    if ("fields" in block) for (const field of block.fields) {
+      sets.fieldIds.add(field.fieldId);
+      if (field.maskPolicyId !== undefined) sets.maskPolicyIds.add(field.maskPolicyId);
+    }
+    else sets.fieldIds.add(block.kind === "search" ? block.fieldId : block.groupFieldId);
+  }
   for (const source of page.dataSources) {
     sets.collectionIds.add(source.collectionId);
     source.fields.forEach((fieldId) => sets.fieldIds.add(fieldId));

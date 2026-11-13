@@ -40,7 +40,8 @@ XeCMS/
 │       │   ├── pages/                    # 콘텐츠, Schema, Realm, 운영 화면
 │       │   │   ├── access/               # 권한 관리 화면별 모듈
 │       │   │   ├── identity-realms/       # Realm 페이지와 소유자/회원/접근 상한/위임 관리 패널
-│       │   │   └── composed-editor/      # Admin App 시각적 화면 편집기
+│       │   │   ├── composed-editor/      # 기존 V2 그래프 편집기와 공통 미리보기·history
+│       │   │   └── block-editor/         # 명시적 블록 원본의 업무 화면 편집·설정·템플릿
 │       │   └── rich-text/                # BlockNote 기반 콘텐츠 편집
 │       └── vite.config.ts / tsconfig.json
 ├── packages/
@@ -63,7 +64,8 @@ XeCMS/
 │   ├── ui/                               # 공통 UI와 theme
 │   ├── admin/                            # CMS UI API 추상화와 콘텐츠 입력 구성요소
 │   ├── admin-apps/                       # Admin App manifest와 선언형 화면 모델
-│   ├── admin-runtime/                    # 선언형 Admin App 실행 및 렌더링
+│   │   └── src/authoring/                # 블록 저장 계약·엄격한 decode·실행 변환·참조/Schema 검증
+│   ├── admin-runtime/                    # 선언형 실행·렌더링, composed-form-records의 수정 snapshot 관리
 │   ├── plugin-sdk/                       # Plugin manifest, 호환성, extension 계약
 │   ├── cli/                              # server-command 수명주기, scaffold, doctor, backup/restore, Plugin 복구
 │   └── create-xecms/                     # 프로젝트 생성 CLI 진입점
@@ -94,6 +96,7 @@ CMS Studio → Admin API adapter → REST client → Fastify routes
                                            → PostgreSQL store → PostgreSQL
 
 Composed Admin App → admin-runtime → runtime API → 권한/출력 보호 → 콘텐츠 service
+새 블록 화면 → authoring 원본 → 공통 compiler → V2 실행 표현 → 기존 Composed runtime
 Document mutation → Transactional Outbox → Event Worker → handler → delivery 상태 저장
 CLI → 설정 로드 → server / database / schema / 운영 도구
 ```
@@ -121,6 +124,11 @@ CLI → 설정 로드 → server / database / schema / 운영 도구
 - 한 인스턴스의 기본 Workspace를 사용한다. Realm 분리를 완전한 SaaS tenant 격리로 해석하지 않는다.
 - Plugin은 trusted code이며 sandbox가 아니다. 기본 서버 catalog는 example-plugin을 포함한다.
 - TypeScript project reference 빌드와 Vite 번들 빌드가 분리되어 있다.
+- 새 Composed 화면은 `authoring.version: 1` 블록 원본과 파생 실행 표현을 함께 저장한다.
+  서버 decoder는 두 표현의 일치를 확인한다. authoring이 없는 V1/V2 문서는 기존 계약을 유지한다.
+  새 편집기는 블록 원본만 변경하며, 기존 화면을 자동 변환하지 않는다.
+- `/admin-apps/:appId/screens`는 독립 편집기 경로이며 서버에서도 직접 접근/새로고침을 지원한다.
+- `tests/e2e/admin-app-blocks.spec.ts`는 새 화면 작성·재편집·미리보기·적용·수정 충돌을 검증한다.
 - 권한 facade 내부는 단일 policy context와 entitlement cache를 공유한다. API/권한 불변식을
   유지하며 기능별 서비스로 위임한다. DB facade도 단일 pool과 기존 투영 잠금을 공유한다.
 - 일부 기존 Realm 서비스/route/저장소는 여전히 크며, 후속 작업에서도 기능별 책임 분리를 유지한다.

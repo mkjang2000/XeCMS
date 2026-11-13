@@ -4,7 +4,7 @@ import type { ComposedPageDefinition, AppPresentationDefinition } from "@xecms/a
 
 import type { AdminRuntimeDataClient } from "./api.js";
 import { renderComposedComponent } from "./composed-components.js";
-import { ComposedRuntimeProvider, type PluginComponentRegistry } from "./composed-runtime.js";
+import { ComposedRuntimeProvider, useComposedRuntime, type PluginComponentRegistry } from "./composed-runtime.js";
 import {
   CANVAS_WIDTH,
   MAX_SCALE,
@@ -58,6 +58,7 @@ export function ComposedPage({ runtime, page, client, navigate, plugins }: Compo
         className={styles.composedViewport}
         data-alignment={presentation.canvasAlignment}
       >
+        <ActionFeedback />
         <div
           className={styles.composedCanvas}
           style={{
@@ -104,4 +105,10 @@ function useShellScale(
     return () => observer.disconnect();
   }, [ref, profile]);
   return scale;
+}
+
+function ActionFeedback() {
+  const { actionState } = useComposedRuntime();
+  if (actionState.message === undefined) return null;
+  return <p role={actionState.status === "error" ? "alert" : "status"}>{actionState.message}</p>;
 }

@@ -1,3 +1,4 @@
+import { useComposedFormRecords } from "./composed-form-records.js";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposedEffectDefinition, ComposedPageDefinition } from "@xecms/admin-apps";
 import type { ComposedQueryRowDto } from "@xecms/contracts";
@@ -87,6 +88,8 @@ export interface ComposedRuntimeContextValue {
   /** Writes one field of a form component's collected data. */
   readonly setFormFieldValue: (componentId: string, fieldName: string, value: unknown) => void;
   /** The current value of a form field (for controlled inputs). */
+  readonly formStatus?: (componentId: string) => "empty" | "loading" | "ready" | "error" | undefined;
+  readonly formError?: (componentId: string) => string | undefined;
   readonly formFieldValue: (componentId: string, fieldName: string) => unknown;
   /** Resolves a registered trusted Plugin Component renderer by kind, if any. */
   readonly pluginComponent: (kind: string) => PluginComponentRenderer | undefined;
@@ -131,6 +134,7 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
   const [details, setDetails] = useState<ReadonlyMap<string, DetailState>>(new Map());
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
   // Form components collect their own field values (componentId -> {fieldName: value}).
+  const [detailRefresh, setDetailRefresh] = useState(0);
   const [forms, setForms] = useState<ReadonlyMap<string, ReadonlyMap<string, unknown>>>(new Map());
   const formsRef = useRef(forms);
   formsRef.current = forms;
@@ -302,7 +306,19 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     });
   }, [graph]);
 
+  const editableForms = page.components.filter((c) => c.kind === "core.form" && c.props["mode"] === "update");
+  const formRecords = useComposedFormRecords(page.id, editableForms.map((c) => {
+    const selected = state.get(documentIdStateFor(graph, c.id) ?? "");
+    return { componentId: c.id, collectionId: String(c.props["collectionId"]), documentId: typeof selected === "string" && selected !== "" ? selected : null };
+  }), client);
+  const formRecordsRef = useRef(formRecords);
+  formRecordsRef.current = formRecords;
+  const editableFormIds = new Set(editableForms.map((c) => c.id));
+  const editableFormIdsRef = useRef(editableFormIds);
+  editableFormIdsRef.current = editableFormIds;
+
   const setFormFieldValue = useCallback((componentId: string, fieldName: string, value: unknown): void => {
+    if (editableFormIdsRef.current.has(componentId)) { formRecordsRef.current.setValue(componentId, fieldName, value); return; }
     setForms((prev) => {
       const next = new Map(prev);
       const fields = new Map(prev.get(componentId) ?? []);
@@ -313,6 +329,7 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
   }, []);
 
   const formFieldValue = useCallback((componentId: string, fieldName: string): unknown => {
+    if (editableFormIdsRef.current.has(componentId)) return formRecordsRef.current.value(componentId, fieldName);
     return forms.get(componentId)?.get(fieldName);
   }, [forms]);
 
@@ -452,9 +469,13 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     runningAction.current = true;
     setActionState({ status: "running" });
     try {
-      // content.update is enforced server-side; the current version guards against stale writes.
-      const document = await client.get(collectionId, documentId);
-      await client.update(collectionId, documentId, collectFormData(formComponentId), document.version);
+      if (editableFormIdsRef.current.has(formComponentId)) {
+        await formRecordsRef.current.save(formComponentId, collectionId, documentId);
+      } else {
+        const document = await client.get(collectionId, documentId);
+        await client.update(collectionId, documentId, collectFormData(formComponentId), document.version);
+      }
+      setDetailRefresh((value) => value + 1);
       setActionState({ status: "success", message: "저장되었습니다." });
       return true;
     } catch (error: unknown) {
@@ -502,11 +523,11 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     const stateId = documentIdStateFor(graph, component.id);
     const documentId = stateId === undefined ? undefined : stateRef.current.get(stateId);
     const collectionId = component.props["collectionId"];
-    if (typeof documentId !== "string" || typeof collectionId !== "string") {
+    detailAborts.current.get(component.id)?.abort();
+    if (typeof documentId !== "string" || documentId === "" || typeof collectionId !== "string") {
       setDetails((prev) => new Map(prev).set(component.id, { status: "empty" }));
       return;
     }
-    detailAborts.current.get(component.id)?.abort();
     const controller = new AbortController();
     detailAborts.current.set(component.id, controller);
     setDetails((prev) => new Map(prev).set(component.id, { status: "loading" }));
@@ -536,7 +557,7 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     }
     // Depend on the bound state values so a new selection re-fetches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailComponents.map((c) => `${c.id}:${String(state.get(documentIdStateFor(graph, c.id) ?? ""))}`).join("|")]);
+  }, [detailComponents.map((c) => `${c.id}:${String(state.get(documentIdStateFor(graph, c.id) ?? ""))}`).join("|"), detailRefresh]);
 
   const value = useMemo<ComposedRuntimeContextValue>(() => ({
     stateValue: (stateId) => state.get(stateId),
@@ -571,8 +592,10 @@ export function ComposedRuntimeProvider({ page, client, fieldNames, fieldTypes, 
     actionState,
     setFormFieldValue,
     formFieldValue,
+    formStatus: (id) => editableFormIds.has(id) ? formRecords.status(id) : undefined,
+    formError: formRecords.error,
     pluginComponent: (kind) => plugins?.get(kind),
-  }), [state, sources, aggregates, details, graph, setInputValue, runFromComponent, execute, selectRow, setAdaptiveValue, fieldNames, fieldTypes, runComponentEvent, canRunAction, actionState, setFormFieldValue, formFieldValue, plugins]);
+  }), [state, sources, aggregates, details, graph, setInputValue, runFromComponent, execute, selectRow, setAdaptiveValue, fieldNames, fieldTypes, runComponentEvent, canRunAction, actionState, setFormFieldValue, formFieldValue, plugins, formRecords]);
 
   return <ComposedRuntimeContext.Provider value={value}>{children}</ComposedRuntimeContext.Provider>;
 }

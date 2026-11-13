@@ -1,16 +1,15 @@
+import { addBusinessTemplate } from "./block-editor/model.js";
+import { BlockEditor } from "./block-editor/block-editor.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Button, Callout, LoadingIndicator } from "@xecms/ui";
 import {
   validateAdminAppManifestV2,
+  validateAuthoringSchema,
   convertGeneratedToComposed,
-  masterDetailPreset,
-  searchListPreset,
-  viewEditPreset,
   type AdminAppManifestV2,
   type ComponentDefinition,
   type ComposedPageDefinition,
-  type PresetColumn,
 } from "@xecms/admin-apps";
 import {
   CANVAS_WIDTH,
@@ -104,6 +103,8 @@ export function ComposedScreenEditorPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const savedJson = useRef<string>("");
+  const manifestRef = useRef(manifest);
+  manifestRef.current = manifest;
   const dirty = manifest !== null && JSON.stringify(manifest) !== savedJson.current;
 
   // Keyboard shortcuts read the latest handlers through a ref so this effect
@@ -169,7 +170,7 @@ export function ComposedScreenEditorPage() {
   const active = composedPages.find((page) => page.id === activePageId) ?? composedPages[0] ?? null;
 
   const save = async (): Promise<void> => {
-    if (manifest === null || draft === null) return;
+    if (manifest === null || draft === null || pending) return;
     setPending(true); setError(null);
     try {
       const saved = await client.adminApps.saveDraft(appId, {
@@ -179,7 +180,7 @@ export function ComposedScreenEditorPage() {
       });
       setDraft(saved);
       if (saved.manifest.formatVersion === 2) {
-        history.reset(saved.manifest);
+        if (JSON.stringify(manifestRef.current) === JSON.stringify(manifest)) history.reset(saved.manifest);
         savedJson.current = JSON.stringify(saved.manifest);
       }
     } catch (caught) {
@@ -200,7 +201,11 @@ export function ComposedScreenEditorPage() {
     return <FullscreenNotice title="Composed App이 아닙니다" detail="이 화면 편집기는 Composed(V2) App에서만 사용할 수 있습니다. 빌더에서 V2로 업그레이드하세요." onBack={() => navigate(`/admin/apps/${appId}`)} />;
   }
 
-  const commit = (nextPage: ComposedPageDefinition): void => setManifest(replacePage(manifest, nextPage.id, nextPage));
+  const commit = (nextPage: ComposedPageDefinition): void => setManifest({
+    ...replacePage(manifest, nextPage.id, nextPage),
+    navigation: manifest.pages.find((page): page is ComposedPageDefinition => page.type === "composed-page" && page.id === nextPage.id)?.menuLabel === nextPage.menuLabel
+      ? manifest.navigation : manifest.navigation.map((item) => item.pageId === nextPage.id ? { ...item, label: nextPage.menuLabel } : item),
+  });
 
   /** Inserts a Composed Page plus a navigation entry, then focuses it. */
   const addPage = (page: ComposedPageDefinition): void => {
@@ -223,7 +228,7 @@ export function ComposedScreenEditorPage() {
     const meta = nextScreenMeta();
     addPage({
       id: meta.pageId, type: "composed-page", screenNo: meta.screenNo, title: meta.title, menuLabel: meta.menuLabel,
-      layout: { columns: 48, rowHeight: 8 }, state: [], dataSources: [], components: [], connections: [],
+      layout: { columns: 48, rowHeight: 8 }, state: [], dataSources: [], components: [], connections: [], authoring: { version: 1, blocks: [] },
     });
   };
 
@@ -232,19 +237,12 @@ export function ComposedScreenEditorPage() {
     const collection = collections.find((entry) => entry.id === collectionId);
     if (collection === undefined || collection.fields.length === 0) return;
     const meta = nextScreenMeta();
-    const searchFieldId = collection.fields[0]!.id;
-    const columns: PresetColumn[] = collection.fields.slice(0, 4).map((field) => ({
-      fieldId: field.id, label: field.label ?? field.name,
-      ...(field.sensitivity?.defaultMaskPolicyId === undefined ? {} : { maskPolicyId: field.sensitivity.defaultMaskPolicyId }),
-    }));
-    const detailFields = columns;
-    if (kind === "searchList") {
-      addPage(searchListPreset({ meta, collectionId, searchFieldId, columns }));
-    } else if (kind === "masterDetail") {
-      addPage(masterDetailPreset({ meta, collectionId, searchFieldId, listColumns: columns, detailFields }));
-    } else {
-      addPage(viewEditPreset({ meta, collectionId, searchFieldId, listColumns: columns, detailFields, formFieldIds: columns.map((c) => c.fieldId) }));
-    }
+    const empty: ComposedPageDefinition = {
+      id: meta.pageId, type: "composed-page", screenNo: meta.screenNo, title: meta.title, menuLabel: meta.menuLabel,
+      layout: { columns: 48, rowHeight: 8 }, components: [], state: [], dataSources: [], connections: [], authoring: { version: 1, blocks: [] },
+    };
+    addPage(addBusinessTemplate(empty, collection,
+      kind === "searchList" ? ["search", "list"] : kind === "masterDetail" ? ["search", "list", "detail"] : undefined));
   };
 
   /** Copies a Generated Page in this manifest into a new, independent Composed Page. */
@@ -375,7 +373,9 @@ export function ComposedScreenEditorPage() {
   // The Collection a table renders = the collection of the Data Source feeding its `data` port.
   const tableCollectionId = selected?.kind === "core.output.table" && active !== null
     ? tableSourceCollectionId(active, selected.id) : undefined;
-  const issues = validateAdminAppManifestV2(manifest).issues;
+  const issues = [...validateAdminAppManifestV2(manifest).issues, ...manifest.pages.flatMap((page, index) =>
+    page.type !== "composed-page" || page.authoring === undefined ? [] : validateAuthoringSchema(page.authoring, collections)
+      .map((issue) => ({ ...issue, path: ["pages", index, "authoring", ...issue.path] })))];
   const legacyCount = active === null ? 0 : legacyComponents(active).length;
   // Component ids on the active page that have a validation issue (for canvas
   // badges). A plain computation (not a hook) — it runs after early returns.
@@ -395,12 +395,12 @@ export function ComposedScreenEditorPage() {
 
   // Keep the keyboard shortcut handlers pointed at the current selection/state.
   const deleteSelected = (): void => {
-    if (active === null || selectedBlock === null) return;
+    if (active === null || active.authoring !== undefined || selectedBlock === null) return;
     commit(removeBlockFromPage(active, selectedBlock.id));
     setSelectedId(null);
   };
   const duplicateSelected = (): void => {
-    if (active === null || selectedBlock === null) return;
+    if (active === null || active.authoring !== undefined || selectedBlock === null) return;
     const result = duplicateBlock(active, selectedBlock);
     commit(result.page);
     const block = describeBlocks(result.page).find((entry) => entry.id === result.blockId);
@@ -429,7 +429,7 @@ export function ComposedScreenEditorPage() {
             onPreset={addPreset}
             onConvert={convertGenerated}
           />
-          {active !== null && legacyCount > 0 ? (
+          {active !== null && active.authoring === undefined && legacyCount > 0 ? (
             <Button size="small" variant="secondary" onPress={() => {
               if (typeof window !== "undefined" && !window.confirm(`이 화면에서 편집할 수 없는 이전 폼 ${legacyCount}개를 삭제할까요?`)) return;
               commit(removeLegacyComponents(active));
@@ -442,11 +442,11 @@ export function ComposedScreenEditorPage() {
             <button type="button" onClick={undo} disabled={!canUndo} title="실행 취소 (Ctrl+Z)" aria-label="실행 취소">↶</button>
             <button type="button" onClick={redo} disabled={!canRedo} title="다시 실행 (Ctrl+Shift+Z)" aria-label="다시 실행">↷</button>
           </div>
-          <div className={styles.modeToggle} role="tablist" aria-label="편집 모드">
+          <div style={active?.authoring !== undefined ? { display: "none" } : undefined} className={styles.modeToggle} role="tablist" aria-label="편집 모드">
             <button type="button" role="tab" aria-selected={mode === "layout"} onClick={() => { setMode("layout"); setPendingLinkBlockId(null); }}>배치</button>
             <button type="button" role="tab" aria-selected={mode === "connect"} onClick={() => { setMode("connect"); setSelectedId(null); }}>연결</button>
           </div>
-          {mode === "connect" ? (
+          {mode === "connect" && active?.authoring === undefined ? (
             <span className={styles.connectHint}>{linkDrag !== null ? "결과를 받을 폼 위에서 놓으세요" : pendingLinkBlockId === null ? "검색폼에서 결과 폼으로 드래그하거나, 눌러서 연결하세요" : "결과를 받을 폼을 누르세요"}</span>
           ) : null}
           {issues.length > 0 ? (
@@ -454,8 +454,8 @@ export function ComposedScreenEditorPage() {
               {issues.length}개 문제 {issuesOpen ? "▲" : "▼"}
             </button>
           ) : null}
-          <Button size="small" variant="secondary" onPress={() => setPreviewOpen(true)} isDisabled={composedPages.length === 0}>미리보기</Button>
-          <Button size="small" onPress={() => void save()} isDisabled={pending || !dirty}>{pending ? "저장 중…" : "저장"}</Button>
+          <Button size="small" variant="secondary" onPress={() => setPreviewOpen(true)} isDisabled={composedPages.length === 0 || issues.length > 0}>미리보기</Button>
+          <Button size="small" onPress={() => void save()} isDisabled={pending || !dirty || issues.length > 0}>{pending ? "저장 중…" : "저장"}</Button>
         </div>
       </header>
       {error !== null ? <Callout tone="error">{error}</Callout> : null}
@@ -479,7 +479,10 @@ export function ComposedScreenEditorPage() {
         </div>
       ) : null}
 
-      <div className={styles.body}>
+      {active?.authoring !== undefined ? <BlockEditor key={active.id} page={active} collections={collections} onChange={commit}
+        onRemoveScreen={removeScreen} onMoveScreen={moveScreen} canRemoveScreen={composedPages.length > 1}
+        canMoveUp={composedPages.findIndex((p) => p.id === active.id) > 0}
+        canMoveDown={composedPages.findIndex((p) => p.id === active.id) < composedPages.length - 1} /> : <div className={styles.body}>
         <aside className={styles.palette} aria-label="폼 블록 팔레트">
           {mode === "layout" ? (
             <>
@@ -641,7 +644,7 @@ export function ComposedScreenEditorPage() {
             <p className={styles.inspectorEmpty}>Component를 선택하세요.</p>
           )}
         </aside>
-      </div>
+      </div>}
       {previewOpen ? (
         <PreviewModal
           manifest={manifest}

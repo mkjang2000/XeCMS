@@ -1,4 +1,4 @@
-import { decodeAdminAppManifest, minimalBackofficeManifest } from "@xecms/admin-apps";
+import { decodeAdminAppManifest, minimalBackofficeManifest, minimalComposedPageManifest, withPageAuthoring } from "@xecms/admin-apps";
 import { decodeSchema } from "@xecms/schema";
 import { describe, expect, it } from "vitest";
 
@@ -47,6 +47,18 @@ function catalog(overrides: Partial<AdminAppDependencyCatalog> = {}): AdminAppDe
 }
 
 describe("CatalogAdminAppDependencyResolver", () => {
+  it("checks authored field ownership even when the search block has no connected list", async () => {
+    const page = withPageAuthoring(minimalComposedPageManifest.pages[0], { version: 1, blocks: [{
+      id: "search", kind: "search", title: "검색", collectionId: "col_orders", fieldId: "fld_workspace_title",
+      placement: { x: 0, y: 0, width: 30, height: 5 },
+    }] });
+    const result = await new CatalogAdminAppDependencyResolver(catalog()).resolve({
+      workspaceId: "wrk_default", manifest: { ...minimalComposedPageManifest, audience: { type: "system" }, pages: [page] },
+    });
+    expect(result.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "INVALID_BLOCK_SCHEMA" })]));
+    expect(result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "field", id: "fld_workspace_title" })]));
+  });
+
   it("snapshots live Schema, Realm, policy and built-in registry fingerprints", async () => {
     const result = await new CatalogAdminAppDependencyResolver(catalog()).resolve({
       workspaceId: "wrk_default",

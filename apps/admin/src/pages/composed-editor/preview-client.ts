@@ -104,12 +104,8 @@ export function createPreviewDataClient(
       return aggregateRows(result.items, dataSource);
     },
     getComposedDocument: async (_pageId, _componentId, input): Promise<ComposedDocumentDto | null> => {
-      try {
-        const record = await xecmsClient.documents.get(input.collectionId, input.documentId);
-        return { id: record.id, data: record.data };
-      } catch {
-        return null;
-      }
+      const record = await xecmsClient.documents.get(input.collectionId, input.documentId);
+      return { id: record.id, version: record.version, data: record.data };
     },
     get: (collectionId, documentId) => xecmsClient.documents.get(collectionId, documentId),
     create: () => { throw new PreviewMutationBlocked(); },

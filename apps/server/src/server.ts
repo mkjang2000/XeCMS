@@ -804,7 +804,7 @@ async function assembleServer(
       getDocument: async (actor, collectionId, documentId) => {
         try {
           const document = await documents.get(actor, collectionId, documentId);
-          return { id: document.id, data: document.data };
+          return { id: document.id, version: document.version, data: document.data };
         } catch (error: unknown) {
           // A missing document yields an empty detail; access denials propagate.
           if (error instanceof ApplicationError && error.code === "DOCUMENT_NOT_FOUND") return null;
@@ -1781,6 +1781,7 @@ async function assembleServer(
     });
     app.get("/", async (_request, reply) => reply.redirect("/admin/"));
     app.get("/admin", async (_request, reply) => reply.redirect("/admin/"));
+    app.get("/admin-apps/:appId/screens", async (_request, reply) => reply.sendFile("index.html"));
     app.get("/admin/*", async (_request, reply) => reply.sendFile("index.html"));
     app.get("/apps/:appKey", async (_request, reply) => reply.sendFile("index.html"));
     app.get("/apps/:appKey/*", async (_request, reply) => reply.sendFile("index.html"));

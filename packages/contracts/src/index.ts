@@ -277,6 +277,7 @@ export interface ComposedDocumentRequest {
 }
 export interface ComposedDocumentDto {
   readonly id: string;
+  readonly version?: number;
   /** Masked, access-filtered Field values (fieldName -> value). */
   readonly data: Readonly<Record<string, unknown>>;
 }

@@ -1,3 +1,4 @@
+import type { PageAuthoringDefinition } from "../authoring/types.js";
 import type {
   AdminAppAudience,
   AdminAppScalar,
@@ -200,6 +201,7 @@ export interface ConnectionDefinition {
 }
 
 export interface ComposedPageDefinition {
+  readonly authoring?: PageAuthoringDefinition;
   readonly id: string;
   readonly type: "composed-page";
   readonly screenNo: string;

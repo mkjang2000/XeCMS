@@ -72,7 +72,7 @@ export function PreviewModal({ manifest, collections, initialPageId, schemaRevis
             <Button size="small" variant="secondary" onPress={onClose}>닫기</Button>
           </div>
         </header>
-        <p className={styles.previewHint}>실제 데이터로 조회·선택을 시험합니다. 저장·삭제 등 변경은 미리보기에서 실행되지 않습니다.</p>
+        <p className={styles.previewHint}>현재 편집자 권한으로 실제 데이터를 조회합니다. 앱 사용자의 권한을 재현하는 미리보기는 아닙니다. 저장·삭제는 실행되지 않습니다.</p>
         <div className={styles.previewBody}>
           {activePage === undefined ? (
             <p className={styles.inspectorEmpty} style={{ padding: "2rem" }}>미리볼 화면이 없습니다.</p>

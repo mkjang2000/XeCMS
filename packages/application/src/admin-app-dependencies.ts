@@ -1,3 +1,4 @@
+import { validateAuthoringSchema } from "@xecms/admin-apps";
 import {
   BUILTIN_ACTION_IDS,
   BUILTIN_RENDERER_IDS,
@@ -127,6 +128,14 @@ export class CatalogAdminAppDependencyResolver implements AdminAppDependencyReso
       kind: "schema-revision", id: schema.revisionId, fingerprint: schema.hash,
       metadata: { hash: schema.hash },
     });
+    if (manifest.formatVersion === 2) {
+      for (const page of manifest.pages) {
+        if (page.type !== "composed-page" || page.authoring === undefined) continue;
+        for (const issue of validateAuthoringSchema(page.authoring, schema.schema.collections)) {
+          blockers.push(blocker(issue.code, issue.message, { pageId: page.id, path: issue.path }));
+        }
+      }
+    }
     const index = indexSchema(schema.schema);
     for (const id of extracted.collectionIds) {
       const collection = index.collections.get(id);

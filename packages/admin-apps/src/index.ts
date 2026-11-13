@@ -9,3 +9,7 @@ export * from "./normalize.js";
 export * from "./types.js";
 export * from "./validate.js";
 export * from "./v2/index.js";
+export * from "./authoring/types.js";
+export * from "./authoring/compile.js";
+export * from "./authoring/validate.js";
+export * from "./authoring/schema.js";
