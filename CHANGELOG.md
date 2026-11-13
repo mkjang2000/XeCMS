@@ -14,6 +14,8 @@ major 버전을 올렸다. npm 패키지 버전과 manifest의 `compatibility.sd
 
 ### 변경 사항
 
+- CI 보안 감사에서 확인된 의존성을 수정 버전으로 갱신했다. Fastify 5.12.5,
+  Vite 8.2.4와 관련 URI·편집기·빌드 의존성을 반영하며 기존 high 감사 기준은 유지한다.
 - 엔진·CMS Studio는 XeCMS, 빌더 소스와 검증은 [XeCMS-Plugin-AppBuilder](https://github.com/mkjang2000/XeCMS-Plugin-AppBuilder),
   내부 개발 기록은 비공개 XeCMS-Docs로 저장소를 분리했다. 공개 설치·API 문서는 엔진에 유지한다.
 
