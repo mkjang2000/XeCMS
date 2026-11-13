@@ -116,7 +116,7 @@ async function validatePackage(directory, manifest) {
   }
   for (const file of await walk(directory)) {
     const relative = file.slice(directory.length + 1).replaceAll("\\", "/");
-    if (/(^|\/)(node_modules|devdocs|\.env(?:\..*)?)($|\/)|\.(test|spec)\.[^/]+$|\.tsbuildinfo$|(^|\/)test-support\./.test(relative)) {
+    if (/(^|\/)(node_modules|devdocs|\.env(?:\..*)?)($|\/)|\.(test|spec)\.[^/]+$|\.tsbuildinfo$|(^|\/)(?:[^/]*-)?test-(?:support|fixtures)(?:\.|\/)/.test(relative)) {
       throw new Error(`${manifest.name} contains internal file ${relative}.`);
     }
     if (!/\.(js|css|html)$/.test(file)) continue;

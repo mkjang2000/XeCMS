@@ -30,6 +30,7 @@
     "dist",
     "!dist/**/*.test.*",
     "!dist/**/*.integration.test.*",
+    "!dist/integration-test-support.*",
     "!dist/.tsbuildinfo"
   ],
   "scripts": {

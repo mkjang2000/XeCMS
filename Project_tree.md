@@ -91,6 +91,9 @@ XeCMS/
 소스 인접 단위 테스트는 각 패키지의 `src/`에 있다. 빌드 출력, 실제 `.env`, 미디어,
 캐시, 의존성 디렉터리는 유지보수 구조에서 제외한다. `apps/admin/dist-types/`는
 TypeScript 생성물로 Git 추적에서 제외하며 빌드로 재생성한다.
+`pnpm clean`은 workspace 빌드 결과와 테스트 보고서·캐시를 제거한다. 소스 테스트는
+유지하며 npm 패키지에서 제외한다. 루트 `dist/releases/`의 배포 준비물, 의존성,
+환경 설정과 `.xecms/` 런타임 데이터는 clean 대상이 아니다.
 
 ## Main Execution Flow
 

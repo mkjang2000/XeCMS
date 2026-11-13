@@ -12,6 +12,7 @@
 | `pnpm build` | 엔진 패키지, 서버와 CMS Studio production 빌드 | 없음 |
 | `pnpm start` | 빌드 산출물을 production 모드로 실행 | PostgreSQL |
 | `pnpm build:all` | 엔진과 예제 전체 빌드 | 없음 |
+| `pnpm clean` | 빌드 결과·테스트 보고서·도구 캐시 정리 | 없음 |
 | `pnpm migrate` | forward-only DB 마이그레이션 적용 | PostgreSQL |
 | `pnpm db:up` | 로컬 Compose PostgreSQL 시작 | Docker |
 | `pnpm db:down` | 로컬 Compose PostgreSQL 중지 | Docker |
@@ -65,6 +66,19 @@ docker compose --project-name xecms-engine-tests --profile e2e down --volumes --
 CI는 PR과 main 변경에서 엔진 검사, 격리 PostgreSQL 회귀, 전체 release 검증을 실행합니다.
 릴리스 게시와 수동 실행도 동일한 검증을 수행하며, 브라우저 실패 자료는 artifact로 남깁니다.
 `dist/`와 `dist-types/`는 빌드 생성물로 Git 추적에서 제외합니다.
+
+## 생성 파일 관리
+
+`pnpm clean`은 각 workspace의 `dist/`, `dist-types/`와 테스트 보고서·coverage·도구
+캐시를 제거합니다. 다시 실행할 때는 `pnpm build`로 빌드 결과를 생성합니다.
+`dist/releases/`의 배포 준비물, `node_modules/`의 설치 의존성, `.env`와 `.xecms/`의
+환경 설정·런타임 데이터는 보존합니다. 오래된 배포 준비물은 필요한 최신 버전을
+확인한 뒤 해당 디렉터리만 정리하세요.
+
+소스의 `*.test.ts(x)`, `tests/e2e/`와 테스트 보조 파일은 CI에서 사용하는 검증 코드로
+Git에서 관리합니다. TypeScript 검사 과정에서 생기는 테스트 JS·선언·맵은 생성물이며,
+npm 배포 패키지에는 테스트와 테스트 전용 보조 파일을 포함하지 않습니다.
+캐시·로그·로컬 `.npmrc`와 `.xecms/`는 Git에서 제외합니다.
 
 ## 게시 전 패키지 검증
 
